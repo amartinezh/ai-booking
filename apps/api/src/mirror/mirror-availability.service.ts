@@ -39,8 +39,21 @@ const ESTADOS_ACTIVOS_CASO = ['ABIERTA', 'EN_REVISION'];
  * (escritas en el hospital); se abrieron 5 casos de prioridad alta y un error cada 5
  * minutos. Si el hospital de verdad le quita el día, anula sus citas y el caso sí se
  * abre.
+ *
+ * Solo cuenta para las citas de AgenIA que caen dentro del horario de las del
+ * hospital ese día, con `MARGEN_DIA_CERRADO_MS` a cada lado (2026-11-04): el
+ * hospital abrió la tarde del viernes de MD08 a las 13:39 y la quitó a las 13:44, y
+ * una cita del chat de las 11:40 quedó escrita en un turno que ya no existe; las del
+ * hospital eran de 7:10 a 9:55, y la regla la dio por buena sin caso.
  */
 export const MIN_CITAS_DEL_HOSPITAL_DIA_CERRADO = 3;
+
+/**
+ * Cuánto antes de la primera cita del hospital y después de la última puede caer
+ * una cita de AgenIA para contar como parte del día lleno cerrado. El 3-nov, la
+ * primera del chat de RU68 era 20 min antes de la primera del hospital.
+ */
+export const MARGEN_DIA_CERRADO_MS = 60 * 60_000;
 
 /**
  * Fase 2 — la agenda de AgenIA pasa a ser la del hospital.
@@ -271,18 +284,39 @@ export class MirrorAvailabilityService {
     const medicosConTurno = new Set(
       [...deseados.values()].map((c) => c.doctorId),
     );
-    // Citas vigentes del hospital por médico en esta ventana (día lleno cerrado).
-    const citasDelHospital = new Map<string, number>();
+    // Citas vigentes del hospital por médico en esta ventana (día lleno cerrado):
+    // cuántas y de qué hora a qué hora.
+    const citasDelHospital = new Map<
+      string,
+      { cuantas: number; primera: number; ultima: number }
+    >();
     for (const c of existentes) {
       for (const a of c.appointments) {
         if (a.status !== 'CANCELLED' && a.origin === 'MIRROR') {
-          citasDelHospital.set(
-            c.doctorId,
-            (citasDelHospital.get(c.doctorId) ?? 0) + 1,
-          );
+          const t = c.startTime.getTime();
+          const previo = citasDelHospital.get(c.doctorId);
+          citasDelHospital.set(c.doctorId, {
+            cuantas: (previo?.cuantas ?? 0) + 1,
+            primera: Math.min(previo?.primera ?? t, t),
+            ultima: Math.max(previo?.ultima ?? t, t),
+          });
         }
       }
     }
+    const enElDiaLlenoCerrado = (cupo: (typeof existentes)[number]) => {
+      const delHospital = citasDelHospital.get(cupo.doctorId);
+      if (
+        !delHospital ||
+        delHospital.cuantas < MIN_CITAS_DEL_HOSPITAL_DIA_CERRADO
+      ) {
+        return false;
+      }
+      const t = cupo.startTime.getTime();
+      return (
+        t >= delHospital.primera - MARGEN_DIA_CERRADO_MS &&
+        t <= delHospital.ultima + MARGEN_DIA_CERRADO_MS
+      );
+    };
     const enDiaCerradoLleno = new Set<string>();
     const ahora = new Date();
     const afectadas: CitaEnAgendaQuitada[] = [];
@@ -325,13 +359,9 @@ export class MirrorAvailabilityService {
       }
 
       // 🗓️ Sin turno ese día, pero con el día lleno de citas del hospital: el
-      // hospital cerró la agenda, no le quitó el día al médico (2026-11-03).
-      if (
-        vivas.length > 0 &&
-        sinTurno &&
-        (citasDelHospital.get(actual.doctorId) ?? 0) >=
-          MIN_CITAS_DEL_HOSPITAL_DIA_CERRADO
-      ) {
+      // hospital cerró la agenda, no le quitó el día al médico (2026-11-03). Solo
+      // si la cita cae en el horario de las del hospital (2026-11-04).
+      if (vivas.length > 0 && sinTurno && enElDiaLlenoCerrado(actual)) {
         for (const a of vivas) enDiaCerradoLleno.add(a.id);
         continue;
       }

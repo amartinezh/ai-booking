@@ -720,13 +720,26 @@ describe('AvisoCambioHospitalService — ⏳ la espera antes de avisar una cance
     });
   });
 
-  it('el barrido solo mira cancelaciones activas en espera', async () => {
+  it('el barrido solo mira cancelaciones y cambios activos en espera', async () => {
     const t = armar();
     await t.svc.avisarLosPendientes(DESPUES);
     expect(t.prisma.syncException.findMany.mock.calls[0][0].where).toEqual({
-      kind: 'CITA_CANCELADA_POR_HOSPITAL',
+      kind: {
+        in: ['CITA_CANCELADA_POR_HOSPITAL', 'CITA_MOVIDA_POR_HOSPITAL'],
+      },
       status: { in: ['ABIERTA', 'EN_REVISION'] },
       meta: { path: ['aviso'], equals: 'EN_ESPERA' },
+    });
+  });
+
+  it('🔗 un cambio de hora también espera: al cancelar con la cita nueva ya creada, no se le escribe todavía', async () => {
+    const t = armar({ nueva: nuevaCita });
+    await t.svc.alCancelarElHospital(ORG, 'apt-bot', AHORA);
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.templates.sendTemplate).not.toHaveBeenCalled();
+    expect(t.caso()).toMatchObject({
+      kind: 'CITA_MOVIDA_POR_HOSPITAL',
+      meta: { aviso: 'EN_ESPERA', nuevaCitaId: 'apt-nueva' },
     });
   });
 
@@ -941,5 +954,348 @@ describe('momentoDelAviso', () => {
   });
   it('sin espera configurada, avisa ya', () => {
     expect(momentoDelAviso(T0, min(24 * 60), 0)).toBeNull();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🔗 2026-11-04: el hospital cambia una cita y la vuelve a cambiar minutos después.
+// A las 6:15 pasó toda la agenda del miércoles de AP08 a MD09 y a las 6:25 la
+// devolvió: a 4 pacientes del chat les llegó «ahora con MD09». A uno, cambiado
+// después otra vez a MDD1 a las 11:10, no le llegó nada. El 3-nov a una paciente le
+// avisamos 17:10 y quedó a las 17:30. Se prueba con una base en memoria: el hospital
+// crea y cancela citas, y el barrido decide qué decirle al paciente.
+// ══════════════════════════════════════════════════════════════════════════
+describe('AvisoCambioHospitalService — 🔗 la cadena de cambios del hospital', () => {
+  const min = (n: number) => new Date(AHORA.getTime() + n * 60_000);
+  const medico = (id: string, nombre: string) => ({
+    doctorId: id,
+    doctor: { fullName: nombre, isFunctionalAgenda: false },
+  });
+  const AP08 = medico('doc-ap08', 'LADY JOHANA VELASQUEZ MARIN');
+  const MD09 = medico('doc-md09', 'ISABELLA GOMEZ VILLEGAS');
+  const MDD1 = medico('doc-mdd1', 'CAMILO RESTREPO ARIAS');
+
+  function armarCadena() {
+    const citas = new Map<string, any>();
+    const casos = new Map<string, any>();
+    let reloj = 0;
+    const crear = (
+      id: string,
+      origin: string,
+      startTime: Date,
+      doc: ReturnType<typeof medico>,
+      createdAt: Date,
+    ) => {
+      citas.set(id, {
+        ...cita({ id, origin }),
+        status: 'SCHEDULED',
+        createdAt,
+        scheduleSlot: {
+          ...cita().scheduleSlot,
+          startTime,
+          ...doc,
+        },
+      });
+    };
+    const cumple = (fila: any, where: any): boolean =>
+      Object.entries(where).every(([k, v]: [string, any]) => {
+        if (k === 'meta') return fila.meta?.[v.path[0]] === v.equals;
+        if (v && typeof v === 'object' && 'in' in v)
+          return v.in.includes(fila[k]);
+        if (v instanceof Date) return fila[k]?.getTime() === v.getTime();
+        return fila[k] === v;
+      });
+    const prisma = {
+      appointment: {
+        findFirst: jest.fn(async ({ where }: any) => {
+          if (typeof where.id === 'string') return citas.get(where.id) ?? null;
+          const candidatas = [...citas.values()]
+            .filter(
+              (c) =>
+                c.patientId === where.patientId &&
+                c.id !== where.id.not &&
+                c.status === where.status &&
+                c.origin === where.origin &&
+                c.createdAt.getTime() >= where.createdAt.gte.getTime() &&
+                c.scheduleSlot.startTime.getTime() >
+                  where.scheduleSlot.startTime.gt.getTime(),
+            )
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+          return candidatas[0] ?? null;
+        }),
+      },
+      syncException: {
+        findFirst: jest.fn(async ({ where }: any) => {
+          if (where.kind === 'TELEFONO_EQUIVOCADO') return null;
+          return [...casos.values()].find((c) => cumple(c, where)) ?? null;
+        }),
+        findMany: jest.fn(async ({ where }: any) =>
+          [...casos.values()].filter((c) => cumple(c, where)),
+        ),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          const fila = casos.get(where.id);
+          if (!fila || !cumple(fila, where)) return { count: 0 };
+          Object.assign(fila, data, { updatedAt: new Date(++reloj) });
+          return { count: 1 };
+        }),
+      },
+      syncExceptionLog: { findFirst: jest.fn().mockResolvedValue(null) },
+      interactionLog: { findFirst: jest.fn().mockResolvedValue(null) },
+      organization: {
+        findUnique: jest.fn().mockResolvedValue({
+          name: 'Hospital San Vicente de Paúl',
+          supportPhone: '606 853 8860',
+          timezone: 'America/Bogota',
+        }),
+      },
+    };
+    const exceptions = {
+      registrar: jest.fn(async (_org: string, e: any, ahora: Date) => {
+        casos.set('caso-1', {
+          ...e,
+          id: 'caso-1',
+          organizationId: ORG,
+          status: 'ABIERTA',
+          firstSeenAt: ahora,
+          updatedAt: new Date(++reloj),
+        });
+        return 'CREADA';
+      }),
+      autoResolver: jest.fn(async (_org: string, id: string, nota: string) => {
+        const fila = casos.get(id);
+        if (!fila || !['ABIERTA', 'EN_REVISION'].includes(fila.status))
+          return false;
+        Object.assign(fila, {
+          status: 'AUTO_RESUELTA',
+          resolutionNote: nota,
+          updatedAt: new Date(++reloj),
+        });
+        return true;
+      }),
+      anotar: jest.fn().mockResolvedValue(undefined),
+    };
+    const templates = {
+      sendTemplate: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const chatbot = {
+      isWithinServiceWindow: jest.fn().mockResolvedValue(true),
+      sendOutboundForOrg: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const ajustes = {
+      getCommunicationStyle: jest.fn().mockResolvedValue('FORMAL'),
+      operacionesDelBot: jest
+        .fn()
+        .mockResolvedValue({ agendar: true, cancelar: true, modificar: true }),
+    };
+    const moduleRef = {
+      get: jest.fn((token: unknown) => {
+        if (token === ChatbotService) return chatbot;
+        if (token === OrganizationSettingsService) return ajustes;
+        if (token === InteractionLogService)
+          return { log: jest.fn().mockResolvedValue(undefined) };
+        throw new Error('token inesperado');
+      }),
+    };
+    const svc = new AvisoCambioHospitalService(
+      prisma as any,
+      exceptions as any,
+      templates as any,
+      moduleRef as any,
+    );
+    jest.spyOn((svc as any).logger, 'log').mockImplementation(() => undefined);
+    /** El hospital anula `id` en su sistema y el espejo lo aplica. */
+    const anular = async (id: string, cuando: Date) => {
+      citas.get(id).status = 'CANCELLED';
+      await svc.alCancelarElHospital(ORG, id, cuando);
+    };
+    const textos = () =>
+      chatbot.sendOutboundForOrg.mock.calls.map((c) => c[2] as string);
+    const caso = () => casos.get('caso-1');
+    return { svc, citas, crear, anular, textos, caso, exceptions, templates };
+  }
+
+  it('🧾 AP08 → MD09 → AP08 en 10 minutos (4-nov 6:15/6:25): no se le escribe nada y el caso se cierra solo', async () => {
+    const t = armarCadena();
+    t.crear('apt-bot', 'WHATSAPP', EN_2H, AP08, min(-600));
+    // 6:15: el hospital la pasa a MD09, misma hora.
+    t.crear('apt-md09', 'MIRROR', EN_2H, MD09, AHORA);
+    await t.anular('apt-bot', AHORA);
+    // 6:23: la devuelve a AP08.
+    t.crear('apt-ap08', 'MIRROR', EN_2H, AP08, min(8));
+    await t.anular('apt-md09', min(8));
+    await t.svc.avisarLosPendientes(min(11));
+    expect(t.textos()).toEqual([]); // la espera se alargó con el segundo cambio
+    await t.svc.avisarLosPendientes(min(19));
+
+    expect(t.textos()).toEqual([]);
+    expect(t.templates.sendTemplate).not.toHaveBeenCalled();
+    expect(t.caso()).toMatchObject({
+      status: 'AUTO_RESUELTA',
+      meta: {
+        aviso: 'NO_HIZO_FALTA',
+        motivo: 'MISMA_CITA',
+        nuevaCitaId: 'apt-ap08',
+        cambiosDelHospital: 1,
+      },
+    });
+    expect(t.caso().resolutionNote).toContain('la volvió a dejar');
+  });
+
+  it('🧾 …8875 (4-nov): devuelta igual, y horas después cambiada a MDD1 y luego a otra hora → dos avisos, cada uno desde lo que ya sabía', async () => {
+    const t = armarCadena();
+    t.crear('apt-bot', 'WHATSAPP', EN_2H, AP08, min(-600));
+    t.crear('apt-md09', 'MIRROR', EN_2H, MD09, AHORA);
+    await t.anular('apt-bot', AHORA);
+    t.crear('apt-ap08', 'MIRROR', EN_2H, AP08, min(6));
+    await t.anular('apt-md09', min(6));
+    await t.svc.avisarLosPendientes(min(17));
+    expect(t.caso().status).toBe('AUTO_RESUELTA');
+
+    // Más tarde: la pasa a MDD1, misma hora. El caso cerrado se reabre.
+    t.crear('apt-mdd1', 'MIRROR', EN_2H, MDD1, min(40));
+    await t.anular('apt-ap08', min(40));
+    expect(t.caso().status).toBe('ABIERTA');
+    expect(t.exceptions.anotar).toHaveBeenCalledWith(
+      'caso-1',
+      'REAPARECIDA',
+      null,
+      null,
+      expect.any(String),
+    );
+    await t.svc.avisarLosPendientes(min(51));
+    expect(t.textos()).toHaveLength(1);
+    expect(t.textos()[0]).toContain('cambió el médico de su cita');
+    expect(t.textos()[0]).toContain('con Dr(a). LADY JOHANA VELASQUEZ MARIN');
+    expect(t.textos()[0]).toContain('con *Dr(a). CAMILO RESTREPO ARIAS*');
+
+    // Y luego le cambia la hora (20 min más tarde) con el mismo médico.
+    const MAS_TARDE = new Date(EN_2H.getTime() + 20 * 60_000);
+    t.crear('apt-mdd1-b', 'MIRROR', MAS_TARDE, MDD1, min(52));
+    await t.anular('apt-mdd1', min(52));
+    await t.svc.avisarLosPendientes(min(63));
+    expect(t.textos()).toHaveLength(2);
+    // «Antes» es lo que se le dijo (MDD1 a las 3:20); «Ahora», la nueva hora.
+    expect(t.textos()[1]).toContain('cambió su cita');
+    expect(t.textos()[1]).toMatch(
+      /Antes: .*03:20 p\.? ?m.* con Dr\(a\)\. CAMILO/,
+    );
+    expect(t.textos()[1]).toMatch(/Ahora: \*.*03:40 p\.? ?m/);
+    expect(t.caso().meta).toMatchObject({
+      aviso: 'ENVIADO',
+      nuevaCitaId: 'apt-mdd1-b',
+      informadaCitaId: 'apt-mdd1-b',
+      cambiosDelHospital: 3,
+    });
+  });
+
+  it('🧾 3-nov: 17:20 → 17:10 → 17:30 en un minuto → un solo aviso, con la hora final', async () => {
+    const t = armarCadena();
+    const hora = (m: number) => new Date(EN_2H.getTime() + m * 60_000);
+    t.crear('apt-bot', 'WHATSAPP', hora(0), MD09, min(-600));
+    t.crear('apt-1710', 'MIRROR', hora(-10), MD09, AHORA);
+    await t.anular('apt-bot', AHORA);
+    t.crear('apt-1730', 'MIRROR', hora(10), MD09, min(1));
+    await t.anular('apt-1710', min(1));
+    await t.svc.avisarLosPendientes(min(12));
+
+    expect(t.textos()).toHaveLength(1);
+    expect(t.textos()[0]).toMatch(/Antes: .*03:20 p/);
+    expect(t.textos()[0]).toMatch(/Ahora: \*.*03:30 p/);
+    expect(t.textos()[0]).not.toMatch(/03:10/);
+  });
+
+  it('ya se le avisó el cambio y el hospital la devuelve a la de antes: se le avisa otra vez, desde lo que se le dijo', async () => {
+    const t = armarCadena();
+    t.crear('apt-bot', 'WHATSAPP', EN_2H, AP08, min(-600));
+    t.crear('apt-md09', 'MIRROR', EN_2H, MD09, AHORA);
+    await t.anular('apt-bot', AHORA);
+    await t.svc.avisarLosPendientes(min(11));
+    expect(t.textos()).toHaveLength(1);
+    expect(t.caso().meta.informadaCitaId).toBe('apt-md09');
+
+    t.crear('apt-ap08', 'MIRROR', EN_2H, AP08, min(30));
+    await t.anular('apt-md09', min(30));
+    await t.svc.avisarLosPendientes(min(41));
+    expect(t.textos()).toHaveLength(2);
+    expect(t.textos()[1]).toContain('con Dr(a). ISABELLA GOMEZ VILLEGAS');
+    expect(t.textos()[1]).toContain('con *Dr(a). LADY JOHANA VELASQUEZ MARIN*');
+  });
+
+  it('el hospital anula la cita que le había dado y no le da otra: se le avisa la cancelación de ESA, y el caso pasa a cancelación', async () => {
+    const t = armarCadena();
+    t.crear('apt-bot', 'WHATSAPP', EN_2H, AP08, min(-600));
+    t.crear('apt-md09', 'MIRROR', MANANA, MD09, AHORA);
+    await t.anular('apt-bot', AHORA);
+    await t.svc.avisarLosPendientes(min(11));
+    expect(t.textos()[0]).toContain('cambió su cita');
+
+    await t.anular('apt-md09', min(30));
+    await t.svc.avisarLosPendientes(min(41));
+    expect(t.textos()).toHaveLength(2);
+    expect(t.textos()[1]).toContain('fue *cancelada*');
+    expect(t.textos()[1]).toContain('viernes, 23 de octubre');
+    expect(t.textos()[1]).toContain('ISABELLA GOMEZ VILLEGAS');
+    expect(t.caso()).toMatchObject({
+      kind: 'CITA_CANCELADA_POR_HOSPITAL',
+      appointmentStartAt: MANANA,
+      meta: { aviso: 'ENVIADO', nuevaCitaId: null, informadaCitaId: null },
+    });
+  });
+
+  it('un caso que cerró una persona no se sigue (ella se hizo cargo)', async () => {
+    const t = armarCadena();
+    t.crear('apt-bot', 'WHATSAPP', EN_2H, AP08, min(-600));
+    t.crear('apt-md09', 'MIRROR', EN_2H, MD09, AHORA);
+    await t.anular('apt-bot', AHORA);
+    await t.svc.avisarLosPendientes(min(11));
+    t.caso().status = 'RESUELTA';
+
+    t.crear('apt-ap08', 'MIRROR', EN_2H, AP08, min(30));
+    await t.anular('apt-md09', min(30));
+    await t.svc.avisarLosPendientes(min(41));
+    expect(t.textos()).toHaveLength(1);
+    expect(t.caso().status).toBe('RESUELTA');
+  });
+
+  it('la cita que le habían dado ya pasó: no se sigue', async () => {
+    const t = armarCadena();
+    const pronto = min(30);
+    t.crear('apt-bot', 'WHATSAPP', pronto, AP08, min(-600));
+    t.crear('apt-md09', 'MIRROR', pronto, MD09, AHORA);
+    await t.anular('apt-bot', AHORA);
+    await t.svc.avisarLosPendientes(min(5));
+    expect(t.textos()).toHaveLength(1);
+    const antes = { ...t.caso().meta };
+    await t.anular('apt-md09', min(31));
+    expect(t.caso().meta).toEqual(antes);
+  });
+
+  it('un caso de antes del cambio (sin `informadaCitaId`): lo que sabe el paciente sale de su aviso', async () => {
+    const t = armarCadena();
+    t.crear('apt-bot', 'WHATSAPP', EN_2H, AP08, min(-600));
+    t.citas.get('apt-bot').status = 'CANCELLED';
+    t.crear('apt-md09', 'MIRROR', MANANA, MD09, min(-60));
+    await t.exceptions.registrar(
+      ORG,
+      {
+        kind: 'CITA_MOVIDA_POR_HOSPITAL',
+        appointmentId: 'apt-bot',
+        meta: {
+          canceladaIso: min(-60).toISOString(),
+          nuevaCitaId: 'apt-md09',
+          aviso: 'ENVIADO',
+        },
+      },
+      min(-60),
+    );
+    const OTRA = new Date(MANANA.getTime() + 60 * 60_000);
+    t.crear('apt-otra', 'MIRROR', OTRA, MD09, AHORA);
+    await t.anular('apt-md09', AHORA);
+    await t.svc.avisarLosPendientes(min(11));
+    expect(t.textos()).toHaveLength(1);
+    expect(t.textos()[0]).toMatch(/Antes: viernes, 23 de octubre a las 09:00/);
+    expect(t.textos()[0]).toMatch(
+      /Ahora: \*viernes, 23 de octubre a las 10:00/,
+    );
   });
 });

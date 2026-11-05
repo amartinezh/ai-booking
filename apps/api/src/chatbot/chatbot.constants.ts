@@ -294,6 +294,11 @@ export interface AvisoCitaMovida {
   servicio: string;
   fechaAntes: string;
   fechaNueva: string;
+  /**
+   * Con quién era la de antes (2026-11-04: el hospital pasó citas a otro médico a la
+   * misma hora y el aviso decía «Antes: 7:50 / Ahora: 7:50 con …», sin el de antes).
+   */
+  medicoAntes?: string;
   medicoNuevo: string;
   contacto: string;
 }
@@ -1304,8 +1309,10 @@ const FORMAL = {
 
   citaMovidaPorElHospital: (p: AvisoCitaMovida) =>
     `Hola${p.nombre ? `, ${p.nombre}` : ''}. Le escribimos de *${p.clinica}*. 🏥\n\n` +
-    `Le informamos que el hospital cambió su cita de *${p.servicio}*:\n\n` +
-    `❌ Antes: ${p.fechaAntes}\n` +
+    (p.fechaAntes === p.fechaNueva
+      ? `Le informamos que el hospital cambió el médico de su cita de *${p.servicio}*; la hora sigue igual:\n\n`
+      : `Le informamos que el hospital cambió su cita de *${p.servicio}*:\n\n`) +
+    `❌ Antes: ${p.fechaAntes}${p.medicoAntes ? ` con ${p.medicoAntes}` : ''}\n` +
     `✅ Ahora: *${p.fechaNueva}* con *${p.medicoNuevo}*\n\n` +
     `Si tiene alguna duda, comuníquese con ${p.contacto}.`,
 
@@ -2741,8 +2748,10 @@ const INFORMAL = {
 
   citaMovidaPorElHospital: (p: AvisoCitaMovida) =>
     `Hola${p.nombre ? `, ${p.nombre}` : ''}. Te escribimos de *${p.clinica}*. 🏥\n\n` +
-    `Te contamos que el hospital cambió tu cita de *${p.servicio}*:\n\n` +
-    `❌ Antes: ${p.fechaAntes}\n` +
+    (p.fechaAntes === p.fechaNueva
+      ? `Te contamos que el hospital cambió el médico de tu cita de *${p.servicio}*; la hora sigue igual:\n\n`
+      : `Te contamos que el hospital cambió tu cita de *${p.servicio}*:\n\n`) +
+    `❌ Antes: ${p.fechaAntes}${p.medicoAntes ? ` con ${p.medicoAntes}` : ''}\n` +
     `✅ Ahora: *${p.fechaNueva}* con *${p.medicoNuevo}*\n\n` +
     `Si tienes alguna duda, comunícate con ${p.contacto}.`,
 

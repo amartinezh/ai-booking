@@ -696,8 +696,9 @@ describe('MirrorAvailabilityService', () => {
         );
 
       it('sin turno, pero con 3 o más citas vigentes del hospital ese día: sin caso ni conflicto', async () => {
+        // Las del hospital: 10:30, 11:30 y 12:30; la del chat, entre ellas.
         prisma.scheduleSlot.findMany.mockResolvedValue([
-          cupoDe('2030-01-08T17:00:00.000Z', [cita('WHATSAPP')]),
+          cupoDe('2030-01-08T12:00:00.000Z', [cita('WHATSAPP')]),
           ...delHospital(3),
         ]);
 
@@ -754,9 +755,41 @@ describe('MirrorAvailabilityService', () => {
         expect(r.conflicts).toEqual(['doc-1|2030-01-08T17:10:00.000Z']);
       });
 
+      // 2026-11-04: el hospital abrió la tarde del viernes de MD08 (13:39) y la quitó
+      // (13:44); la cita del chat de las 11:40 quedó en un turno que ya no existe,
+      // con las del hospital de 7:10 a 9:55. No es parte del día lleno.
+      it('una cita de AgenIA fuera del horario de las del hospital (más de 1 hora después de la última): el caso se abre', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoDe('2030-01-08T14:00:00.000Z', [cita('WHATSAPP')]),
+          ...delHospital(3),
+        ]);
+
+        const r = await aplicarFut([]);
+
+        expect(r.conflicts).toEqual(['doc-1|2030-01-08T14:00:00.000Z']);
+        expect(casos()[0]).toMatchObject({
+          appointmentId: 'apt-1',
+          meta: { motivo: 'DIA_SIN_TURNO', origen: 'WHATSAPP' },
+        });
+      });
+
+      it('hasta 1 hora antes de la primera o después de la última del hospital: sigue siendo el día lleno', async () => {
+        // RU68 el 3-nov: la primera del chat, 20 min antes de la primera del hospital.
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoDe('2030-01-08T09:30:00.000Z', [cita('WHATSAPP', 'apt-a')]),
+          cupoDe('2030-01-08T13:30:00.000Z', [cita('WHATSAPP', 'apt-b')]),
+          ...delHospital(3),
+        ]);
+
+        const r = await aplicarFut([]);
+
+        expect(r.conflicts).toEqual([]);
+        expect(exceptions.registrar).not.toHaveBeenCalled();
+      });
+
       it('un caso ya abierto de esa cita se cierra solo, diciendo que la cita sigue en pie', async () => {
         prisma.scheduleSlot.findMany.mockResolvedValue([
-          cupoDe('2030-01-08T17:00:00.000Z', [cita('WHATSAPP')]),
+          cupoDe('2030-01-08T12:00:00.000Z', [cita('WHATSAPP')]),
           ...delHospital(3),
         ]);
         prisma.syncException.findMany.mockResolvedValue([

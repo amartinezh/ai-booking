@@ -932,6 +932,17 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(state()).toBe(ChatState.IDLE);
     });
 
+    // Caso real 2026-11-04 15:38: tras ver su cita, «👍🏻» recibió dos veces
+    // «responda con la letra».
+    it.each(['👍🏻', '👍', 'ok', 'Listo, gracias', 'nada más'])(
+      '«%s» es «Nada más, gracias»: se despide y cierra',
+      async (respuesta) => {
+        await say(respuesta);
+        expect(state()).toBe(ChatState.IDLE);
+        expect(lastSent()).not.toContain('*A*, *B*, *C* o *D*');
+      },
+    );
+
     it('otra cosa: vuelve a mostrar las opciones sin perder el paso', async () => {
       await say('quizás');
       expect(lastSent()).toContain('*A*, *B*, *C* o *D*');

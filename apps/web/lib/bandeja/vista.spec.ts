@@ -666,6 +666,59 @@ describe('🏥 citas del asistente que el hospital canceló o cambió', () => {
     expect(r).not.toContain('Comuníquese');
   });
 
+  // 🔗 2026-11-04: el hospital cambió la cita y la volvió a cambiar minutos después.
+  describe('🔗 la cadena de cambios', () => {
+    const movida = (meta: Record<string, unknown>) =>
+      fila({
+        kind: 'CITA_MOVIDA_POR_HOSPITAL',
+        title: 'El hospital cambió la hora de una cita agendada por el asistente',
+        meta: { canalDeLaCita: 'WHATSAPP', ...meta },
+      });
+
+    it('un cambio en espera dice que se avisa si el hospital no la vuelve a cambiar', () => {
+      const r = resumenPublico(
+        movida({ aviso: 'EN_ESPERA', avisarDesdeIso: '2026-10-28T14:28:00.000Z' }),
+        AHORA.getTime(),
+      );
+      expect(r).toContain('si en ese tiempo el hospital no la vuelve a cambiar');
+      expect(r).not.toContain('no le da otra cita');
+    });
+
+    it('la cambió y la devolvió como estaba: no hizo falta escribirle', () => {
+      const r = resumenPublico(
+        movida({ aviso: 'NO_HIZO_FALTA', motivo: 'MISMA_CITA', cambiosDelHospital: 1 }),
+        AHORA.getTime(),
+      );
+      expect(r).toContain('la dejó otra vez como estaba (mismo médico y hora)');
+      expect(r).toContain('No hizo falta escribirle al paciente.');
+    });
+
+    it('la volvió a cambiar pero quedó como se le avisó: pide confirmar', () => {
+      const r = resumenPublico(
+        movida({ aviso: 'NO_HIZO_FALTA', motivo: 'COMO_SE_LE_AVISO', canal: 'WHATSAPP', cambiosDelHospital: 1 }),
+        AHORA.getTime(),
+      );
+      expect(r).toContain('la dejó como se le había avisado');
+      expect(r).toContain('Confirme que el paciente quedó enterado');
+    });
+
+    it('anulada otra vez cuando ya sabía que no tiene cita: no se le repite', () => {
+      const r = resumenPublico(
+        cancelada({ aviso: 'NO_HIZO_FALTA', motivo: 'YA_SABE', cambiosDelHospital: 2 }),
+        AHORA.getTime(),
+      );
+      expect(r).toContain('Ya se le había avisado que su cita fue cancelada');
+    });
+
+    it('avisada tras varios cambios: lo dice', () => {
+      const r = resumenPublico(
+        movida({ aviso: 'ENVIADO', canal: 'WHATSAPP', via: 'TEXTO', cambiosDelHospital: 2 }),
+        AHORA.getTime(),
+      );
+      expect(r).toContain('Se le avisó por WhatsApp. El hospital la cambió más de una vez: se le avisó cómo quedó.');
+    });
+  });
+
   // 🙏 2026-10-30: el hospital volvió a crear la misma cita DESPUÉS del aviso.
   it('🙏 la cita volvió después del aviso y se le escribió que sigue en pie', () => {
     const r = resumenPublico(

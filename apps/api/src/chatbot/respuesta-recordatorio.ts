@@ -323,6 +323,22 @@ export function esAgradecimiento(texto: string | null | undefined): boolean {
   );
 }
 
+/**
+ * ¿Cierra la conversación sin pedir nada? «👍», «ok», «listo», «perfecto», «gracias»,
+ * «nada más». Para menús donde una de las opciones es «Nada más, gracias»
+ * (2026-11-04: tras consultar sus citas, un «👍» recibió dos veces «responda con la
+ * letra»). Conservador: solo frases cortas de cierre, sin «?».
+ */
+const CIERRE =
+  /^(ok|okey|okay|oki|listo|perfecto|bueno|vale|de acuerdo|esta bien|entendido|nada|nada mas|ninguna|no|no gracias|eso es todo|eso era todo|es todo)( (gracias|muchas gracias|mil gracias))?$/;
+
+export function esCierreSinPedido(texto: string | null | undefined): boolean {
+  if (!texto || texto.includes('?')) return false;
+  if (EMOJI_CONFIRMA.test(texto.trim())) return true;
+  if (esAgradecimiento(texto)) return true;
+  return CIERRE.test(sinTildes(textoParaCoincidencia(texto)));
+}
+
 /** Quien puede compartir el teléfono del paciente. */
 const FAMILIAR =
   '(hij[oa]s?|espos[oa]|mama|papa|madre|padre|herman[oa]|niet[oa]|sobrin[oa]|ti[oa]|prim[oa]|abuel[oa]|familiar|acudiente|cuidador[a]?|novi[oa]|companer[oa]|vecin[oa]|amig[oa]|nuera|yerno|suegr[oa])';

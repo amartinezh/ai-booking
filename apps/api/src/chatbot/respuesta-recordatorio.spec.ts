@@ -2,6 +2,7 @@ import {
   pideConfirmarSuCita,
   clasificarRespuestaAlBot,
   esAgradecimiento,
+  esCierreSinPedido,
   esMensajeAjeno,
   esSoloSaludo,
   mismoNombre,
@@ -359,6 +360,34 @@ describe('esAgradecimiento', () => {
     'hola',
   ])('«%s» → no (pide, pregunta o no agradece)', (texto) => {
     expect(esAgradecimiento(texto)).toBe(false);
+  });
+});
+
+describe('esCierreSinPedido', () => {
+  it.each([
+    // Caso real 2026-11-04 15:38, tras consultar su cita.
+    '👍🏻',
+    '👍',
+    '🙏',
+    'ok',
+    'Listo.',
+    'perfecto gracias',
+    'Muchas gracias',
+    'nada más',
+    'No, gracias',
+  ])('«%s» → cierra sin pedir nada', (texto) => {
+    expect(esCierreSinPedido(texto)).toBe(true);
+  });
+
+  it.each([
+    'quizás',
+    'ok pero quiero cancelar',
+    'listo?',
+    'no puedo ir',
+    'B',
+    '',
+  ])('«%s» → no', (texto) => {
+    expect(esCierreSinPedido(texto)).toBe(false);
   });
 });
 

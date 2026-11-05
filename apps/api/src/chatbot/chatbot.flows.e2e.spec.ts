@@ -1926,6 +1926,37 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(await state()).toBe(ChatState.AWAITING_EPS); // retoma donde iba
     });
 
+    // Caso real 2026-11-04 9:32: «Sí, para cancelar la cita de las 12:10» se tomaba
+    // por NO («cancelar» era abandonar) y el asistente retomaba el agendamiento.
+    it.each([
+      'Sí, para cancelar la cita de las 12:10',
+      'cancelarla',
+      'No, no quiero agendar más citas, simplemente necesito cancelarla',
+    ])(
+      '2.10b «%s» en la interrupción → pasa a cancelar (pide la cédula)',
+      async (respuesta) => {
+        await say('Hola');
+        await say('A');
+        await say('cancelar cita');
+        expect(await state()).toBe(ChatState.AWAITING_INTERRUPT_CONFIRMATION);
+
+        await say(respuesta);
+        expect(await state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+        expect(lastSent()).toMatch(/c[ée]dula/i);
+      },
+    );
+
+    it.each(['no quiero cancelar', 'No, mejor sigamos'])(
+      '2.10c «%s» en la interrupción → retoma el agendamiento',
+      async (respuesta) => {
+        await say('Hola');
+        await say('A');
+        await say('cancelar cita');
+        await say(respuesta);
+        expect(await state()).toBe(ChatState.AWAITING_EPS);
+      },
+    );
+
     // Regresión F3: por VOZ la interrupción amable se comporta igual que por
     // texto — pide confirmación en vez de abortar el agendamiento en curso.
     it('2.11 por VOZ la interrupción también pide confirmación y conserva el progreso', async () => {

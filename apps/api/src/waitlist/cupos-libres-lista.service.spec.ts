@@ -115,6 +115,8 @@ describe('CuposLibresListaService', () => {
         organizationId: ORG,
         serviceId: 'svc-1',
         isAvailable: true,
+        // Los que aparecieron hace menos de 10 minutos esperan (2026-11-04).
+        createdAt: { lte: new Date('2026-11-03T14:50:00Z') },
       },
       include: { doctor: true },
       orderBy: { startTime: 'asc' },

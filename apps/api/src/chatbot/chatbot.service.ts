@@ -32,6 +32,7 @@ import { textoParaCoincidencia } from './texto-para-coincidencia.util';
 import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
+  esCierreSinPedido,
   esMensajeAjeno,
   esSoloSaludo,
   mismoNombre,
@@ -12149,8 +12150,9 @@ export class ChatbotService implements OnModuleInit {
   ): Promise<void> {
     const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
       ctx;
-    // Tolerante a SÍ/NO natural (texto), igual que los demás pasos SÍ/NO.
-    const decision = this.interpretYesNo(text);
+    // Tolerante a SÍ/NO natural (texto). Aquí la pregunta es si cancelar: «Sí, para
+    // cancelar la cita» es SÍ, no el «cancelar» de abandonar (2026-11-04).
+    const decision = this.interpretarConfirmarCancelacion(text);
     const prevState = await this.redis.get(
       `temp_interrupt_prev_state:${organizationId}:${senderId}`,
     );
@@ -13186,6 +13188,10 @@ export class ChatbotService implements OnModuleInit {
    * son SÍ: es justo lo que se le preguntó. En los demás pasos SÍ/NO «cancelar» es
    * abandonar (`interpretYesNo`), y con esa regla este paso tomaba «sí, cancelar»
    * por NO y le dejaba la cita a quien la quería cancelar (2026-10-15).
+   *
+   * También sirve para «¿interrumpo el agendamiento para cancelar?» (2026-11-04):
+   * allí «Sí, para cancelar la cita de las 12:10» se tomaba por NO y el asistente
+   * retomaba el agendamiento. «No quiero cancelarla» sigue siendo NO.
    */
   private interpretarConfirmarCancelacion(
     text: string | undefined | null,
@@ -13200,7 +13206,7 @@ export class ChatbotService implements OnModuleInit {
       .trim();
     if (!t) return null;
     if (
-      /\bno (la |lo |me la )?(cancel\w*|cansel\w*|anul\w*)|\b(mantener\w*|mantenga\w*|conservar\w*|dejarla|dejela|dejenla|dejala)\b/.test(
+      /\bno (quiero |deseo |voy a )?(la |lo |me la )?(cancel\w*|cansel\w*|anul\w*)|\b(mantener\w*|mantenga\w*|conservar\w*|dejarla|dejela|dejenla|dejala)\b/.test(
         t,
       )
     ) {
@@ -14754,9 +14760,12 @@ export class ChatbotService implements OnModuleInit {
           `temp_lookup_opciones:${organizationId}:${senderId}`,
         ),
       ) ?? OPCIONES_CONSULTA_FIJAS;
+    // Sin letra, «👍», «ok», «listo» o «gracias» es «Nada más, gracias» (2026-11-04).
     const elegida: OpcionConsulta | undefined = letra
       ? opciones[letra.charCodeAt(0) - 65]
-      : undefined;
+      : esCierreSinPedido(text)
+        ? 'NADA'
+        : undefined;
 
     // 🔒 Las opciones se mostraron antes de que la clínica apagara esa
     // operación: ya no se puede por el bot.
