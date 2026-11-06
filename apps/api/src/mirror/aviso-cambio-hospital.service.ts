@@ -467,6 +467,33 @@ export class AvisoCambioHospitalService {
   }
 
   /**
+   * La MISMA cita (mismo médico y hora) que el hospital volvió a crear después de
+   * anular la del paciente, aunque ya haya empezado: al recibirlo en la ventanilla
+   * el hospital la anula y la vuelve a crear, y a veces ya lo está atendiendo.
+   */
+  private buscarLaMismaVueltaACrear(
+    organizationId: string,
+    cita: CitaParaAviso,
+    desde: Date,
+  ): Promise<{ id: string } | null> {
+    return this.prisma.appointment.findFirst({
+      where: {
+        organizationId,
+        patientId: cita.patientId,
+        id: { not: cita.id },
+        status: { not: 'CANCELLED' },
+        origin: 'MIRROR',
+        createdAt: { gte: desde },
+        scheduleSlot: {
+          doctorId: cita.scheduleSlot.doctorId,
+          startTime: cita.scheduleSlot.startTime,
+        },
+      },
+      select: { id: true },
+    });
+  }
+
+  /**
    * ⏳ Cada minuto: las cancelaciones que esperaban por si el hospital volvía a
    * crear la cita (2026-10-29). Cada caso se reclama con compare-and-set sobre su
    * aviso `EN_ESPERA`: con dos réplicas, solo una le escribe al paciente.
@@ -735,14 +762,15 @@ export class AvisoCambioHospitalService {
     // La cita que el hospital le dio: desde 10 min antes del último cambio de la
     // cadena (la cancelación de la suya o, después, la de la que le dieron).
     const ultimoCambio = msDeIso(meta.cadenaDesdeIso ?? meta.canceladaIso);
+    const desdeElCambio = new Date(
+      (Number.isFinite(ultimoCambio)
+        ? ultimoCambio
+        : caso.firstSeenAt.getTime()) - VENTANA_CAMBIO_DE_HORA_MS,
+    );
     const nueva = await this.buscarCitaNueva(
       organizationId,
       cita,
-      new Date(
-        (Number.isFinite(ultimoCambio)
-          ? ultimoCambio
-          : caso.firstSeenAt.getTime()) - VENTANA_CAMBIO_DE_HORA_MS,
-      ),
+      desdeElCambio,
       ahora,
     );
     // La que el paciente cree tener (`null`: se le dijo que no tiene).
@@ -760,6 +788,34 @@ export class AvisoCambioHospitalService {
     // La hora que importa es la de la cita que tiene ahora, o la que cree tener.
     const inicio = (nueva ?? informada ?? cita).scheduleSlot.startTime;
     if (inicio.getTime() <= ahora.getTime()) {
+      // 🏥 Anulada y vuelta a crear igual en la ventanilla, minutos antes de la
+      // cita (2026-11-06: la de las 7:30 se anuló a las 7:26 y se volvió a crear a
+      // las 7:27; la paciente fue atendida). `buscarCitaNueva` solo ve citas por
+      // venir, y esta ya empezó: el caso quedaba abierto. Si al paciente nunca se
+      // le avisó nada, no hay nada que revisar y se cierra solo.
+      const otraVez =
+        informada === cita
+          ? await this.buscarLaMismaVueltaACrear(
+              organizationId,
+              cita,
+              desdeElCambio,
+            )
+          : null;
+      if (otraVez) {
+        await terminar({
+          aviso: 'NO_HIZO_FALTA',
+          motivo: 'MISMA_CITA',
+          nuevaIso: cita.scheduleSlot.startTime.toISOString(),
+          nuevaCitaId: otraVez.id,
+        });
+        await this.exceptions.autoResolver(
+          organizationId,
+          caso.id,
+          'El hospital volvió a crear la misma cita (mismo médico y hora): no hizo falta avisarle al paciente.',
+          ahora,
+        );
+        return;
+      }
       await terminar({ aviso: 'NO_ENVIADO', motivo: 'YA_PASO' });
       return;
     }

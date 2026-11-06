@@ -1063,6 +1063,13 @@ const FORMAL = {
       `Disculpe, no fue posible ubicar esa opción.\n\nPuede responder con una de las letras _(A, B, C...)_, escribirme el día u hora que prefiere _(por ejemplo: «el jueves»)_ o escribir *"Salir"* para terminar.`,
     ]),
 
+  // 👥 «A y B», «2 citas medicas» en el menú de cupos (2026-11-06): se agendan de a una.
+  variasCitasUnaPorUna: () =>
+    pick([
+      `Con gusto le ayudo con sus citas. 😊 Se agendan *una por una*: responda con la *letra* del horario para la primera.\n\nCuando quede lista, escríbame *Hola* y agendamos la siguiente con la cédula de esa persona.`,
+      `Claro que sí. Las citas se agendan *de a una*: elija primero la *letra* del horario para la primera persona.\n\nAl terminar, escriba *Hola* y seguimos con la otra.`,
+    ]),
+
   waitlistCupoDisponible: (
     nombre: string,
     especialidad: string,
@@ -1470,6 +1477,15 @@ const FORMAL = {
     pick([
       `Ese número no corresponde a una cédula válida.\n\n¿Me la confirma, por favor? Solo el número, sin puntos ni espacios.\n_(Ej: 18531928)_`,
       `Disculpe, no fue posible identificar el número correctamente.\n\nEscríbame solo los dígitos, sin separadores. _(Ej: 1088123456)_`,
+    ]),
+
+  // 🪪 En el paso de la cédula escribió una frase sin números (2026-11-06: «Si de
+  // pronto cancelan alguna cita y tienen el espacio antes…» recibía «Ese número no
+  // corresponde a una cédula válida»).
+  cedulaSinNumero: (fechaFormateada: string) =>
+    pick([
+      `Para seguir necesito la *cédula del paciente*${fechaFormateada ? ` del horario que le aparté:\n📅 *${fechaFormateada}*` : '.'}\n\nEscríbala solo con números, sin puntos. Si tiene otra pregunta, escríbala cuando terminemos, o escriba *"Salir"* si prefiere no agendar.`,
+      `Antes de seguir me falta la *cédula de quien va a la cita*, solo el número${fechaFormateada ? `, para el horario del 📅 *${fechaFormateada}*` : ''}.\n\nSi necesita otra cosa, escríbala después de agendar, o escriba *"Salir"* si prefiere no agendar.`,
     ]),
 
   cancelarPacienteNoExiste: (cedula: string) =>
@@ -2548,6 +2564,13 @@ const INFORMAL = {
       `No encontré esa opción. 😊 Mándame una de las letras (A, B, C...), o escríbeme el día u hora que prefieres (por ejemplo: «el jueves»), o *"Salir"* para terminar.`,
     ]),
 
+  // 👥 «A y B», «2 citas medicas» en el menú de cupos (2026-11-06): se agendan de a una.
+  variasCitasUnaPorUna: () =>
+    pick([
+      `¡Claro! 😊 Las citas se agendan *una por una*: respóndeme con la *letra* del horario para la primera.\n\nCuando quede lista, escríbeme *Hola* y agendamos la siguiente con la cédula de esa persona.`,
+      `¡Con gusto! Vamos *de a una*: elige primero la *letra* del horario para la primera persona.\n\nAl terminar, escribe *Hola* y seguimos con la otra. 🙌`,
+    ]),
+
   waitlistCupoDisponible: (
     nombre: string,
     especialidad: string,
@@ -2888,6 +2911,13 @@ const INFORMAL = {
     pick([
       `Mmm, ese número no me parece una cédula válida. 🙏 ¿Me la confirmas? Solo el número, sin puntos ni espacios. _(Ej: 18531928)_`,
       `Parece que no logré identificar el número. 😊 Mándame solo los dígitos, sin separadores. _(Ej: 1088123456)_`,
+    ]),
+
+  // 🪪 En el paso de la cédula escribió una frase sin números (2026-11-06).
+  cedulaSinNumero: (fechaFormateada: string) =>
+    pick([
+      `Para seguir necesito la *cédula del paciente*${fechaFormateada ? ` del horario que te aparté:\n📅 *${fechaFormateada}*` : '.'}\n\nEscríbela solo con números, sin puntos. Si tienes otra pregunta, escríbela cuando terminemos, o escribe *"Salir"* si prefieres no agendar.`,
+      `Antes de seguir me falta la *cédula de quien va a la cita*, solo el número${fechaFormateada ? `, para el horario del 📅 *${fechaFormateada}*` : ''}. 🙏\n\nSi necesitas otra cosa, escríbela después de agendar, o escribe *"Salir"* si prefieres no agendar.`,
     ]),
 
   cancelarPacienteNoExiste: (cedula: string) =>

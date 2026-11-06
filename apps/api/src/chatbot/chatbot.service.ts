@@ -123,6 +123,7 @@ import {
   ventanaOtroHorario,
   cuposDelMedicoNombrado,
   letraEnLaFrase,
+  pideVariasCitas,
   type PedidoOtroHorario,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
@@ -8768,8 +8769,13 @@ export class ChatbotService implements OnModuleInit {
         const fechaFormateada = fechaVista
           ? formatAppointmentLong(fechaVista)
           : '';
+        // 🪪 Una frase sin un solo número («Si de pronto cancelan alguna cita…»,
+        // 2026-11-06) no es una cédula mal escrita: se le recuerda qué falta.
+        const sinNumero = !/\d/.test(text ?? '');
         const reply = esReintentoDeCedula
-          ? MSGS.cancelarCedulaInvalida()
+          ? sinNumero
+            ? MSGS.cedulaSinNumero(fechaFormateada)
+            : MSGS.cancelarCedulaInvalida()
           : MSGS.pedirCedulaPostSlot(fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(
@@ -8784,7 +8790,9 @@ export class ChatbotService implements OnModuleInit {
             userMessage: text || '[audio]',
             botReply: reply,
             metadata: {
-              stage: 'BOOKING_CEDULA_MISSING_DIGITS',
+              stage: sinNumero
+                ? 'BOOKING_CEDULA_SIN_NUMERO'
+                : 'BOOKING_CEDULA_MISSING_DIGITS',
               retriesCount: retriesCount + 1,
               maxRetries,
             },
@@ -9149,6 +9157,20 @@ export class ChatbotService implements OnModuleInit {
           fecha: null,
           franja: null,
           otroDia: true,
+        });
+        return;
+      }
+
+      // 👥 «A y B», «2 citas medicas» (2026-11-06): agenda para varias personas a
+      // la vez. Se agendan una por una; se le dice así en vez de «no logré ubicar
+      // esa opción», y no cuenta como intento fallido.
+      if (pideVariasCitas(text)) {
+        const reply = MSGS.variasCitasUnaPorUna();
+        await this.smartReply(organizationId, senderId, reply);
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { step: 'VARIAS_CITAS_UNA_POR_UNA', state: currentState },
         });
         return;
       }

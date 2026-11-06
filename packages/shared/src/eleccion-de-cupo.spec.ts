@@ -1,4 +1,5 @@
 import {
+  pideVariasCitas,
   cuposDelMedicoNombrado,
   cuposMasCercanosALaHora,
   letraEnLaFrase,
@@ -117,4 +118,19 @@ describe("cuposDelMedicoNombrado", () => {
       [],
     );
   });
+});
+
+describe("pideVariasCitas — varias citas a la vez en el menú de cupos (2026-11-06)", () => {
+  it.each(["A y B", "a, b y c", "A B", "las A y B", "2 citas medicas", "Para pedir 2 consultas", "dos citas", "para dos personas", "ambas", "las dos citas"])(
+    "«%s» pide varias",
+    (t) => {
+      expect(pideVariasCitas(t)).toBe(true);
+    },
+  );
+  it.each(["A", "B", "la de las dos", "a las 2", "a las dos de la tarde", "A o B", "mañana", "Para confirmar", "", null])(
+    "«%s» no",
+    (t) => {
+      expect(pideVariasCitas(t)).toBe(false);
+    },
+  );
 });

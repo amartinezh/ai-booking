@@ -103,6 +103,29 @@ export function letraEnLaFrase(texto: string | null | undefined): string {
   return "";
 }
 
+/**
+ * ¿Pide varias citas a la vez en el menú de cupos? (2026-11-06) Una persona que
+ * agendaba para dos familiares respondió «A y B» y «2 citas medicas», y recibió
+ * cuatro veces «no logré ubicar esa opción». Se agendan una por una: el asistente
+ * se lo dice en vez de tratarlo como una letra equivocada.
+ *   «A y B», «a, b y c», «2 citas», «dos consultas», «para dos personas», «ambas».
+ * «La de las dos» o «a las 2» son una hora: no cuentan.
+ */
+export function pideVariasCitas(texto: string | null | undefined): boolean {
+  if (!texto) return false;
+  const t = normalizar(texto);
+  if (!t) return false;
+  if (/^(?:(?:la|las|opcion|opciones|letra|letras)\s+)?[a-h](?:\s*(?:y|e|o)?\s+(?:la\s+)?[a-h])+$/.test(t)) {
+    // «a y b», «a b», «las a y b»; pero «a o b» es indecisión, no dos citas.
+    return !/\bo\b/.test(t);
+  }
+  return (
+    /\b(?:2|3|4|dos|tres|cuatro|varias)\s+(?:citas?|consultas?|turnos?|cupos?|personas?|pacientes?)\b/.test(t) ||
+    /\b(?:ambas|ambos)\b/.test(t) ||
+    /\blas\s+dos\s+(?:citas|consultas|opciones)\b/.test(t)
+  );
+}
+
 /** Palabras del nombre de un médico que no lo distinguen de otro. */
 const NO_DISTINGUEN = new Set([
   "dr",

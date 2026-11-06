@@ -824,6 +824,25 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(appointments.bookAppointment).not.toHaveBeenCalled();
     });
 
+    it('1.8e una pregunta en el paso de la cédula (2026-11-06) recibe qué falta, no «número no válido»', async () => {
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+
+      await say(
+        'Si de pronto cancelan alguna cita y tienen el espacio antes me avisan?',
+      );
+      expect(lastSent()).toMatch(/cédula (del paciente|de quien va a la cita)/);
+      expect(lastSent()).not.toMatch(
+        /no corresponde a una cédula válida|identificar el número/,
+      );
+      expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+      // Sigue contando como intento (el tope de reintentos no cambia).
+      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBe('1');
+    });
+
     it('1.8c la PRIMERA petición de cédula no penaliza reintentos', async () => {
       await say('Hola');
       await say('A');
@@ -1312,6 +1331,28 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(lastSent()).toMatch(/no quedan más horarios/);
       expect(await state()).toBe(ChatState.IDLE);
     });
+
+    it.each(['A y B', '2 citas medicas'])(
+      '1B.26 «%s» (2026-11-06, agenda para dos familiares): se le dice que se agendan una por una, sin contar como error',
+      async (frase) => {
+        await hastaLosCupos();
+        await say(frase);
+        expect(lastSent()).toMatch(/una por una|de a una/);
+        expect(interactionLog.logFailure).not.toHaveBeenCalledWith(
+          expect.objectContaining({ reason: 'SLOT_NOT_UNDERSTOOD' }),
+        );
+        expect(
+          redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+        // Y después elige la primera con la letra, como siempre.
+        const primera = letra('A');
+        expect(primera).toBeDefined();
+        await say('A');
+        expect(elegido()).toBe(primera);
+        expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+      },
+    );
   });
 
   describe('1H. Confirmación con el hospital (H10)', () => {

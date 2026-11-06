@@ -683,6 +683,63 @@ describe('AvisoCambioHospitalService — ⏳ la espera antes de avisar una cance
     });
   });
 
+  it('🧾 2026-11-06: anulada 4 min antes y vuelta a crear al minuto; cuando toca avisar ya empezó → el caso se cierra solo', async () => {
+    const enCuatro = new Date(AHORA.getTime() + 4 * 60_000);
+    const suCita = cita({
+      scheduleSlot: { ...cita().scheduleSlot, startTime: enCuatro },
+    });
+    const t = armar({ cita: suCita });
+    await t.svc.alCancelarElHospital(ORG, 'apt-bot', AHORA);
+    // Al minuto, el hospital la crea igual al recibirla en la ventanilla.
+    const otraVez = { ...suCita, id: 'apt-otra-vez', origin: 'MIRROR' };
+    t.prisma.appointment.findFirst.mockImplementation(
+      async ({ where }: any) => {
+        if (typeof where.id === 'string') return suCita;
+        // La búsqueda de la cita nueva solo ve las que no han empezado.
+        if (where.scheduleSlot?.startTime?.gt) return null;
+        return otraVez;
+      },
+    );
+    await t.svc.avisarLosPendientes(new Date(AHORA.getTime() + 5 * 60_000));
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.templates.sendTemplate).not.toHaveBeenCalled();
+    expect(t.final()).toMatchObject({
+      meta: {
+        aviso: 'NO_HIZO_FALTA',
+        motivo: 'MISMA_CITA',
+        nuevaCitaId: 'apt-otra-vez',
+      },
+    });
+    expect(t.exceptions.autoResolver).toHaveBeenCalledWith(
+      ORG,
+      'caso-1',
+      expect.stringContaining('volvió a crear la misma cita'),
+      expect.any(Date),
+    );
+    // La busca con el mismo médico y la misma hora, aunque ya haya empezado.
+    const where = t.prisma.appointment.findFirst.mock.calls.at(-1)[0].where;
+    expect(where.scheduleSlot).toEqual({
+      doctorId: 'doc-yulieth',
+      startTime: enCuatro,
+    });
+    expect(where.status).toEqual({ not: 'CANCELLED' });
+  });
+
+  it('ya empezó y el hospital NO la volvió a crear → YA_PASO y el caso queda para el personal', async () => {
+    const enCuatro = new Date(AHORA.getTime() + 4 * 60_000);
+    const t = armar({
+      cita: cita({
+        scheduleSlot: { ...cita().scheduleSlot, startTime: enCuatro },
+      }),
+    });
+    await t.svc.alCancelarElHospital(ORG, 'apt-bot', AHORA);
+    await t.svc.avisarLosPendientes(new Date(AHORA.getTime() + 5 * 60_000));
+    expect(t.final()).toMatchObject({
+      meta: { aviso: 'NO_ENVIADO', motivo: 'YA_PASO' },
+    });
+    expect(t.exceptions.autoResolver).not.toHaveBeenCalled();
+  });
+
   it('si otra réplica ya lo tomó, esta no le escribe', async () => {
     const t = armar();
     await t.svc.alCancelarElHospital(ORG, 'apt-bot', AHORA);

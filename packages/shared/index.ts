@@ -390,6 +390,7 @@ export {
   cuposDelMedicoNombrado,
   cuposMasCercanosALaHora,
   letraEnLaFrase,
+  pideVariasCitas,
 } from './src/eleccion-de-cupo';
 export {
   ANTICIPACION_RECORDATORIO,
