@@ -42,6 +42,30 @@ export class RedisService extends Redis implements OnModuleDestroy {
     });
   }
 
+  /**
+   * Las claves que casan con un patrón, con SCAN y no con KEYS (auditoría
+   * 2026-11-07): KEYS recorre todo el espacio de claves de una vez y bloquea a
+   * Redis mientras tanto; con pocas claves no se nota, con muchas frena al bot.
+   * SCAN va por tandas y deja pasar los demás comandos. Devuelve cada clave una
+   * vez aunque SCAN la repita.
+   */
+  async scanKeys(pattern: string): Promise<string[]> {
+    const claves = new Set<string>();
+    let cursor = '0';
+    do {
+      const [siguiente, tanda] = await this.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        200,
+      );
+      cursor = siguiente;
+      for (const k of tanda) claves.add(k);
+    } while (cursor !== '0');
+    return [...claves];
+  }
+
   onModuleDestroy() {
     this.disconnect();
   }

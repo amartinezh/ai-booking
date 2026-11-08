@@ -19,6 +19,7 @@ import {
   compuertasHis,
   loteDeRecordatoriosCaido,
   destinoDeContacto,
+  enmascararDocumento,
   minutoLocal,
   normalizarAnticipacionRecordatorio,
   saludoPorHora,
@@ -706,7 +707,7 @@ export class AppointmentReminderCronService
       : null;
     if (!destino) {
       this.logger.warn(
-        `Cita ${apt.id} sin identificador de WhatsApp del paciente (${apt.patient?.cedula ?? 'sin cédula'}) — omitida.`,
+        `Cita ${apt.id} sin identificador de WhatsApp del paciente (${apt.patient?.cedula ? enmascararDocumento(apt.patient.cedula) : 'sin cédula'}) — omitida.`,
       );
       return 'skipped';
     }

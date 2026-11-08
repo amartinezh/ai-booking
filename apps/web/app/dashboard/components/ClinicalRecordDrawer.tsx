@@ -44,7 +44,10 @@ const ehrSchema = z.object({
     }))
 });
 
-type EhrFormValues = z.infer<typeof ehrSchema>;
+// zod 4: `z.coerce.number()` acepta cualquier cosa de entrada (`unknown`) y entrega un
+// número; el formulario declara las dos formas para que el resolver y el guardado casen.
+type EhrFormInput = z.input<typeof ehrSchema>;
+type EhrFormValues = z.output<typeof ehrSchema>;
 
 type ClinicalRecordAppointment = {
     id: string;
@@ -155,7 +158,7 @@ export default function ClinicalRecordDrawer({
     const [isProcessingAI, setIsProcessingAI] = useState(false);
     const [aiMissingFields, setAiMissingFields] = useState<string[]>([]);
 
-    const { register, control, handleSubmit, reset, getValues, setValue, formState: { errors } } = useForm<EhrFormValues>({
+    const { register, control, handleSubmit, reset, getValues, setValue, formState: { errors } } = useForm<EhrFormInput, unknown, EhrFormValues>({
         resolver: zodResolver(ehrSchema),
         defaultValues: {
             diagnoses: [{ description: '', code: '', isMain: true }],

@@ -66,7 +66,7 @@ export class ChatbotCron {
     //   chat_state:${organizationId}:${whatsappPhone}
     // El cron las recorre y, antes de mandar el aviso de cierre, resuelve
     // las credenciales del tenant.
-    const keys = await this.redis.keys('chat_state:*');
+    const keys = await this.redis.scanKeys('chat_state:*');
     if (keys.length === 0) return;
 
     for (const key of keys) {
@@ -222,18 +222,18 @@ export class ChatbotCron {
     // sesión (ver slotKey/slotDateKey en ChatbotService): sin el tenant en el
     // patrón, cerrar por inactividad en una clínica borraba también los cupos
     // que otra le estuviera ofreciendo al mismo paciente.
-    const slotKeys = await this.redis.keys(`temp_slot_*:${base}`);
-    const serviceMenuKeys = await this.redis.keys(`temp_service_*:${base}`);
-    const epsMenuKeys = await this.redis.keys(`temp_eps_[A-Z]_*:${base}`);
+    const slotKeys = await this.redis.scanKeys(`temp_slot_*:${base}`);
+    const serviceMenuKeys = await this.redis.scanKeys(`temp_service_*:${base}`);
+    const epsMenuKeys = await this.redis.scanKeys(`temp_eps_[A-Z]_*:${base}`);
     // Claves efímeras de los flujos de cancelación y reprogramación (espejo de
     // cleanUp(Cancel|Modify)Session en ChatbotService): evita dejar contexto
     // colgado cuando el cierre lo dispara el cron de inactividad.
-    const cancelKeys = await this.redis.keys(`temp_cancel_*:${base}`);
-    const selectedCancelKeys = await this.redis.keys(
+    const cancelKeys = await this.redis.scanKeys(`temp_cancel_*:${base}`);
+    const selectedCancelKeys = await this.redis.scanKeys(
       `temp_selected_cancel_*:${base}`,
     );
-    const modifyKeys = await this.redis.keys(`temp_modify_*:${base}`);
-    const selectedModifyKeys = await this.redis.keys(
+    const modifyKeys = await this.redis.scanKeys(`temp_modify_*:${base}`);
+    const selectedModifyKeys = await this.redis.scanKeys(
       `temp_selected_modify_*:${base}`,
     );
     await this.redis.del(

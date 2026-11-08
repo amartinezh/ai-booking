@@ -1,7 +1,7 @@
 {
   "name": "@agenia/mirror-agent",
   "version": "0.0.1",
-  "description": "Agente on-premise del motor de espejo de citas con HIS externos (patr\u00f3n de drivers). Ver docs/PLAN_ESPEJO_HOSPITAL.md.",
+  "description": "Agente on-premise del motor de espejo de citas con HIS externos (patrón de drivers). Ver docs/PLAN_ESPEJO_HOSPITAL.md.",
   "private": true,
   "license": "UNLICENSED",
   "main": "dist/index.js",
@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@agenia/shared": "workspace:^",
-    "mssql": "^11.0.1"
+    "mssql": "^12.7.14"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

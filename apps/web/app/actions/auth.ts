@@ -64,6 +64,35 @@ export async function loginUser(formData: FormData) {
             return { error: MSG_DEMASIADOS };
         }
 
+        // 0b. Tope por IP sola, con cualquier correo (auditoría 2026-11-07): frena el
+        // «rociado de claves» (una clave probada en muchos correos desde un equipo),
+        // que nunca llegaba al tope de correo+IP.
+        const desdeLaVentana = new Date(Date.now() - INTENTOS_INGRESO.VENTANA_MIN * 60_000);
+        const fallidosDeLaIp = await prisma.systemLog.count({
+            where: { action: 'LOGIN_FAILED', createdAt: { gte: desdeLaVentana }, metadata: { path: ['ip'], equals: origen.ip } },
+        });
+        if (fallidosDeLaIp >= INTENTOS_INGRESO.MAX_POR_IP) {
+            const yaFrenada = await prisma.systemLog.count({
+                where: {
+                    action: 'LOGIN_BLOCKED',
+                    createdAt: { gte: desdeLaVentana },
+                    AND: [{ metadata: { path: ['ip'], equals: origen.ip } }, { metadata: { path: ['alcance'], equals: 'IP' } }],
+                },
+            });
+            if (yaFrenada === 0) {
+                await registrarActividad({
+                    action: 'LOGIN_BLOCKED',
+                    level: 'WARNING',
+                    message: 'Ingreso frenado: demasiados intentos fallidos desde la misma IP con distintos correos',
+                    actor: null,
+                    organizationId: null,
+                    metadata: { email: clave, intentos: fallidosDeLaIp, alcance: 'IP' },
+                    origen,
+                });
+            }
+            return { error: MSG_DEMASIADOS };
+        }
+
         // 1. Buscar al usuario por correo e incluir su organización
         const user = await prisma.user.findUnique({
             where: { email },

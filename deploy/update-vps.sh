@@ -118,6 +118,7 @@ RSYNC_ARGS=(-az --delete
   --exclude 'coverage' --exclude '*.log' --exclude '.DS_Store' --exclude '.git'
   --exclude '.env' --exclude '.env.production'
   --exclude 'deploy/secrets' --exclude 'deploy/install.conf' --exclude 'deploy/Caddyfile'
+  --exclude '.claude' --exclude 'reports' --exclude 'research_notes' --exclude '/homologar-plan-*.txt' --exclude 'tunnel.sh'
 )
 [[ $DRY_RUN -eq 1 ]] && RSYNC_ARGS+=(--dry-run -v)
 rsync "${RSYNC_ARGS[@]}" \
@@ -137,6 +138,10 @@ ssh_remote "agenia mantenimiento 20" >/dev/null || warn "No se pudo abrir la ven
 
 # ── 2. Reconstruir web + api ────────────────────────────────────────────────
 head1 "2/4 · Reconstruyendo api y web"
+# 🔒 La API y la web corren como el usuario `node` (uid 1000) desde la auditoría
+# del 2026-11-07: las carpetas que la API escribe o lee por bind mount tienen que
+# ser de ese uid (el vigía, que corre como root, las lee igual).
+ssh_remote "install -d -m 750 -o 1000 -g 1000 /var/lib/agenia/alertas && chown -R 1000:1000 /var/lib/agenia/alertas /opt/agenia/deploy/secrets"
 ssh_remote "AGENIA_VERSION='$VERSION_DESPLIEGUE' agenia build api web"
 ok "Contenedores reconstruidos"
 

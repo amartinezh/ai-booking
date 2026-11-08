@@ -74,7 +74,8 @@ cmd_up()      { dc up -d "$@"; ok "Stack levantado"; }
 cmd_down()    { dc down "$@"; ok "Stack detenido"; }
 cmd_restart() { dc restart "$@"; ok "Reiniciado: ${*:-todo}"; }
 cmd_ps()      { dc ps; }
-cmd_build()   { exportar_version; dc build "$@" && dc up -d "$@"; ok "Reconstruido: ${*:-todo}"; }
+# `--pull`: trae la imagen base (node:22) actualizada en cada build, con sus parches.
+cmd_build()   { exportar_version; dc build --pull "$@" && dc up -d "$@"; ok "Reconstruido: ${*:-todo}"; }
 
 # La versión que dice el aviso de arranque de la API (alertas técnicas): la que
 # pase quien despliega (update-vps.sh la calcula en su computador, donde está el

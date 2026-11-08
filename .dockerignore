@@ -39,3 +39,10 @@ docs/*
 # quedar horneados en la imagen. Los .env por app SÍ entran porque
 # `next build` necesita DATABASE_URL en tiempo de compilación.
 .env.production
+
+# Notas y archivos locales del equipo: no van a la imagen (auditoría 2026-11-07).
+.claude
+reports
+research_notes
+/homologar-plan-*.txt
+tunnel.sh

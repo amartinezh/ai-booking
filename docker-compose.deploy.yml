@@ -29,6 +29,9 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: agenia_db
+    # 🔒 Auditoría 2026-11-07: ningún proceso del contenedor puede ganar privilegios.
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     logging: *default-logging
     # Solo accesible desde el propio host (túnel SSH para administrar).
@@ -52,14 +55,21 @@ services:
   redis:
     image: redis:7-alpine
     container_name: agenia_redis
+    # 🔒 Auditoría 2026-11-07: ningún proceso del contenedor puede ganar privilegios.
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     logging: *default-logging
     # Sin `ports`: solo la red interna de Docker lo alcanza.
-    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    # 🔒 Con REDIS_PASSWORD en .env.production, Redis exige contraseña (y la API la
+    # usa en REDIS_URL). Sin la variable, arranca sin contraseña como hasta ahora.
+    command: ["sh", "-c", "exec redis-server --appendonly yes --save 60 1 ${REDIS_PASSWORD:+--requirepass \"$$REDIS_PASSWORD\"}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\" --no-auth-warning} ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -78,6 +88,12 @@ services:
         # (docs/PLAN_ALERTAS_TECNICAS.md): la deja update-vps.sh (commit local)
         # o agenia.sh (commit del servidor, si tiene git). Queda EN la imagen.
         AGENIA_VERSION: ${AGENIA_VERSION:-}
+    # 🔒 Auditoría 2026-11-07: ningún proceso del contenedor puede ganar privilegios.
+    security_opt:
+      - no-new-privileges:true
+    # Un proceso de Node no necesita ninguna capacidad del kernel.
+    cap_drop:
+      - ALL
     restart: unless-stopped
     logging: *default-logging
     env_file: .env.production
@@ -85,7 +101,7 @@ services:
       # Estos ganan sobre .env.production: son topología, no configuración.
       - NODE_ENV=production
       - PORT=3000
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379
       # Fija la zona horaria del proceso. Red de seguridad para cualquier
       # `new Date()` o `toLocale*` sin timeZone explícito (ver CLAUDE.md).
       - TZ=${TZ:-America/Bogota}
@@ -116,6 +132,12 @@ services:
   migrator:
     image: agenia-api:latest
     profiles: ["tools"]
+    # 🔒 Auditoría 2026-11-07: ningún proceso del contenedor puede ganar privilegios.
+    security_opt:
+      - no-new-privileges:true
+    # Un proceso de Node no necesita ninguna capacidad del kernel.
+    cap_drop:
+      - ALL
     restart: "no"
     env_file: .env.production
     environment:
@@ -139,6 +161,12 @@ services:
       dockerfile: deploy/Dockerfile.web
       args:
         NEXT_PUBLIC_API_URL: http://api:3000
+    # 🔒 Auditoría 2026-11-07: ningún proceso del contenedor puede ganar privilegios.
+    security_opt:
+      - no-new-privileges:true
+    # Un proceso de Node no necesita ninguna capacidad del kernel.
+    cap_drop:
+      - ALL
     restart: unless-stopped
     logging: *default-logging
     env_file: .env.production
@@ -158,6 +186,9 @@ services:
   caddy:
     image: caddy:2-alpine
     container_name: agenia_proxy
+    # 🔒 Auditoría 2026-11-07: ningún proceso del contenedor puede ganar privilegios.
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     logging: *default-logging
     ports:

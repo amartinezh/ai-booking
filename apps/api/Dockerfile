@@ -1,6 +1,6 @@
 # apps/api/Dockerfile
 # 🚨 Cambiamos Alpine por Debian Slim (Bookworm)
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # 1. Instalar dependencias nativas (OpenSSL es VITAL para Prisma)
 RUN apt-get update -y && apt-get install -y openssl python3 make g++

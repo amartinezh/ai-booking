@@ -1,6 +1,6 @@
 # apps/web/Dockerfile
 # 🚨 Cambiamos Alpine por Debian Slim (Bookworm)
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # 1. Instalar OpenSSL para el motor de Prisma en el Frontend
 RUN apt-get update -y && apt-get install -y openssl

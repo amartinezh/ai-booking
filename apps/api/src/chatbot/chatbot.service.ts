@@ -124,6 +124,7 @@ import {
   cuposDelMedicoNombrado,
   letraEnLaFrase,
   pideVariasCitas,
+  enmascararIdentificadorWhatsapp,
   type PedidoOtroHorario,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
@@ -1290,7 +1291,7 @@ export class ChatbotService implements OnModuleInit {
   ): Promise<
     Array<{ letra: string; slotId: string; fecha: Date; medico: string }>
   > {
-    const keys = await this.redis.keys(
+    const keys = await this.redis.scanKeys(
       `temp_slot_*:${organizationId}:${senderId}`,
     );
     const letras = [
@@ -2698,13 +2699,13 @@ export class ChatbotService implements OnModuleInit {
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
-    const slotKeys = await this.redis.keys(
+    const slotKeys = await this.redis.scanKeys(
       `temp_slot_*:${organizationId}:${senderId}`,
     );
-    const serviceMenuKeys = await this.redis.keys(
+    const serviceMenuKeys = await this.redis.scanKeys(
       `temp_service_*:${organizationId}:${senderId}`,
     );
-    const epsMenuKeys = await this.redis.keys(
+    const epsMenuKeys = await this.redis.scanKeys(
       `temp_eps_[A-Z]_*:${organizationId}:${senderId}`,
     );
     await this.redis.del(
@@ -2784,7 +2785,7 @@ export class ChatbotService implements OnModuleInit {
   }
 
   private async cleanUpCancelSession(organizationId: string, senderId: string) {
-    const cancelKeys = await this.redis.keys(
+    const cancelKeys = await this.redis.scanKeys(
       `temp_cancel_*:${organizationId}:${senderId}`,
     );
     if (cancelKeys.length > 0) await this.redis.del(...cancelKeys);
@@ -2797,11 +2798,11 @@ export class ChatbotService implements OnModuleInit {
 
   // Limpia el contexto efímero del flujo de reprogramación (espejo del de cancelación).
   private async cleanUpModifySession(organizationId: string, senderId: string) {
-    const modifyKeys = await this.redis.keys(
+    const modifyKeys = await this.redis.scanKeys(
       `temp_modify_*:${organizationId}:${senderId}`,
     );
     if (modifyKeys.length > 0) await this.redis.del(...modifyKeys);
-    const selectedKeys = await this.redis.keys(
+    const selectedKeys = await this.redis.scanKeys(
       `temp_selected_modify_*:${organizationId}:${senderId}`,
     );
     if (selectedKeys.length > 0) await this.redis.del(...selectedKeys);
@@ -2824,7 +2825,7 @@ export class ChatbotService implements OnModuleInit {
     });
 
     // Limpiar mapping previo de servicios
-    const prev = await this.redis.keys(
+    const prev = await this.redis.scanKeys(
       `temp_service_*:${organizationId}:${senderId}`,
     );
     if (prev.length > 0) await this.redis.del(...prev);
@@ -2876,7 +2877,7 @@ export class ChatbotService implements OnModuleInit {
       orderBy: { name: 'asc' },
     });
 
-    const prev = await this.redis.keys(
+    const prev = await this.redis.scanKeys(
       `temp_eps_${'*'}:${organizationId}:${senderId}`,
     );
     // Solo limpiar los del menú, no temp_eps_query/temp_eps_id si ya existen
@@ -3748,7 +3749,7 @@ export class ChatbotService implements OnModuleInit {
         return undefined;
     }
     try {
-      const keys = await this.redis.keys(pattern);
+      const keys = await this.redis.scanKeys(pattern);
       const seen = new Set<string>();
       for (const k of keys) {
         const m = k.match(regex);
@@ -6795,7 +6796,9 @@ export class ChatbotService implements OnModuleInit {
 
     // ── MÁXIMO REINTENTOS (configurable por org) ──────────────
     if (retriesCount >= maxRetries) {
-      this.logger.warn(`Máximo de reintentos (${maxRetries}) para ${senderId}`);
+      this.logger.warn(
+        `Máximo de reintentos (${maxRetries}) para ${enmascararIdentificadorWhatsapp(senderId)}`,
+      );
       await this.cleanUpSession(organizationId, senderId);
       const humanPhone = org?.supportPhone || '';
       const replyText = humanPhone
@@ -9368,7 +9371,7 @@ export class ChatbotService implements OnModuleInit {
   ): Promise<string[]> {
     const prefijo = `cupo_apartado:${organizationId}:`;
     const otros: string[] = [];
-    for (const key of await this.redis.keys(`${prefijo}*`)) {
+    for (const key of await this.redis.scanKeys(`${prefijo}*`)) {
       if ((await this.redis.get(key)) !== senderId) {
         otros.push(key.slice(prefijo.length));
       }
@@ -9603,7 +9606,7 @@ export class ChatbotService implements OnModuleInit {
 
     const vistosKey = this.cuposVistosKey(organizationId, senderId);
     const anteriores = (
-      await this.redis.keys(`temp_slot_*:${organizationId}:${senderId}`)
+      await this.redis.scanKeys(`temp_slot_*:${organizationId}:${senderId}`)
     ).filter((k) => k !== vistosKey);
     if (anteriores.length > 0) await this.redis.del(...anteriores);
 
@@ -15738,7 +15741,7 @@ export class ChatbotService implements OnModuleInit {
     const letras = [
       ...new Set(
         (
-          await this.redis.keys(
+          await this.redis.scanKeys(
             `temp_modify_newslot_*:${organizationId}:${senderId}`,
           )
         )
@@ -15788,7 +15791,7 @@ export class ChatbotService implements OnModuleInit {
     metadata: Record<string, unknown>;
   }): Promise<void> {
     const { organizationId, senderId, MSGS, slots } = p;
-    const anteriores = await this.redis.keys(
+    const anteriores = await this.redis.scanKeys(
       `temp_modify_newslot_*:${organizationId}:${senderId}`,
     );
     if (anteriores.length > 0) await this.redis.del(...anteriores);

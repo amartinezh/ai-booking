@@ -14,6 +14,13 @@ describe('ChatbotCron — cierre por inactividad de una sesión de Telegram', ()
   const build = (sender: string, withChannel = true) => {
     const key = `chat_state:${ORG}:${sender}`;
     const redis = {
+      // El código usa scanKeys (SCAN); el mock delega en keys para seguir contando sus llamadas.
+      scanKeys: jest.fn(function (
+        this: { keys: (p: string) => unknown },
+        pattern: string,
+      ) {
+        return this.keys(pattern);
+      }),
       keys: jest.fn((p: string) => (p.startsWith('chat_state:') ? [key] : [])),
       get: jest.fn((k: string) =>
         k.startsWith('alta_en_curso:') ? null : ChatState.AWAITING_SPECIALTY,

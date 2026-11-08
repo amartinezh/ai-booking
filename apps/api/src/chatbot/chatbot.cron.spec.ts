@@ -27,6 +27,13 @@ function build(opts: {
   }
 
   const redis = {
+    // El código usa scanKeys (SCAN); el mock delega en keys para seguir contando sus llamadas.
+    scanKeys: jest.fn(function (
+      this: { keys: (p: string) => unknown },
+      pattern: string,
+    ) {
+      return this.keys(pattern);
+    }),
     keys: jest.fn((pattern: string) =>
       pattern.startsWith('chat_state:') ? [key] : [],
     ),

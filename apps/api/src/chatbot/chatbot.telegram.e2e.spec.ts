@@ -77,6 +77,13 @@ function createFakeRedis() {
       for (const k of keys) if (store.delete(k)) n++;
       return n;
     }),
+    // El código usa scanKeys (SCAN); el mock delega en keys para seguir contando sus llamadas.
+    scanKeys: jest.fn(function (
+      this: { keys: (p: string) => unknown },
+      pattern: string,
+    ) {
+      return this.keys(pattern);
+    }),
     keys: jest.fn((pattern: string) => {
       const re = globToRegex(pattern);
       return [...store.keys()].filter((k) => re.test(k));

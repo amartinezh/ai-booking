@@ -164,6 +164,31 @@ describe('loginUser — huella de cada ingreso', () => {
         expect(logCreate).not.toHaveBeenCalled();
     });
 
+    it(`tras ${INTENTOS_INGRESO.MAX_POR_IP} fallidos desde la misma IP con distintos correos, frena aunque este correo no haya fallado (2026-11-07)`, async () => {
+        // 1.º correo+IP: 0 fallidos; 2.º IP sola: en el tope; 3.º ¿ya frenada esta IP?: no.
+        logCount.mockResolvedValueOnce(0).mockResolvedValueOnce(INTENTOS_INGRESO.MAX_POR_IP).mockResolvedValueOnce(0);
+        findUnique.mockResolvedValue(usuario());
+        const r = await loginUser(form('otro@clinica.co', CLAVE));
+
+        expect(r.error).toMatch(/Demasiados intentos/);
+        expect(findUnique).not.toHaveBeenCalled();
+        expect(cookieSet).not.toHaveBeenCalled();
+        // El segundo conteo es solo por IP, sin correo.
+        const where = logCount.mock.calls[1][0].where;
+        expect(where.action).toBe('LOGIN_FAILED');
+        expect(where.metadata).toEqual({ path: ['ip'], equals: '190.25.1.2' });
+        expect(where.AND).toBeUndefined();
+        const [frenado] = registros('LOGIN_BLOCKED');
+        expect(frenado.metadata).toMatchObject({ alcance: 'IP', intentos: INTENTOS_INGRESO.MAX_POR_IP });
+    });
+
+    it('por debajo del tope por IP, el ingreso sigue su curso normal', async () => {
+        logCount.mockResolvedValueOnce(0).mockResolvedValueOnce(INTENTOS_INGRESO.MAX_POR_IP - 1);
+        findUnique.mockResolvedValue(usuario());
+        const r = await loginUser(form('Agenda@Clinica.co', CLAVE));
+        expect(r).toEqual({ success: true, role: 'BOOKING_AGENT' });
+    });
+
     it('sin IP conocida, cuenta igual con «desconocida»', async () => {
         cabeceras = {};
         findUnique.mockResolvedValue(null);
