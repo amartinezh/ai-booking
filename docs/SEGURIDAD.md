@@ -35,6 +35,7 @@
 | 17 | `fail2ban` tiene en `ignoreip` solo una de las dos IP desde las que entra el administrador (`186.87.28.46`; también entra desde `181.79.57.172`). | Bajo | **Pendiente** (§3.2). |
 | 18 | El filtro global de errores de la API devuelve el `message` del error al cliente también en los 500. | Bajo | **Aceptado**: solo lo reciben clientes autenticados (panel, agente) o Meta, que no lo lee; las rutas públicas están en lista blanca. Se cambiará si la API se publica más. |
 | 19 | Next.js avisa que la convención `middleware.ts` pasará a `proxy.ts`. | Informativo | Pendiente (sin efecto hoy). |
+| 20 | **`.env` viejos en el servidor** (`/opt/agenia/apps/web/.env` y `packages/database/.env`, de la instalación del 2026-09-07, con `DATABASE_URL` y `JWT_SECRET`): el `rsync` los protege y el `build` copiaba el de la web dentro de la imagen (desde el 2026-11-08 el proceso `node` ya no puede leerlo y Next solo avisa `EACCES`; la configuración real llega por `env_file`). | Medio | **Corregido en código**: ningún `.env` entra a la imagen (`.dockerignore`, probado) ni viaja al servidor. **Pendiente en el servidor**: borrar los dos archivos (§3.6). |
 
 ### Lo que se revisó y está bien
 
@@ -43,6 +44,8 @@ Puertos (22, 80, 443; Postgres solo en `127.0.0.1:49317`; Redis sin puerto publi
 ## 3. Pasos pendientes en el servidor (con confirmación, en ventana de mantenimiento)
 
 Todos como `root` por SSH. Ninguno lo hace solo el despliegue; ninguno está hecho al escribir esto.
+
+**Estado al 2026-11-08 00:10:** el código de la auditoría está desplegado (`3a0b1b6`, 23:34) y verificado en producción: API y web como `uid 1000 (node)` con Node 22.23.4 y Next 16.4.5, `no-new-privileges` y `cap_drop ALL`, cabeceras nuevas visibles desde internet, sin `x-powered-by`, lista blanca y TLS intactos, vigía escribiendo su latido, Redis conectado, sin errores en los registros. **Los pasos 3.1 a 3.6 siguen pendientes.**
 
 ### 3.1 Parches del sistema y reinicio (≈ 3 minutos sin servicio)
 
@@ -99,6 +102,18 @@ Crear `agenia_app` con `LOGIN` y los permisos sobre el esquema `public` (`GRANT 
 ### 3.5 Respaldo fuera del servidor
 
 Con `rclone` a un almacenamiento cifrado (Backblaze B2, S3 o similar): un cron después del respaldo (`3:45`) que copie `/var/backups/agenia/agenia-*.sql.gz` con `rclone copy --max-age 2d`, y una prueba de restauración trimestral en el Postgres de pruebas. Sin esto, perder el disco del VPS es perder la historia.
+
+### 3.6 Limpieza tras el despliegue del 2026-11-08
+
+```sh
+# Los .env viejos que no usa nadie (la configuración llega por env_file) y las notas locales que rsync ya no borra.
+rm -f /opt/agenia/apps/web/.env /opt/agenia/packages/database/.env
+rm -rf /opt/agenia/.claude /opt/agenia/reports /opt/agenia/research_notes /opt/agenia/homologar-plan-*.txt
+# El proxy no se recreó con `agenia build api web`: así toma `no-new-privileges` (unos segundos sin TLS).
+cd /opt/agenia && docker compose --env-file .env.production -f docker-compose.deploy.yml up -d caddy
+# La imagen de la web sin el .env viejo dentro.
+agenia build web
+```
 
 ## 4. Desplegar estos cambios
 

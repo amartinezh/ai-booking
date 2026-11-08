@@ -46,3 +46,7 @@ reports
 research_notes
 /homologar-plan-*.txt
 tunnel.sh
+# Ningún .env entra a la imagen (en el servidor quedó uno viejo en apps/web, 2026-11-08); los ejemplos sí.
+**/.env
+**/.env.*
+!**/.env.example

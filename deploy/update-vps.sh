@@ -116,7 +116,7 @@ head1 "1/4 · Sincronizando código"
 RSYNC_ARGS=(-az --delete
   --exclude 'node_modules' --exclude '.next' --exclude 'dist' --exclude '.turbo'
   --exclude 'coverage' --exclude '*.log' --exclude '.DS_Store' --exclude '.git'
-  --exclude '.env' --exclude '.env.production'
+  --include '.env.example' --exclude '.env' --exclude '.env.*'
   --exclude 'deploy/secrets' --exclude 'deploy/install.conf' --exclude 'deploy/Caddyfile'
   --exclude '.claude' --exclude 'reports' --exclude 'research_notes' --exclude '/homologar-plan-*.txt' --exclude 'tunnel.sh'
 )
