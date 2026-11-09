@@ -341,10 +341,44 @@ const NO_DISPONIBLE_REPETIDO_TTL = 30 * 60;
  * atiende hipertensos y lectura de exámenes, así que el médico solo no basta.
  * El servicio es el del cupo: el espejo lo pone igual al de la cita del hospital.
  */
-const EN_ALCANCE_DEL_BOT = {
-  doctor: { whatsappBookingEnabled: true },
-  service: { isActive: true },
-} as const;
+/** Las citas que agendó el asistente (WhatsApp o Telegram). */
+const ORIGENES_DEL_ASISTENTE = ['WHATSAPP', 'TELEGRAM'] as const;
+
+/**
+ * 💬 Filtro de `Appointment`. Una cita que agendó el ASISTENTE sigue siendo suya
+ * aunque el hospital le cambie el servicio al cupo (2026-11-09): el hospital
+ * registra las citas de un médico con un servicio nuevo que AgenIA no tiene activo
+ * (s39141-13), el espejo le pone ese servicio al cupo, y la paciente que pidió por
+ * el chat cancelar su cita recibió «esa cita se gestiona con el hospital» y no tuvo
+ * recordatorio. El médico sí tiene que seguir en «WhatsApp ON». La base aplica la
+ * misma regla (`fn_interruptores_del_hospital`).
+ */
+const CITA_EN_ALCANCE_DEL_BOT: Prisma.AppointmentWhereInput = {
+  AND: [
+    { scheduleSlot: { doctor: { whatsappBookingEnabled: true } } },
+    {
+      OR: [
+        { origin: { in: [...ORIGENES_DEL_ASISTENTE] } },
+        { scheduleSlot: { service: { isActive: true } } },
+      ],
+    },
+  ],
+};
+
+/** Lo contrario de `CITA_EN_ALCANCE_DEL_BOT`. */
+const CITA_FUERA_DEL_ALCANCE_DEL_BOT: Prisma.AppointmentWhereInput = {
+  OR: [
+    { scheduleSlot: { doctor: { whatsappBookingEnabled: false } } },
+    {
+      scheduleSlot: { service: { isActive: false } },
+      origin: { notIn: [...ORIGENES_DEL_ASISTENTE] },
+    },
+  ],
+};
+
+/** ¿La agendó el asistente? */
+const esDelAsistente = (origin: string | null | undefined): boolean =>
+  (ORIGENES_DEL_ASISTENTE as readonly string[]).includes(origin ?? '');
 
 /** Quita tildes. Solo para comparar, igual que `textoParaCoincidencia`. */
 const sinTildes = (texto: string): string =>
@@ -4648,8 +4682,8 @@ export class ChatbotService implements OnModuleInit {
         reminderSentAt: { gte: new Date(ahora - 48 * 3_600_000) },
         scheduleSlot: {
           startTime: { gte: new Date(ahora - 3_600_000) },
-          ...EN_ALCANCE_DEL_BOT,
         },
+        ...CITA_EN_ALCANCE_DEL_BOT,
         patient: { OR: deQuien },
       },
       include: {
@@ -4707,8 +4741,8 @@ export class ChatbotService implements OnModuleInit {
         },
         scheduleSlot: {
           startTime: { gt: new Date(ahora) },
-          ...EN_ALCANCE_DEL_BOT,
         },
+        ...CITA_EN_ALCANCE_DEL_BOT,
         patient: { OR: deQuien },
       },
       include: {
@@ -4751,7 +4785,8 @@ export class ChatbotService implements OnModuleInit {
       where: {
         organizationId,
         status: 'SCHEDULED',
-        scheduleSlot: { startTime: { gt: new Date() }, ...EN_ALCANCE_DEL_BOT },
+        scheduleSlot: { startTime: { gt: new Date() } },
+        ...CITA_EN_ALCANCE_DEL_BOT,
         patient: { OR: deQuien },
       },
       include: {
@@ -5157,6 +5192,36 @@ export class ChatbotService implements OnModuleInit {
    * 🩺 Las citas próximas de quien escribe con las que AgenIA NO trabaja: de un
    * médico sin «WhatsApp ON» o de un servicio inactivo (odontología, hipertensos…).
    */
+  /**
+   * 💬 En qué servicio se buscan cupos para mover una cita (2026-11-09): el de su
+   * cupo; pero si la agendó el asistente y el hospital le cambió el servicio por uno
+   * inactivo, el de su médico (si está activo), que es el que se le agendó.
+   */
+  private async servicioParaMover(
+    organizationId: string,
+    apt: {
+      origin: string;
+      scheduleSlot: {
+        service: { name: string; isActive: boolean };
+        doctor: { serviceId: string | null };
+      };
+    },
+  ): Promise<string> {
+    const servicio = apt.scheduleSlot.service;
+    if (servicio.isActive || !esDelAsistente(apt.origin)) return servicio.name;
+    const delMedico = apt.scheduleSlot.doctor.serviceId
+      ? await this.prisma.medicalService.findFirst({
+          where: {
+            id: apt.scheduleSlot.doctor.serviceId,
+            organizationId,
+            isActive: true,
+          },
+          select: { name: true },
+        })
+      : null;
+    return delMedico?.name ?? servicio.name;
+  }
+
   private async citasFueraDelAlcanceDelRemitente(
     organizationId: string,
     identity: SenderIdentity,
@@ -5177,13 +5242,8 @@ export class ChatbotService implements OnModuleInit {
       where: {
         organizationId,
         status: 'SCHEDULED',
-        scheduleSlot: {
-          startTime: { gt: new Date() },
-          OR: [
-            { doctor: { whatsappBookingEnabled: false } },
-            { service: { isActive: false } },
-          ],
-        },
+        scheduleSlot: { startTime: { gt: new Date() } },
+        ...CITA_FUERA_DEL_ALCANCE_DEL_BOT,
         ...dequien,
       },
       include: {
@@ -11844,6 +11904,7 @@ export class ChatbotService implements OnModuleInit {
       where: { id: aptId, organizationId },
       select: {
         patientId: true,
+        origin: true,
         scheduleSlot: {
           select: {
             startTime: true,
@@ -11855,7 +11916,8 @@ export class ChatbotService implements OnModuleInit {
     });
     if (
       cita?.scheduleSlot?.doctor?.whatsappBookingEnabled === false ||
-      cita?.scheduleSlot?.service?.isActive === false
+      (cita?.scheduleSlot?.service?.isActive === false &&
+        !esDelAsistente(cita?.origin))
     ) {
       await this.responderCitasFueraDelAlcance({
         organizationId,
@@ -15095,7 +15157,8 @@ export class ChatbotService implements OnModuleInit {
       where: {
         patientId: patient.id,
         status: 'SCHEDULED',
-        scheduleSlot: { startTime: { gte: new Date() }, ...EN_ALCANCE_DEL_BOT },
+        scheduleSlot: { startTime: { gte: new Date() } },
+        ...CITA_EN_ALCANCE_DEL_BOT,
       },
       include: {
         scheduleSlot: { include: { doctor: true, service: true } },
@@ -15283,13 +15346,8 @@ export class ChatbotService implements OnModuleInit {
       where: {
         patientId,
         status: 'SCHEDULED',
-        scheduleSlot: {
-          startTime: { gte: new Date() },
-          OR: [
-            { doctor: { whatsappBookingEnabled: false } },
-            { service: { isActive: false } },
-          ],
-        },
+        scheduleSlot: { startTime: { gte: new Date() } },
+        ...CITA_FUERA_DEL_ALCANCE_DEL_BOT,
       },
     });
     return n > 0;
@@ -15452,7 +15510,8 @@ export class ChatbotService implements OnModuleInit {
       where: {
         patientId: patient.id,
         status: 'SCHEDULED',
-        scheduleSlot: { startTime: { gte: new Date() }, ...EN_ALCANCE_DEL_BOT },
+        scheduleSlot: { startTime: { gte: new Date() } },
+        ...CITA_EN_ALCANCE_DEL_BOT,
       },
       include: {
         scheduleSlot: { include: { doctor: true, service: true } },
@@ -15608,7 +15667,10 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    const serviceName = apt.scheduleSlot.service.name;
+    // 💬 Una cita del asistente cuyo servicio el hospital cambió por uno inactivo
+    // (2026-11-09) se mueve a cupos del servicio de su médico, que es el que se le
+    // agendó: el inactivo no tiene cupos para el chat.
+    const serviceName = await this.servicioParaMover(organizationId, apt);
     const fechaActual = formatAppointmentLong(apt.scheduleSlot.startTime);
 
     // Sin los que otro paciente del chat tiene apartados (2026-10-28).

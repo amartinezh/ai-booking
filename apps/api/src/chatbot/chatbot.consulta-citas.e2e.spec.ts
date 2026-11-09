@@ -173,6 +173,23 @@ function createPrisma(db: Db) {
       (servicio === undefined || (slot?.service?.isActive ?? true) === servicio)
     );
   };
+  /**
+   * 💬 El alcance sobre la CITA (2026-11-09): `AND`, `OR`, `origin` (`in` /
+   * `notIn`) y lo del cupo. Una cita que agendó el asistente sigue en alcance aunque
+   * su servicio esté inactivo (`CITA_EN_ALCANCE_DEL_BOT`).
+   */
+  const citaCumple = (w: any, a: any): boolean => {
+    if (!w) return true;
+    if (Array.isArray(w.AND) && !w.AND.every((x: any) => citaCumple(x, a))) {
+      return false;
+    }
+    if (Array.isArray(w.OR) && !w.OR.some((x: any) => citaCumple(x, a))) {
+      return false;
+    }
+    if (w.origin?.in && !w.origin.in.includes(a.origin)) return false;
+    if (w.origin?.notIn && w.origin.notIn.includes(a.origin)) return false;
+    return cupoCumple(w.scheduleSlot, slotDe(a));
+  };
   const pacientesDe = (where: any) =>
     db.patients.filter((p) =>
       where.OR
@@ -320,7 +337,7 @@ function createPrisma(db: Db) {
         // 🩺 Solo médicos con «WhatsApp ON» y servicios activos, si lo pide.
         const filas = db.appointments
           .filter((a) => delPaciente(a) && a.status === where.status)
-          .filter((a) => cupoCumple(where.scheduleSlot, slotDe(a)))
+          .filter((a) => citaCumple(where, a))
           .filter(
             (a) =>
               !recordadaDesde ||
@@ -365,7 +382,7 @@ function createPrisma(db: Db) {
                 )) &&
             (!despues || slotDe(a).startTime > despues) &&
             (!desde || slotDe(a).startTime >= desde) &&
-            cupoCumple(where.scheduleSlot, slotDe(a)),
+            citaCumple(where, a),
         ).length;
       }),
       // La cita recordada de quien escribe (respuesta al recordatorio).
@@ -3095,6 +3112,105 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       await say('Sí');
       expect(db.appointments[0].status).toBe('SCHEDULED');
       expect(lastSent()).toContain('no se pueden gestionar por este medio');
+    });
+
+    // 💬 Caso real 2026-11-09: el hospital registra las citas del Dr. Germán García
+    // con un servicio nuevo (s39141-13) que AgenIA no tiene activo; el espejo se lo
+    // puso al cupo, y la paciente que pidió por el chat cancelar la cita que el
+    // chat le agendó recibió «se gestiona con el hospital». La cita del asistente
+    // sigue siendo suya.
+    describe('💬 una cita que agendó el asistente y cuyo servicio el hospital cambió', () => {
+      const SVC_NUEVO = {
+        id: 'svc-nuevo',
+        name: 'Servicio del hospital s39141-13',
+        isActive: false,
+      };
+      const citaDelChat = (id = 'apt-chat') => {
+        seedPaciente();
+        seedCita(id, MANANA, SVC_NUEVO);
+        db.appointments[db.appointments.length - 1].origin = 'WHATSAPP';
+      };
+
+      it('el SÍ la cancela', async () => {
+        citaDelChat();
+        redis.store.set(
+          `temp_selected_cancel_apt:${ORG_ID}:${SENDER}`,
+          'apt-chat',
+        );
+        redis.store.set(
+          `temp_selected_cancel_slot:${ORG_ID}:${SENDER}`,
+          'slot-apt-chat',
+        );
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_CANCEL_CONFIRM,
+        );
+        await say('Sí');
+        expect(db.appointments[0].status).toBe('CANCELLED');
+        expect(lastSent()).not.toContain(
+          'no se pueden gestionar por este medio',
+        );
+      });
+
+      it('«cancelar cita» no la deja como aviso para el personal', async () => {
+        citaDelChat();
+        await say('cancelar cita');
+        expect(lastSent()).not.toContain(
+          'Dejé su aviso para el personal del hospital',
+        );
+        expect(avisos.registrar).not.toHaveBeenCalled();
+      });
+
+      it('«gracias» a su recordatorio la confirma', async () => {
+        citaDelChat();
+        db.appointments[0].reminderSentAt = HACE_2H;
+        await say('Ok muchas gracias');
+        expect(lastSent()).toContain('Gracias por confirmar');
+      });
+
+      it('al cambiarle la fecha, se buscan cupos del servicio de su médico (el inactivo no tiene)', async () => {
+        const prisma = (service as any).prisma;
+        prisma.medicalService.findFirst.mockImplementation(
+          async ({ where }: any) =>
+            where.id === 'svc-del-medico' && where.isActive === true
+              ? { name: 'Medicina General' }
+              : null,
+        );
+        const cita = (origin: string) => ({
+          origin,
+          scheduleSlot: {
+            service: SVC_NUEVO,
+            doctor: { serviceId: 'svc-del-medico' },
+          },
+        });
+        await expect(
+          (service as any).servicioParaMover(ORG_ID, cita('WHATSAPP')),
+        ).resolves.toBe('Medicina General');
+        // Una cita del hospital se queda con el suyo.
+        await expect(
+          (service as any).servicioParaMover(ORG_ID, cita('MIRROR')),
+        ).resolves.toBe(SVC_NUEVO.name);
+        // Un servicio activo no se cambia.
+        await expect(
+          (service as any).servicioParaMover(ORG_ID, {
+            ...cita('WHATSAPP'),
+            scheduleSlot: {
+              service: { name: 'Consulta activa', isActive: true },
+              doctor: { serviceId: 'svc-del-medico' },
+            },
+          }),
+        ).resolves.toBe('Consulta activa');
+      });
+
+      it('la misma cita, pero del hospital: sigue fuera del alcance', async () => {
+        citaDelChat();
+        db.appointments[0].origin = 'MIRROR';
+        await say('cancelar cita');
+        expect(lastSent()).toContain(
+          'Dejé su aviso para el personal del hospital',
+        );
+        expect(db.appointments[0].status).toBe('SCHEDULED');
+      });
     });
   });
 

@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-11-08
+**Última actualización:** 2026-11-09
 
 ## Contenido
 
@@ -673,7 +673,7 @@ Esos cupos ya existían. Mira el calendario en vista Día para confirmarlo.
 
 #### Para qué sirve
 
-Cada médico pertenece a un servicio (Medicina General, Odontología, Pediatría…) y cada cupo hereda el servicio de su médico. Los servicios activos son el menú que el asistente le muestra al paciente cuando pide una cita, y con ellos se agrupan las Analíticas. Con la clínica conectada al hospital, cada cita trae el servicio que le dio el hospital, y AgenIA solo trabaja con las citas de servicios activos (y de médicos con WhatsApp ON): recordatorios, respuestas del asistente, cancelar y cambiar la fecha. Crear, activar, inactivar o eliminar un servicio queda registrado con quién lo hizo.
+Cada médico pertenece a un servicio (Medicina General, Odontología, Pediatría…) y cada cupo hereda el servicio de su médico. Los servicios activos son el menú que el asistente le muestra al paciente cuando pide una cita, y con ellos se agrupan las Analíticas. Con la clínica conectada al hospital, cada cita trae el servicio que le dio el hospital, y AgenIA solo trabaja con las citas de servicios activos (y de médicos con WhatsApp ON): recordatorios, respuestas del asistente, cancelar y cambiar la fecha. Un servicio nuevo que el hospital crea en su sistema llega a AgenIA solo e inactivo, con el nombre «Servicio del hospital» y su código: el asistente no lo ofrece hasta que lo actives aquí. La excepción son las citas que agendó el propio asistente: si el hospital les cambia el servicio por uno inactivo, siguen recibiendo recordatorio y el paciente puede confirmarlas, cancelarlas o cambiarles la fecha por el chat. Crear, activar, inactivar o eliminar un servicio queda registrado con quién lo hizo.
 
 #### Paso a paso
 
@@ -708,7 +708,7 @@ Cada médico pertenece a un servicio (Medicina General, Odontología, Pediatría
 
 ##### ¿Qué pasa si inactivo un servicio?
 
-El asistente deja de ofrecerlo en su menú, y AgenIA deja de trabajar con sus citas: no les manda recordatorio, el asistente no las cancela ni les cambia la fecha, y tampoco se pueden crear, cancelar ni mover desde el panel si la clínica está conectada al hospital (se hace en el sistema del hospital). Las citas y los cupos existentes no se borran.
+El asistente deja de ofrecerlo en su menú, y AgenIA deja de trabajar con sus citas —salvo las que agendó el propio asistente—: no les manda recordatorio, el asistente no las cancela ni les cambia la fecha, y tampoco se pueden crear, cancelar ni mover desde el panel si la clínica está conectada al hospital (se hace en el sistema del hospital). Las citas y los cupos existentes no se borran.
 
 ##### ¿Puedo cambiarle el nombre a un servicio?
 
@@ -2440,6 +2440,8 @@ Consulta: la clínica en Encuestas (CSAT) (ORG_ADMIN, `GET /organizations/:orgId
 
 AgenIA solo trabaja con las citas de **médicos con «Reservas por WhatsApp» encendido (WhatsApp ON)** y de **servicios activos**: recordatorios (automáticos y manuales), respuestas del asistente, cancelar y cambiar la fecha. Las demás citas que trae el hospital se ven en el panel, pero se gestionan solo en el sistema del hospital; con espejo, la base de datos frena crear, cancelar o mover citas fuera de ese alcance (`AGENIA_OPERACION_APAGADA:FUERA_DE_ALCANCE`).
 
+**Las citas que agendó el asistente siguen siendo suyas** (2026-11-09): una cita de origen WHATSAPP o TELEGRAM sigue en alcance aunque el servicio de su cupo ya no esté activo, siempre que su médico siga en WhatsApp ON. Recibe recordatorio (cron y manual), el asistente la confirma, la cancela o le cambia la fecha, y la base permite cancelarla o moverla desde ese cupo (nunca agendar ni mover HACIA un cupo de un servicio inactivo). Al cambiarle la fecha se buscan cupos del servicio de su médico, si está activo (`servicioParaMover`). Filtros `CITA_EN_ALCANCE_DEL_BOT` / `CITA_FUERA_DEL_ALCANCE_DEL_BOT` en `chatbot.service.ts`, el `AND` de `findEligibleAppointments` en `appointment-reminder.cron.ts` y `fn_interruptores_del_hospital`. Por qué: el hospital registra las citas de un médico con un servicio nuevo (s39141-13) que AgenIA no tiene activo; un servicio del hospital sin homologar se crea inactivo (`servicioHomologado`) y el espejo se lo pone al cupo de la cita (`alinearServicioDelCupo`, reconciliación). El 9 de noviembre, cuatro citas del chat con ese médico se quedaron sin recordatorio y una paciente que pidió por el chat cancelar la suya recibió «se gestiona con el hospital». Las citas del hospital de un servicio inactivo siguen fuera, y los servicios nuevos siguen llegando inactivos hasta que alguien los active en Servicios.
+
 ## 4. Recordatorios
 
 - **Automáticos**: un proceso de la API corre cada 15 minutos y envía el recordatorio a las citas que están a 24 horas hábiles (sin contar sábados ni domingos) —`REMINDER_BUSINESS_HOURS_BEFORE` y `REMINDER_CRON_MINUTES`—. Cada cita recibe uno solo (`Appointment.reminderSentAt`).
@@ -2483,7 +2485,7 @@ Cada cambio de una cita en AgenIA deja un evento en una cola transaccional (`Syn
 
 ### 5.4 Interruptores y candado de la base
 
-Con espejo, «Agendar», «Cancelar» y «Cambiar fecha» (Configuración) mandan en todo: encendidos, la operación se hace por el asistente y por el panel y llega al hospital; apagados, no se puede hacer en AgenIA y la base de datos la rechaza venga de donde venga (disparador `fn_interruptores_del_hospital`, error `AGENIA_OPERACION_APAGADA:<operación>`); también rechaza tocar citas cuya hora ya pasó (`CITA_PASADA`). El antiguo «envío al hospital» (`pushEnabled`) ya no decide nada. Lo que viene del hospital siempre entra. Regla pura en `packages/shared/src/compuerta-his.ts`; cada cambio de interruptor queda en la auditoría del espejo.
+Con espejo, «Agendar», «Cancelar» y «Cambiar fecha» (Configuración) mandan en todo: encendidos, la operación se hace por el asistente y por el panel y llega al hospital; apagados, no se puede hacer en AgenIA y la base de datos la rechaza venga de donde venga (disparador `fn_interruptores_del_hospital`, error `AGENIA_OPERACION_APAGADA:<operación>`); también rechaza tocar citas cuya hora ya pasó (`CITA_PASADA`) y las de fuera del alcance (`FUERA_DE_ALCANCE`), salvo cancelar o mover desde su cupo una cita que agendó el asistente aunque su servicio ya esté inactivo (2026-11-09, §3.11; el cupo nuevo siempre tiene que ser de un servicio activo). El antiguo «envío al hospital» (`pushEnabled`) ya no decide nada. Lo que viene del hospital siempre entra. Regla pura en `packages/shared/src/compuerta-his.ts`; cada cambio de interruptor queda en la auditoría del espejo.
 
 ### 5.5 Vigilante y Bandeja de sincronización
 
@@ -2746,6 +2748,7 @@ Comunicados de la clínica por WhatsApp (`/dashboard/mensajes-masivos`, solo ORG
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-11-09** — Las citas que agendó el asistente siguen siendo suyas aunque el hospital les cambie el servicio. Si el hospital registra una cita del chat con un servicio que AgenIA no tiene activo (llegan inactivos los servicios nuevos que el hospital crea), la cita sigue recibiendo recordatorio y el paciente puede confirmarla, cancelarla o cambiarle la fecha por el chat; al cambiarla se le ofrecen cupos del servicio de su médico. Ese día, cuatro citas del chat con un médico cuyo servicio el hospital cambió se quedaron sin recordatorio y una paciente no pudo cancelar la suya por el chat. Las citas del hospital de servicios inactivos siguen fuera, y los servicios nuevos se activan en Servicios.
 - **2026-11-08** — La auditoría de seguridad quedó desplegada y verificada en producción (procesos sin root, Node 22, Next 16.4.5, cabeceras nuevas). Además, ningún archivo `.env` entra ya a las imágenes ni viaja al servidor: en el servidor había uno viejo de la web dentro de la imagen. Diagnóstico de citas de la semana en la memoria del equipo (`docs/SEGURIDAD.md` para lo pendiente del servidor).
 - **2026-11-07** — Auditoría de seguridad (`docs/SEGURIDAD.md`). **Para quien usa el panel** casi nada cambia: desde una misma dirección ya no se pueden probar claves en muchos correos (tope de 20 intentos fallidos en 15 minutos), el panel no se puede incrustar en otro sitio, y una acción sin uso que traía la clave por defecto `temporal123` desapareció. **Por dentro:** Next.js y el resto de dependencias actualizadas (de 6 vulnerabilidades críticas y 68 altas a solo 2 de `xlsx`, sin arreglo publicado), Node 22 en las imágenes, los procesos de la API y la web dejan de ser root dentro de los contenedores, Redis puede exigir contraseña, los registros de la API ya no escriben cédulas ni celulares completos, y las notas locales no viajan al servidor. Quedan pasos en el servidor que exigen una ventana de mantenimiento.
 - **2026-11-06** — Arreglos del diagnóstico del viernes. **Bandeja:** cuando el hospital anula una cita del asistente minutos antes de la hora y la vuelve a crear igual al recibir al paciente en ventanilla, el caso «El hospital canceló una cita agendada por el asistente» ya se cierra solo, aunque la cita ya haya empezado cuando toca avisar (esa mañana uno quedó abierto aunque la paciente fue atendida). **Chat:** si alguien pide varias citas a la vez en el menú de horarios («A y B», «2 citas medicas»), el asistente le explica que se agendan una por una en vez de responder «no logré ubicar esa opción» (una persona que agendaba para dos familiares lo recibió cuatro veces); y si en el paso de la cédula escribe una pregunta, le recuerda que falta la cédula y que la pregunta la puede hacer al terminar, en vez de «ese número no corresponde a una cédula válida».

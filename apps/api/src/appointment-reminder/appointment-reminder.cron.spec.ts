@@ -744,7 +744,30 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       const where = (
         llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
-      expect(where.scheduleSlot.service).toEqual({ isActive: true });
+      // El servicio ya no va en el cupo: va en el `AND`, con la excepción de abajo.
+      expect(where.scheduleSlot.service).toBeUndefined();
+      expect(where.AND).toContainEqual({
+        OR: [
+          { origin: { in: ['WHATSAPP', 'TELEGRAM'] } },
+          { scheduleSlot: { service: { isActive: true } } },
+        ],
+      });
+    });
+
+    // 💬 2026-11-09: el hospital les puso a cuatro citas del chat un servicio nuevo
+    // que AgenIA no tiene activo, y se quedaron sin recordatorio.
+    it('💬 …salvo las que agendó el asistente: esas se recuerdan aunque el hospital les haya cambiado el servicio', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+      const where = (
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
+      )[0].where;
+      const alcance = where.AND.find((c: any) => Array.isArray(c.OR)).OR;
+      expect(alcance[0]).toEqual({ origin: { in: ['WHATSAPP', 'TELEGRAM'] } });
+      // El médico sí tiene que seguir en «WhatsApp ON», para todas.
+      expect(where.scheduleSlot.doctor).toEqual({
+        whatsappBookingEnabled: true,
+      });
     });
 
     it('☎️ sin casos abiertos la consulta no lleva filtro por paciente', async () => {
@@ -1212,6 +1235,30 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
       expect(templates.sendTemplate).not.toHaveBeenCalled();
       expect(prisma.appointment.update).not.toHaveBeenCalled();
+    });
+
+    // 💬 2026-11-09: una cita del chat a la que el hospital le cambió el servicio
+    // por uno inactivo sigue siendo del asistente.
+    it('💬 una cita que agendó el asistente, aunque su servicio ya esté inactivo, sí se recuerda a mano', async () => {
+      const { service, prisma } = build();
+      prisma.appointment.findFirst.mockResolvedValue({
+        ...cita({
+          scheduleSlot: {
+            startTime: new Date('2026-09-01T14:00:00.000Z'),
+            doctor: { fullName: 'GERMAN GARCIA', whatsappBookingEnabled: true },
+            service: {
+              name: 'Servicio del hospital s39141-13',
+              isActive: false,
+            },
+          },
+        }),
+        origin: 'WHATSAPP',
+      });
+
+      const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
+
+      expect(r.error ?? '').not.toMatch(/servicio de esta cita no está activo/);
+      expect(r.success).toBe(true);
     });
 
     it('envía y devuelve el reminderSentAt ya actualizado', async () => {

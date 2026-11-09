@@ -218,6 +218,13 @@ CREATE INDEX IF NOT EXISTS "idx_patient_fullname_trgm"
 --     de exámenes. Crear, cancelar o mover cualquier otra cita (odontología,
 --     hipertensos…) se frena aunque la operación esté encendida: esas citas se
 --     gestionan en el sistema del hospital.
+--     💬 Una cita que agendó el ASISTENTE (origen WHATSAPP o TELEGRAM) se puede
+--     CANCELAR, o MOVER a otro cupo, aunque su servicio ya no esté activo
+--     (2026-11-09): el hospital registra las citas de un médico con un servicio
+--     nuevo que AgenIA no tiene activo (s39141-13), el espejo le pone ese servicio
+--     al cupo, y la paciente que pidió por el chat cancelar su cita no pudo. El
+--     médico tiene que seguir en WhatsApp ON, y el cupo NUEVO (al agendar o al
+--     mover) siempre de un servicio activo.
 --   · CITA_PASADA (2026-10-16): cancelar o mover desde AgenIA una cita cuya hora
 --     ya llegó se frena: en el hospital sería borrar una cita ya cumplida o
 --     perdida (el bot ofreció cancelar a las 7:25 una cita de las 7:30 y el SÍ
@@ -281,7 +288,9 @@ BEGIN
       JOIN "DoctorProfile" d ON d.id = ss."doctorId"
       JOIN "MedicalService" sv ON sv.id = ss."serviceId"
      WHERE ss.id = NEW."scheduleSlotId"
-       AND d."whatsappBookingEnabled" = true AND sv."isActive" = true
+       AND d."whatsappBookingEnabled" = true
+       AND (sv."isActive" = true
+            OR (v_op = 'CANCELAR' AND NEW."origin"::text IN ('WHATSAPP', 'TELEGRAM')))
   ) OR (
     TG_OP = 'UPDATE' AND NEW."scheduleSlotId" IS DISTINCT FROM OLD."scheduleSlotId"
     AND NOT EXISTS (
@@ -289,7 +298,8 @@ BEGIN
         JOIN "DoctorProfile" d ON d.id = ss."doctorId"
         JOIN "MedicalService" sv ON sv.id = ss."serviceId"
        WHERE ss.id = OLD."scheduleSlotId"
-         AND d."whatsappBookingEnabled" = true AND sv."isActive" = true
+         AND d."whatsappBookingEnabled" = true
+         AND (sv."isActive" = true OR OLD."origin"::text IN ('WHATSAPP', 'TELEGRAM'))
     )
   ) THEN
     RAISE EXCEPTION 'AGENIA_OPERACION_APAGADA:FUERA_DE_ALCANCE'

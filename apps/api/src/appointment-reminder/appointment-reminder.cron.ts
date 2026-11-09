@@ -499,8 +499,19 @@ export class AppointmentReminderCronService
           // hipertensos y lectura de exámenes). El servicio es el del cupo, que
           // el espejo pone igual al de la cita del hospital.
           doctor: { whatsappBookingEnabled: true },
-          service: { isActive: true },
         },
+        // 💬 …salvo las que agendó el asistente (2026-11-09): si el hospital le
+        // cambió el servicio al cupo (uno nuevo que AgenIA no tiene activo, como
+        // s39141-13), la cita sigue siendo nuestra y su paciente recibe el
+        // recordatorio. El 9-nov, cuatro citas del chat se quedaron sin él.
+        AND: [
+          {
+            OR: [
+              { origin: { in: [...ORIGENES_AGENDADOS_POR_EL_PACIENTE] } },
+              { scheduleSlot: { service: { isActive: true } } },
+            ],
+          },
+        ],
         // ☎️ Ni a quien, según la persona que contestó, tiene el número de otro
         // (ver `pacientesConTelefonoEquivocado`). En la consulta, por lo mismo que
         // el opt-out: no se marca, y si el caso se cierra a tiempo, sale.
@@ -1032,7 +1043,7 @@ export class AppointmentReminderCronService
     }
 
     // 🩺 El mismo alcance que el cron: solo médicos con «WhatsApp ON» y
-    // servicios activos.
+    // servicios activos (o una cita que agendó el asistente, 2026-11-09).
     if (apt.scheduleSlot?.doctor?.whatsappBookingEnabled === false) {
       return {
         success: false,
@@ -1041,7 +1052,12 @@ export class AppointmentReminderCronService
           'El médico de esta cita no tiene «WhatsApp ON» en Médicos: AgenIA no le escribe a sus pacientes.',
       };
     }
-    if (apt.scheduleSlot?.service?.isActive === false) {
+    if (
+      apt.scheduleSlot?.service?.isActive === false &&
+      !(ORIGENES_AGENDADOS_POR_EL_PACIENTE as readonly string[]).includes(
+        apt.origin,
+      )
+    ) {
       return {
         success: false,
         outcome: 'skipped',
