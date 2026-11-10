@@ -10,9 +10,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   diaLocal,
   formatAppointmentLong,
+  HORARIO_LABORAL_POR_DEFECTO,
   inicioMinimoParaOfrecer,
   isTelegramSender,
   minutoLocal,
+  puedeAvisarAhora,
+  type HorarioAvisos,
 } from '@agenia/shared';
 import { Prisma } from '@agenia/database';
 import { cupoBloqueadoParaElAsistente } from '../appointments/bloqueos-agenda';
@@ -135,6 +138,14 @@ function conservadoComoObjeto(
  * horas y 7 personas leyeron la oferta después de los 30 minutos; dos de ellas
  * contestaron «Sí» a los 76 y 93 minutos y ya no lo tuvieron. La plantilla de Meta
  * dice «30 minutos»: con un cupo lejano solo tiene más tiempo del prometido.
+ *
+ * 🏥 Con el mostrador del hospital trabajando, siempre 30 minutos (2026-11-10,
+ * `HORARIO_DEL_MOSTRADOR`). El cupo apartado no aparece en el menú del chat, pero el
+ * mostrador no lo ve apartado y lo agenda: el 10 de noviembre el hospital abrió la
+ * agenda del miércoles de MD09 a las 7:52, la lista recibió 21 cupos apartados por 2
+ * horas, y el mostrador agendó 16 entre las 7:55 y las 8:59 (la mitad en menos de
+ * 30 minutos); la lista tomó 5 y el chat no vio ninguno. Las 2 horas quedan para
+ * las ofertas de la noche, el domingo y los festivos, cuando nadie compite.
  */
 export const PLAZO_PARA_CONTESTAR = {
   cercanoMin: 30,
@@ -142,7 +153,24 @@ export const PLAZO_PARA_CONTESTAR = {
   horasCupoLejano: 12,
 } as const;
 
-export function minutosParaContestar(slotDate: Date, ahora: Date): number {
+/**
+ * 🏥 El horario del mostrador del hospital (2026-11-10): de lunes a sábado, de 7:00
+ * a 17:00, hora de la clínica, sin domingos ni festivos de Colombia. El mismo
+ * horario laboral de los avisos de la Bandeja (`HORARIO_LABORAL_POR_DEFECTO`).
+ */
+export const HORARIO_DEL_MOSTRADOR: HorarioAvisos = {
+  aCualquierHora: false,
+  ...HORARIO_LABORAL_POR_DEFECTO,
+};
+
+export function minutosParaContestar(
+  slotDate: Date,
+  ahora: Date,
+  timeZone?: string,
+): number {
+  if (puedeAvisarAhora(ahora, HORARIO_DEL_MOSTRADOR, timeZone)) {
+    return PLAZO_PARA_CONTESTAR.cercanoMin;
+  }
   return slotDate.getTime() - ahora.getTime() >=
     PLAZO_PARA_CONTESTAR.horasCupoLejano * 3_600_000
     ? PLAZO_PARA_CONTESTAR.lejanoMin
@@ -512,7 +540,13 @@ export class WaitlistService {
   ): Promise<boolean> {
     const ahora = new Date();
     const expiresAt = new Date(
-      ahora.getTime() + minutosParaContestar(cupo.slotDate, ahora) * 60_000,
+      ahora.getTime() +
+        minutosParaContestar(
+          cupo.slotDate,
+          ahora,
+          await this.zonaDeLaClinica(cupo.organizationId),
+        ) *
+          60_000,
     );
 
     const antes = readWaitlistMetadata(candidate.metadata);

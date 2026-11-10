@@ -338,7 +338,28 @@ describe('WaitlistService', () => {
       });
     });
 
-    it('marca NOTIFIED y guarda el cupo pendiente; un cupo a más de 12 h da 2 horas para contestar', async () => {
+    // El plazo depende de la hora (2026-11-10: con el mostrador abierto, 30 min):
+    // estas pruebas fijan el reloj y no dependen de cuándo se corren.
+    const NOCHE = new Date('2026-11-04T03:00:00.000Z'); // mar 3-nov, 10 p. m.
+    const MOSTRADOR = new Date('2026-11-10T12:52:00.000Z'); // mar 10-nov, 7:52 a. m.
+    const congelarEn = (fecha: Date) =>
+      jest.useFakeTimers({
+        now: fecha,
+        doNotFake: [
+          'nextTick',
+          'setImmediate',
+          'clearImmediate',
+          'setInterval',
+          'clearInterval',
+          'setTimeout',
+          'clearTimeout',
+          'queueMicrotask',
+        ],
+      });
+    afterEach(() => jest.useRealTimers());
+
+    it('marca NOTIFIED y guarda el cupo pendiente; de noche, un cupo a más de 12 h da 2 horas para contestar', async () => {
+      congelarEn(NOCHE);
       prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
       const antes = Date.now();
 
@@ -355,6 +376,24 @@ describe('WaitlistService', () => {
       const minutos = (data.expiresAt.getTime() - antes) / 60000;
       expect(minutos).toBeGreaterThan(119);
       expect(minutos).toBeLessThanOrEqual(120.5);
+    });
+
+    // 2026-11-10: el mostrador agendaba los cupos apartados 2 horas para la lista.
+    it('con el mostrador abierto, aunque el cupo sea lejano, 30 minutos', async () => {
+      congelarEn(MOSTRADOR);
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+      const antes = Date.now();
+
+      await service.notifyWaitlist(params);
+
+      const data = prisma.waitlistEntry.update.mock.calls[0][0].data;
+      const minutos = (data.expiresAt.getTime() - antes) / 60000;
+      expect(minutos).toBeGreaterThan(29);
+      expect(minutos).toBeLessThanOrEqual(30.5);
+      // Y el apartado (el chat no lo muestra) dura eso, no 2 horas.
+      expect(redis.ttl.get(`cupo_apartado:${ORG}:slot-1`)).toBeLessThanOrEqual(
+        32 * 60 + 1,
+      );
     });
 
     // 2026-11-03: 30 minutos si el cupo es pronto (hay que moverlo rápido).
@@ -573,6 +612,7 @@ describe('WaitlistService', () => {
       });
 
       it('el cupo ofrecido queda apartado para esa persona mientras responde (el chat no lo muestra)', async () => {
+        congelarEn(NOCHE);
         prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
         await service.notifyWaitlist(params);
         expect(redis.store.get(`cupo_apartado:${ORG}:slot-1`)).toBe(
@@ -1679,19 +1719,54 @@ describe('WaitlistService', () => {
   });
 
   describe('minutosParaContestar', () => {
-    const ahora = new Date('2026-11-03T15:00:00.000Z');
+    // Martes 3-nov-2026 a las 10:00 p. m. en Bogotá: el mostrador ya cerró.
+    const DE_NOCHE = new Date('2026-11-04T03:00:00.000Z');
     it.each([
       [1, 30],
       [11.9, 30],
       [12, 120],
       [72, 120],
-    ])('cupo en %d h → %d minutos', (horas, minutos) => {
+    ])('de noche, cupo en %d h → %d minutos', (horas, minutos) => {
       expect(
         minutosParaContestar(
-          new Date(ahora.getTime() + horas * 3_600_000),
-          ahora,
+          new Date(DE_NOCHE.getTime() + horas * 3_600_000),
+          DE_NOCHE,
         ),
       ).toBe(minutos);
+    });
+
+    // 2026-11-10: con el mostrador trabajando, el cupo apartado 2 horas lo llenaba
+    // el hospital (16 de 21 en MD09) y el chat no lo veía.
+    it.each([
+      ['martes 10-nov a las 7:52 a. m.', '2026-11-10T12:52:00.000Z'],
+      ['un sábado a las 9:00 a. m.', '2026-11-07T14:00:00.000Z'],
+      ['a las 4:59 p. m.', '2026-11-10T21:59:00.000Z'],
+    ])('con el mostrador abierto (%s), siempre 30 minutos', (_n, iso) => {
+      const ahora = new Date(iso);
+      expect(
+        minutosParaContestar(new Date(ahora.getTime() + 26 * 3_600_000), ahora),
+      ).toBe(30);
+    });
+
+    it.each([
+      ['antes de las 7:00 a. m.', '2026-11-10T11:30:00.000Z'],
+      ['desde las 5:00 p. m.', '2026-11-10T22:00:00.000Z'],
+      ['un domingo al mediodía', '2026-11-08T17:00:00.000Z'],
+      ['un festivo (lunes 16-nov) al mediodía', '2026-11-16T17:00:00.000Z'],
+    ])('con el mostrador cerrado (%s), 2 horas a un cupo lejano', (_n, iso) => {
+      const ahora = new Date(iso);
+      expect(
+        minutosParaContestar(new Date(ahora.getTime() + 26 * 3_600_000), ahora),
+      ).toBe(120);
+    });
+
+    it('usa la hora de la clínica (otra zona, otro horario)', () => {
+      // 7:52 a. m. en Bogotá son las 12:52 en UTC: en Londres, el mostrador abre.
+      const ahora = new Date('2026-11-10T12:52:00.000Z');
+      const cupo = new Date(ahora.getTime() + 26 * 3_600_000);
+      expect(minutosParaContestar(cupo, ahora, 'America/Bogota')).toBe(30);
+      // En Tokio son las 9:52 p. m.: cerrado.
+      expect(minutosParaContestar(cupo, ahora, 'Asia/Tokyo')).toBe(120);
     });
   });
 
