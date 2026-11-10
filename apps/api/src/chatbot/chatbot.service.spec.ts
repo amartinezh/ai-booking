@@ -458,6 +458,65 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(messageLog.recordOutbound).not.toHaveBeenCalled();
     });
 
+    // 🔁 2026-11-09: Meta respondió con su página de error (HTML, 5xx) y tres
+    // mensajes a pacientes se perdieron sin reintento.
+    describe('🔁 si Meta falla un momento', () => {
+      const paginaDeError = () => {
+        throw Object.assign(new Error('Request failed with status code 502'), {
+          response: { status: 502, data: '<!DOCTYPE html><html></html>' },
+        });
+      };
+
+      it('reintenta y el mensaje sale (y queda una sola vez en el libro)', async () => {
+        const s = prepararEnvioReal();
+        s.esperasReintentoMeta = [0, 0];
+        jest.spyOn(s.logger, 'warn').mockImplementation(() => undefined);
+        s.httpService.post = jest
+          .fn()
+          .mockImplementationOnce(paginaDeError)
+          .mockImplementationOnce(() => of({ data: META_OK }));
+
+        const r = await s.sendWhatsAppMessage(SENDER, 'Le agregué a la lista');
+
+        expect(r).toEqual(META_OK);
+        expect(s.httpService.post).toHaveBeenCalledTimes(2);
+        expect(messageLog.recordOutbound).toHaveBeenCalledTimes(1);
+      });
+
+      it('espera 1 s y luego 3 s entre intentos (por defecto)', () => {
+        expect((service as any).esperasReintentoMeta).toEqual([1_000, 3_000]);
+      });
+
+      it('si sigue fallando tras dos reintentos, no salió', async () => {
+        const s = prepararEnvioReal();
+        s.esperasReintentoMeta = [0, 0];
+        jest.spyOn(s.logger, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(s.logger, 'error').mockImplementation(() => undefined);
+        s.httpService.post = jest.fn(paginaDeError);
+
+        const r = await s.sendWhatsAppMessage(SENDER, 'Hola');
+
+        expect(r).toBeNull();
+        expect(s.httpService.post).toHaveBeenCalledTimes(3);
+        expect(messageLog.recordOutbound).not.toHaveBeenCalled();
+      });
+
+      it('un error definitivo (ventana de 24 h cerrada) no se reintenta', async () => {
+        const s = prepararEnvioReal();
+        s.esperasReintentoMeta = [0, 0];
+        jest.spyOn(s.logger, 'error').mockImplementation(() => undefined);
+        s.httpService.post = jest.fn(() => {
+          throw Object.assign(new Error('400'), {
+            response: { status: 400, data: { error: { code: 131047 } } },
+          });
+        });
+
+        await s.sendWhatsAppMessage(SENDER, 'Hola');
+
+        expect(s.httpService.post).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it('🚨 se registra ANTES de guardar el último mensaje: el webhook de estados puede llegar enseguida', async () => {
       const s = prepararEnvioReal();
       redis.set.mockClear();

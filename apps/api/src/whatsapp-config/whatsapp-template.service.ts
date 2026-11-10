@@ -16,6 +16,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WhatsappCredentialsService } from './whatsapp-credentials.service';
 import { WhatsappMessageLogService } from './whatsapp-message-log.service';
 import { metaGraphUrl } from './meta-graph';
+import { conReintentoAMeta, ESPERAS_REINTENTO_META_MS } from './meta-reintento';
+import { getAxiosErrorDetail } from '../common/error-message.util';
 
 /**
  * Para qué se manda cada plantilla, en el vocabulario del libro de mensajes.
@@ -59,6 +61,12 @@ const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
 @Injectable()
 export class WhatsappTemplateService {
   private readonly logger = new Logger(WhatsappTemplateService.name);
+
+  /**
+   * Esperas entre reintentos cuando Meta falla un momento (`conReintentoAMeta`).
+   * Una propiedad, para que las pruebas no esperen de verdad.
+   */
+  protected esperasReintentoMeta: readonly number[] = ESPERAS_REINTENTO_META_MS;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -302,17 +310,29 @@ export class WhatsappTemplateService {
     };
 
     try {
-      const response = await lastValueFrom(
-        this.httpService.post<unknown>(
-          metaGraphUrl(`${creds.phoneNumberId}/messages`),
-          body,
-          {
-            headers: {
-              Authorization: `Bearer ${creds.accessToken}`,
-              'Content-Type': 'application/json',
-            },
-          },
-        ),
+      // 🔁 Si Meta falla un momento (5xx, «servicio no disponible»), se reintenta
+      // (2026-11-10): recordatorios, ofertas de la lista y avisos.
+      const response = await conReintentoAMeta(
+        () =>
+          lastValueFrom(
+            this.httpService.post<unknown>(
+              metaGraphUrl(`${creds.phoneNumberId}/messages`),
+              body,
+              {
+                headers: {
+                  Authorization: `Bearer ${creds.accessToken}`,
+                  'Content-Type': 'application/json',
+                },
+              },
+            ),
+          ),
+        {
+          esperas: this.esperasReintentoMeta,
+          alReintentar: (intento, error, ms) =>
+            this.logger.warn(
+              `Meta falló un momento al enviar la plantilla "${template.name}" a ${recipientId} (intento ${intento}): ${getAxiosErrorDetail(error).slice(0, 200)}. Se reintenta en ${ms / 1000} s.`,
+            ),
+        },
       );
       // Se registra ANTES de devolver y sin lanzar nunca: si el libro falla,
       // la plantilla ya salió y el llamador debe enterarse de que se envió.

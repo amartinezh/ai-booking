@@ -260,6 +260,67 @@ describe('WhatsappTemplateService', () => {
     expect(res.error).toContain('template not found');
   });
 
+  // 🔁 2026-11-09: Meta respondió con su página de error (HTML, 5xx) y los
+  // mensajes se perdieron sin reintento.
+  describe('🔁 si Meta falla un momento', () => {
+    const paginaDeError = () =>
+      throwError(() => ({
+        response: { status: 502, data: '<!DOCTYPE html><html></html>' },
+      }));
+    const sinEsperar = (ctx: ReturnType<typeof build>) => {
+      (ctx.service as any).esperasReintentoMeta = [0, 0];
+      jest
+        .spyOn((ctx.service as any).logger, 'warn')
+        .mockImplementation(() => undefined);
+      return ctx;
+    };
+
+    it('reintenta y la plantilla sale (una sola vez en el libro)', async () => {
+      const postImpl = jest
+        .fn()
+        .mockImplementationOnce(paginaDeError)
+        .mockImplementationOnce(() =>
+          of({ data: { messages: [{ id: 'w2' }] } }),
+        );
+      const ctx = sinEsperar(build({ postImpl }));
+
+      const res = await send(ctx);
+
+      expect(res).toMatchObject({ success: true, wamid: 'w2' });
+      expect(postImpl).toHaveBeenCalledTimes(2);
+      expect(ctx.messageLog.recordOutbound).toHaveBeenCalledTimes(1);
+    });
+
+    it('si sigue fallando tras dos reintentos, no salió', async () => {
+      const postImpl = jest.fn(paginaDeError);
+      const ctx = sinEsperar(build({ postImpl }));
+      jest
+        .spyOn((ctx.service as any).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      const res = await send(ctx);
+
+      expect(res.success).toBe(false);
+      expect(postImpl).toHaveBeenCalledTimes(3);
+    });
+
+    it('un error definitivo (plantilla rechazada) no se reintenta', async () => {
+      const postImpl = jest.fn(() =>
+        throwError(() => ({
+          response: { status: 400, data: { error: { code: 132001 } } },
+        })),
+      );
+      const ctx = sinEsperar(build({ postImpl }));
+      jest
+        .spyOn((ctx.service as any).logger, 'error')
+        .mockImplementation(() => undefined);
+
+      await send(ctx);
+
+      expect(postImpl).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('sin organización o sin destinatario → no consulta nada', async () => {
     const ctx = build();
     const res = await ctx.service.sendTemplate({

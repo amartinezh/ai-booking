@@ -31,6 +31,10 @@ import {
 import { textoParaCoincidencia } from './texto-para-coincidencia.util';
 import { pideOtroMomentoQueElCupo } from './oferta-otro-momento';
 import {
+  conReintentoAMeta,
+  ESPERAS_REINTENTO_META_MS,
+} from '../whatsapp-config/meta-reintento';
+import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
   esCierreSinPedido,
@@ -957,6 +961,12 @@ export class ChatbotService implements OnModuleInit {
   // cita, oferta de lista de espera...). Sin él se registra como respuesta del
   // bot en el libro de mensajes (WhatsappMessageLog), que guarda el wamid y el
   // estado de entrega que Meta reporta después.
+  /**
+   * Esperas entre reintentos cuando Meta falla un momento (`conReintentoAMeta`).
+   * Una propiedad, para que las pruebas no esperen de verdad.
+   */
+  protected esperasReintentoMeta: readonly number[] = ESPERAS_REINTENTO_META_MS;
+
   private async sendWhatsAppMessage(
     recipientId: string,
     text: string,
@@ -983,23 +993,35 @@ export class ChatbotService implements OnModuleInit {
 
     const url = metaGraphUrl(`${creds.phoneNumberId}/messages`);
     try {
-      const response = await lastValueFrom(
-        this.httpService.post<unknown>(
-          url,
-          {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            ...buildWhatsappRecipient(recipientId),
-            type: 'text',
-            text: { preview_url: false, body: text },
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${creds.accessToken}`,
-              'Content-Type': 'application/json',
-            },
-          },
-        ),
+      // 🔁 Si Meta falla un momento (5xx, «servicio no disponible»), se reintenta
+      // (2026-11-10: tres mensajes del 9-nov se perdieron así).
+      const response = await conReintentoAMeta(
+        () =>
+          lastValueFrom(
+            this.httpService.post<unknown>(
+              url,
+              {
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                ...buildWhatsappRecipient(recipientId),
+                type: 'text',
+                text: { preview_url: false, body: text },
+              },
+              {
+                headers: {
+                  Authorization: `Bearer ${creds.accessToken}`,
+                  'Content-Type': 'application/json',
+                },
+              },
+            ),
+          ),
+        {
+          esperas: this.esperasReintentoMeta,
+          alReintentar: (intento, error, ms) =>
+            this.logger.warn(
+              `Meta falló un momento al enviar a ${recipientId} (intento ${intento}): ${getAxiosErrorDetail(error).slice(0, 200)}. Se reintenta en ${ms / 1000} s.`,
+            ),
+        },
       );
 
       // Justo tras la respuesta de Meta, antes de cualquier otro await: el
@@ -2055,23 +2077,33 @@ export class ChatbotService implements OnModuleInit {
     ctx?: OutboundMessageContext,
   ) {
     try {
-      const response = await lastValueFrom(
-        this.httpService.post<unknown>(
-          metaGraphUrl(`${creds.phoneNumberId}/messages`),
-          {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            ...buildWhatsappRecipient(recipientId),
-            type: 'audio',
-            audio: { id: mediaId },
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${creds.accessToken}`,
-              'Content-Type': 'application/json',
-            },
-          },
-        ),
+      const response = await conReintentoAMeta(
+        () =>
+          lastValueFrom(
+            this.httpService.post<unknown>(
+              metaGraphUrl(`${creds.phoneNumberId}/messages`),
+              {
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                ...buildWhatsappRecipient(recipientId),
+                type: 'audio',
+                audio: { id: mediaId },
+              },
+              {
+                headers: {
+                  Authorization: `Bearer ${creds.accessToken}`,
+                  'Content-Type': 'application/json',
+                },
+              },
+            ),
+          ),
+        {
+          esperas: this.esperasReintentoMeta,
+          alReintentar: (intento, error, ms) =>
+            this.logger.warn(
+              `Meta falló un momento al enviar el audio a ${recipientId} (intento ${intento}): ${getAxiosErrorDetail(error).slice(0, 200)}. Se reintenta en ${ms / 1000} s.`,
+            ),
+        },
       );
       // En modo voz el paciente puede recibir SOLO el audio: sin registrarlo, la
       // confirmación de su cita no dejaría ningún rastro en el libro.
