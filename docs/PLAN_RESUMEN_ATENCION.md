@@ -764,7 +764,7 @@ Reparto acordado: el hospital responde por lo administrativo (acuerdo de datos, 
 **Para encender el piloto falta (fuera del código):**
 
 - el acuerdo de datos;
-- los permisos de P-7 en `ESEHSVP`, con `DATOS_PLANTILLA_DATE`;
+- los permisos de P-7 en `ESEHSVP`, con `DATOS_PLANTILLA_DATE`: TI corre `sql/HISTORIA_CLINICA_PERMISOS_LECTURA_ESEHSVP.sql` (comprobaciones y permisos en un solo bloque, en una transacción, más una prueba como `agenia_sync` sin leer datos que debe dar «35 de 35»). Para deshacerlo: `sql/HISTORIA_CLINICA_PERMISOS_LECTURA_REVERSA.sql`, que no toca las 6 tablas que `agenia_sync` ya lee completas por las citas. Los dos se probaron el 2026-11-11 en un SQL Server 2022 desechable con el HIS falso: sin permisos el lector falla; con el script pasan sus 21 revisiones; correrlo dos veces no cambia nada; se detiene sin cambiar nada si la base no es la correcta o hay un DENY; la reversa deja las citas como estaban;
 - la plantilla «Documentos de la consulta» aprobada en Meta y registrada en Configuración;
 - leer en sombra y revisar resúmenes;
 - probar en modo prueba;
