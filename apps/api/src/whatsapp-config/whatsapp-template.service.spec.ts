@@ -454,8 +454,40 @@ describe('WhatsappTemplateService', () => {
         recipientId: PHONE,
         messageType: 'TEMPLATE',
         metaResponse: { messages: [{ id: 'w1' }] },
-        context: { kind: 'APPOINTMENT_REMINDER', appointmentId: 'apt-7' },
+        context: {
+          kind: 'APPOINTMENT_REMINDER',
+          appointmentId: 'apt-7',
+          attentionSummaryDeliveryId: null,
+        },
       });
+    });
+
+    it('el aviso del resumen de la atención lleva su envío al libro', async () => {
+      const ctx = build({
+        template: {
+          name: 'x',
+          language: 'es_CO',
+          kind: 'ATTENTION_SUMMARY_READY',
+        },
+      });
+
+      await ctx.service.sendTemplate({
+        organizationId: ORG,
+        recipientId: PHONE,
+        kind: 'ATTENTION_SUMMARY_READY' as any,
+        bodyParams: ['Ana', '1 de noviembre'],
+        attentionSummaryDeliveryId: 'entrega-1',
+      });
+
+      expect(ctx.messageLog.recordOutbound).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: {
+            kind: 'ATTENTION_SUMMARY',
+            appointmentId: null,
+            attentionSummaryDeliveryId: 'entrega-1',
+          },
+        }),
+      );
     });
 
     it.each([
@@ -486,7 +518,11 @@ describe('WhatsappTemplateService', () => {
 
         expect(ctx.messageLog.recordOutbound).toHaveBeenCalledWith(
           expect.objectContaining({
-            context: { kind: esperado, appointmentId: null },
+            context: {
+              kind: esperado,
+              appointmentId: null,
+              attentionSummaryDeliveryId: null,
+            },
           }),
         );
       },

@@ -689,6 +689,7 @@ export class ResumenEnvioService {
         destino.destino,
         TEXTOS_RESUMEN.avisoEnVentana(nombre, fecha),
         [{ id: payload, titulo: BOTON_RECIBIR }],
+        entrega.id,
       );
       ok = r.ok;
       motivo = r.error;
@@ -699,6 +700,7 @@ export class ResumenEnvioService {
         kind: 'ATTENTION_SUMMARY_READY',
         bodyParams: [nombre, fecha],
         buttonPayloads: [payload],
+        attentionSummaryDeliveryId: entrega.id,
       });
       ok = r.success;
       motivo =
@@ -806,7 +808,7 @@ export class ResumenEnvioService {
       destino,
       texto,
       { botones: [BOTON_RECIBIR_TELEGRAM] },
-      { kind: 'ATTENTION_SUMMARY' },
+      { kind: 'ATTENTION_SUMMARY', attentionSummaryDeliveryId: entrega.id },
     );
     const motivo = r.ok
       ? undefined

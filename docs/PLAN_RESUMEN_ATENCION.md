@@ -121,7 +121,7 @@ Si el médico la corrige después (nota aclaratoria), el enlace muestra siempre 
 | Exámenes y procedimientos | Laboratorios (tipo 2), otros procedimientos y ayudas diagnósticas (tipo 4), consulta de control o con especialista (tipo 1), cirugía (tipo 3): nombre, cantidad, indicación | `HIST_ORDEN` (`NU_TIPO_HORD` 1-4) → `HIST_PROC` (`CD_CODI_SER_HPRO` → `SERVICIOS`, `NU_CANT_HPRO`, `DE_INDI_HPRO`) |
 | Próximo control y educación | «Próximo control», metas de educación, dietas y ejercicio indicados (control de crónicos) | Campos de la plantilla 844 (R3-5, R4-5) |
 | Otros | Incapacidad (días, desde, tipo), remisión (a qué servicio, prioridad), interconsulta. En el resumen, una línea por cada uno; el documento completo va aparte (§3.9) | `HIST_INCA`, `HIST_REMI`, `HIST_ORTIAT` (`CD_CODI_ESP_HOTA`) |
-| Pie | «Este resumen es informativo. Para reclamar medicamentos o hacerse los exámenes use la fórmula y las órdenes que vienen con él» (texto que valida el hospital; depende de D21) y cómo comunicarse | Configuración |
+| Pie | «Este resumen y sus documentos son una copia informativa. Para reclamar medicamentos o hacerse los exámenes, siga las indicaciones del hospital y de su EPS» (texto que valida el hospital; depende de D21; cambió el 2026-11-11, §8.9) y cómo comunicarse | Configuración |
 
 **Nunca va:** anamnesis detallada, examen físico, antecedentes, revisión por sistemas ni notas internas del médico (salvo que el hospital decida otra cosa en D2).
 
@@ -399,6 +399,8 @@ Si una condición falla, el seguimiento dice cuál.
 - **Aceptación:** antes del piloto, la farmacia del hospital, un dispensador externo y el laboratorio reciben una fórmula y una orden impresas desde el PDF (si se aprueba D21).
 
 ## 7. Decisiones por aprobar
+
+> **2026-11-11:** el hospital respondió sobre D9/D10, D12, D18, D21, D22, D24 y D25. Sus respuestas y lo que cambian están en §8.9; la tabla de abajo sigue con la recomendación anterior hasta que se decida.
 
 | # | Decisión | Recomendación |
 |---|---|---|
@@ -725,6 +727,48 @@ Lo que se podía construir sin esperar decisiones, permisos ni plantillas:
 **Pruebas:** reglas (reintentos, huella, cambios de contenido, `comoTomarlo`), programador (reenvío, reintentos, espera), acciones y pantallas de la web, menú y Centro de ayuda. Además, el lector del agente contra el HIS falso (SQL Server 2022), como `agenia_sync` y solo con los permisos de P-7: 21 revisiones.
 
 **Despliegue:** API → web. El agente no cambia (`CAMPOS_RESUMEN_POR_DEFECTO` es la misma lista, ahora importada de `@agenia/shared`), así que no hace falta un bundle nuevo para esto.
+
+### 8.9 Respuestas del hospital (2026-11-11)
+
+El hospital contestó siete preguntas: remisiones, cuándo se envía, dónde reclamar, posfechadas, copia o documento para reclamar, firma y remitente del correo. La tercera columna es la propuesta de AgenIA; nada de esto está construido.
+
+| Decisión | Qué respondió el hospital | Qué implica (propuesta) |
+|---|---|---|
+| D24 Remisiones | **No hay remisiones internas**: eso serían interconsultas, que no se hacen porque los especialistas no tienen jornada completa. La remisión dirige al paciente a un especialista y **la EPS decide a dónde**, según sus convenios: a los especialistas que van al hospital o a otra IPS. | «Remite a» (`DE_REMI_HREM`, «HSVP ANSERMA» y variantes en el 99 %) no es el destino. Toda remisión pasa por la EPS: se trata como la «externa» de antes, completa como el papel, con el caso clínico (`TX_CASO_HREM` ya está en P-7; el agente hoy solo lee su largo). Caen la lista de nombres internos y la idea de ofrecer agendar al especialista. Para el comité: el caso clínico copia la historia (enfermedad actual, examen físico, antecedentes: lo que D2 deja fuera) y las exclusiones de D7 no revisan ese texto libre. |
+| D9 / D10 Cuándo se envía | Las 2 horas coinciden con la secuencia que el HIS tiene programada para la historia. Pero el médico debe **cerrar la historia a mano** para que salga el envío de interoperabilidad (RDA), y a los médicos les ha costado acostumbrarse. | Se mantiene «2 horas después de guardada»: depender del cierre dejaría fuera las que no se cierran. La ronda 3 no encontró la marca de cierre en `HISTORIACLINICA`: está en otra parte (por buscar). Encontrarla serviría para medir cuántas se cierran y, como servicio al hospital, mostrar cuáles quedan abiertas. **Hueco:** el agente lee cada historia una sola vez; lo que se agregue o corrija después de las 2 horas no llega, aunque §3.1 y D10 dicen que el enlace muestra lo vigente. Falta la relectura o corregir esa promesa. |
+| D18 Dónde reclamar | Depende de la **EPS**, no de AI/AE. **Sura** (convenio con el hospital): los medicamentos normales de consulta externa, en la farmacia del hospital; los de control y alto costo, por fuera. **Salud Total**: su dispensador, frente al parque Arango Zea. **Nueva EPS**: Audifarma, junto a las oficinas de EMAS. Urgencias y hospitalización: el hospital. Sobre AI/AE: el HIS pone AI por defecto, los médicos no lo cambian y la «formulación frecuente» de los crónicos repite la formulación inicial. | AI/AE no sirve para decir dónde reclamar. Se dice por la EPS del convenio: en el piloto, Sura 45 %, Salud Total 33 %, Nueva EPS 19 % y FOMAG 3 %. El texto de cada EPS se edita en el panel, con la excepción de los medicamentos de control (`ARTICULO.NU_MEDCTRL_ARTI`, que P-7 aún no pide). **Sin respuesta:** dónde reclama Sura los de control y alto costo; si vale igual para Sura contributivo; FOMAG. **No cuadra:** la ronda 3 vio un 36 % de renglones AE (justo lo que la farmacia no tiene), frente a «los médicos no ponen AE». |
+| D25 Posfechadas | Son para crónicos formulados a 30, 60, 90, 120 días o más. Sale una fórmula por mes, porque la EPS y el hospital entregan por mes, cada una con la fecha de su mes (ejemplo: 8-nov, 8-dic, 8-ene). | Cada hoja ya lleva la fecha que guarda el HIS (`FE_POSFECHA`; la ronda 4 vio +30 y +60 días, E7 lo confirma). Que las 72 horas corren desde la fecha de cada fórmula se deduce, pero no lo dijeron. Eso le da peso al recordatorio del día de reclamar. **Costo:** en 30 días la consulta externa generó 3.247 fórmulas posfechadas; un recordatorio por cada una costaría del orden de lo que cuestan los avisos. |
+| D21 Copia o documento para reclamar | **Sura**: la farmacia del hospital controla en el sistema; si el documento sirve lo deciden farmacia y gerencia, porque sus funcionarios ven la información en el sistema. **Salud Total y Nueva EPS**: sus dispensadores tienen software propio; la jefe de consulta externa averiguará qué piden. | El QR de verificación pierde sentido: Sura ve la fórmula en el sistema y los demás tienen su propio software. Queda la copia informativa con marca de agua hasta conocer los requisitos de los dispensadores. **Sin respuesta (clave):** qué papel lleva hoy a su dispensador un paciente de Salud Total o Nueva EPS (52 % del piloto), si la fórmula casi nunca se imprime. Mientras tanto, los textos que invitan a mostrar los documentos en la farmacia (`resumen-textos.ts`, nota del resumen en `resumen-documentos.ts`) prometen de más. |
+| D22 Firma | La firma está en `USUARIOS.IM_FIRMA_USUA`, y la llave de `USUARIOS` (`ID_IDEN_USUA`, varchar(30)) es la que va en `HISTORIACLINICA.CD_MED_REAL_HICL`. No dijeron si aceptan la firma en texto. | La unión es más directa que la de la ronda 6 (por documento): si se usa la imagen, el permiso sería solo sobre `ID_IDEN_USUA` e `IM_FIRMA_USUA`, por confirmar con una consulta. Texto o imagen sigue abierto y depende de lo que pidan los dispensadores. 🔴 La captura muestra `PS_PASS_USUA varchar(30)`: contraseñas en una columna corta, quizá sin cifrar. Avisar a TI, como con `INTER_RES1888`. |
+| D12 Remitente del correo | Sin respuesta: el texto que llegó en esa pregunta habla de los dispensadores (es de D21). | Sigue abierta. Con solo el 1,4 % de correos propios, el correo puede quedar fuera del piloto. |
+
+### 8.10 Trazabilidad, estadísticas y piloto (2026-11-11)
+
+Reparto acordado: el hospital responde por lo administrativo (acuerdo de datos, comité, jurídica, decisiones) y AgenIA por lo técnico. Eso incluye demostrar, mensaje por mensaje, qué se envió, qué se entregó y qué se leyó.
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Cada mensaje unido a su envío | `attentionSummaryDeliveryId` en `WhatsappMessageLog` y `TelegramMessageLog` | El aviso (plantilla o botón), los textos, los PDF y las imágenes. Antes solo había totales por estado. |
+| Hora de cada estado | `WhatsappMessageLog.deliveredAt`, `readAt` (`anotarHoras`) | Se guardan aunque Meta mande los webhooks en desorden. Antes solo quedaba el último estado. |
+| Pidió y verificó | `AttentionSummaryDelivery.requestedAt`, `verifiedAt` | La primera vez que tocó el botón o escribió «mis documentos», y la primera verificación. |
+| Recorrido por envío | «Envíos de documentos» (`trazaDeEnvios`, `lineasDelEnvio`) | Aviso enviado, entregado y leído o el error de Meta; pidió; verificado; archivos enviados, entregados y vistos; página abierta y descargas. |
+| Registro descargable | «Descargar registro (Excel)» (`exportarEnviosAction`) | Una fila por envío, con las consultas no enviadas y su motivo; hasta 92 días; queda quién lo bajó. |
+| Cifras | `consultarEmbudoDelEnvio`: «Cómo va el envío» y sección nueva de las estadísticas para compartir | Las mismas cifras en los dos lados, sin envíos de prueba. |
+| Piloto | `resumenAtencion.piloto`; recuadro «Piloto» (`aprobarPilotoResumenAction`) | El Administrador lo aprueba escribiendo «ENVIAR A PACIENTES». Con el piloto aprobado y sin números del equipo, el aviso sale a los pacientes. Sin aprobar, `puedeEnviarPorCanal` frena (`PILOTO_SIN_APROBAR`) aunque la configuración diga otra cosa. |
+| Textos | Mensaje final del chat, pie del resumen y página del paciente | Ya no invitan a mostrar los documentos en la farmacia (§8.9). |
+
+**Migración** `20261111120000_resumen_trazabilidad`: solo agrega columnas que admiten nulo e índices. Se verificó sin deriva contra un Postgres 15 desechable, y ahí se probaron las consultas del recorrido, del embudo y de las estadísticas, y las horas de webhooks en desorden. Los mensajes enviados antes de esta migración no tienen envío ni horas.
+
+**Despliegue:** migración → API → web. El agente no cambia.
+
+**Para encender el piloto falta (fuera del código):**
+
+- el acuerdo de datos;
+- los permisos de P-7 en `ESEHSVP`, con `DATOS_PLANTILLA_DATE`;
+- la plantilla «Documentos de la consulta» aprobada en Meta y registrada en Configuración;
+- leer en sombra y revisar resúmenes;
+- probar en modo prueba;
+- aprobar el piloto en el panel.
 
 ## 9. Volumen y costo
 

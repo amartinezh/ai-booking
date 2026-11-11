@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from '@agenia/database';
 import { horaLocalAUtc, sumarDiasAFecha } from '@agenia/shared';
 import { prisma } from '@/lib/prisma';
 import { ESTADISTICAS, type CorteDeEstadisticas } from './periodo';
+import { consultarEmbudoDelEnvio, type EmbudoDelEnvio } from '@/lib/resumen/trazabilidad';
 
 /**
  * 📊 Estadísticas para compartir: las cifras, de solo lectura y sin ningún dato
@@ -44,6 +45,12 @@ export interface DatosDeEstadisticas {
         /** Horas en la lista de espera, de entrar a recibir el cupo. */
         listaEspera: { asignadas: number; medianaHoras: number | null; promedioHoras: number | null };
     } | null;
+    /**
+     * 📄 Documentos de la consulta (resumen de la atención): desde el día del
+     * primer aviso a un paciente. null mientras ningún paciente haya recibido
+     * uno (los envíos de prueba no cuentan).
+     */
+    documentos: { desde: string; embudo: EmbudoDelEnvio } | null;
 }
 
 type Db = Pick<PrismaClient, '$queryRaw'>;
@@ -237,7 +244,25 @@ export async function consultarEstadisticas(
         espera = { oportunidad, servicios: servicios.map((s) => s.nombre), conversacion, listaEspera };
     }
 
+    // 📄 Documentos de la consulta (plan del resumen §8.10): sin el día del primer
+    // aviso a un paciente, la sección no existe.
+    const [primerAviso] = await db.$queryRaw<[{ dia: string | null }]>(Prisma.sql`
+        SELECT to_char(min(${local('d."createdAt"')})::date, 'YYYY-MM-DD') AS dia
+          FROM "AttentionSummaryDelivery" d
+          JOIN "AttentionSummary" s ON s.id = d."attentionSummaryId"
+         WHERE s."organizationId" = ${org} AND d.purpose IN ('PACIENTE', 'REENVIO')
+           AND d."noticeSentAt" IS NOT NULL AND d."createdAt" < ${hasta}`);
+    let documentos: DatosDeEstadisticas['documentos'] = null;
+    if (primerAviso?.dia) {
+        const [y, m, d] = primerAviso.dia.split('-').map(Number);
+        documentos = {
+            desde: primerAviso.dia,
+            embudo: await consultarEmbudoDelEnvio(org, { desde: horaLocalAUtc(y, m, d, 0, timeZone), hasta: corte.hastaUtc }, timeZone, db),
+        };
+    }
+
     return {
+        documentos,
         recordatoriosPorDia,
         confirmacionesPorDia,
         confirmaciones,

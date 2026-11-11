@@ -229,6 +229,8 @@ describe('ResumenEnvioService.programar', () => {
       bodyParams: ['Adulto', 'domingo, 1 de noviembre'],
     });
     expect(llamada.buttonPayloads).toEqual([`resumen:${a.entregas[0].id}`]);
+    // Trazabilidad: el aviso queda en el libro de mensajes con su envío.
+    expect(llamada.attentionSummaryDeliveryId).toBe(a.entregas[0].id);
     expect(a.entregas[0]).toMatchObject({
       channel: 'WHATSAPP',
       purpose: 'PACIENTE',
@@ -248,7 +250,9 @@ describe('ResumenEnvioService.programar', () => {
     const a = armar({ ventana: true });
     await a.s.programar(AHORA);
     expect(a.plantillas.sendTemplate).not.toHaveBeenCalled();
-    const [, destino, cuerpo, botones] = a.whatsapp.botones.mock.calls[0];
+    const [, destino, cuerpo, botones, entrega] =
+      a.whatsapp.botones.mock.calls[0];
+    expect(entrega).toBe(a.entregas[0].id);
     expect(destino).toBe('573001234567');
     expect(cuerpo).toContain(
       'documentos de su consulta del domingo, 1 de noviembre',
@@ -404,7 +408,10 @@ describe('Telegram (D26) y la baja por número', () => {
     expect([org, destino]).toEqual([ORG, 'tg:555']);
     expect(texto).toContain('documentos de su consulta');
     expect(teclado).toEqual({ botones: ['Recibir mis documentos'] });
-    expect(ctx).toEqual({ kind: 'ATTENTION_SUMMARY' });
+    expect(ctx).toEqual({
+      kind: 'ATTENTION_SUMMARY',
+      attentionSummaryDeliveryId: a.entregas[0].id,
+    });
     expect(a.plantillas.sendTemplate).not.toHaveBeenCalled();
     expect(a.entregas).toEqual([
       expect.objectContaining({

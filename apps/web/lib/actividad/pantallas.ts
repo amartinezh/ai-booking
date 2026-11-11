@@ -59,6 +59,7 @@ export const DESCARGAS = {
     AVISOS_SIN_CELULAR: 'Pacientes sin celular de un lote de avisos masivos',
     PADRON_ERRORES: 'Filas con error del archivo del padrón',
     ENCUESTAS: 'Encuestas de satisfacción',
+    ENVIOS_RESUMEN: 'Registro de envíos de los documentos de la consulta',
 } as const;
 
 export type TipoDescarga = keyof typeof DESCARGAS;

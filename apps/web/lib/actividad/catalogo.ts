@@ -173,6 +173,8 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     ATTENTION_SUMMARY_RESENT: { categoria: 'HISTORIA', titulo: 'Reenvió los documentos de una consulta a pedido del paciente', mensaje: true },
     ATTENTION_SUMMARY_TEST_SEND: { categoria: 'HISTORIA', titulo: 'Envió de prueba el aviso de un resumen de la atención', mensaje: true, aviso: true },
     ATTENTION_SUMMARY_TEST_LINK_CREATED: { categoria: 'HISTORIA', titulo: 'Generó un enlace de prueba a un resumen de la atención', mensaje: true, aviso: true },
+    ATTENTION_SUMMARY_PILOT_APPROVED: { categoria: 'HISTORIA', titulo: 'Aprobó el piloto del resumen de la atención (envío a pacientes)', mensaje: true, aviso: true },
+    ATTENTION_SUMMARY_PILOT_REVOKED: { categoria: 'HISTORIA', titulo: 'Volvió el resumen de la atención a solo modo prueba', mensaje: true, aviso: true },
 
     // ── Sesiones, pantallas y descargas ──
     SESSIONS_REVOKED: { categoria: 'SEGURIDAD', titulo: 'Cerró sesiones a la fuerza', aviso: true },

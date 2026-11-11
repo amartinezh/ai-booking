@@ -873,6 +873,7 @@ export {
   payloadDeEntrega,
   pideSusDocumentos,
   tocaIntentar,
+  FRASE_APROBAR_PILOTO,
 } from './src/resumen-envio';
 export type {
   CambioContenidoResumen,

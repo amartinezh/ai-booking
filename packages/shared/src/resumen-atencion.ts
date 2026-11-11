@@ -44,6 +44,11 @@ export interface ConfigResumenAtencion {
   servicios: Record<string, Record<CanalResumen, boolean>>;
   /** Mientras tenga destinos, solo se les envía a ellos (el equipo). */
   modoPrueba: { destinos: string[] };
+  /**
+   * El piloto aprobado: solo así «Enviar» funciona SIN números del equipo, es
+   * decir, a los pacientes. Sin aprobar, la lista vacía no envía a nadie.
+   */
+  piloto: { aprobado: boolean; desdeIso: string | null };
   /** Minutos que se esperan desde que se guardó la historia (plan §3.1). */
   calmaMinutos: number;
   /** Horario de envío en la zona de la clínica: desde (incluida) hasta (excluida). */
@@ -263,12 +268,17 @@ export function leerConfigResumenAtencion(json: unknown): ConfigResumenAtencion 
     if (desde !== null && hasta !== null && desde < hasta) horario = { desdeHora: desde, hastaHora: hasta };
   }
 
+  const aprobado = esObjeto(json.piloto) && json.piloto.aprobado === true;
+  const desdeIso =
+    aprobado && esObjeto(json.piloto) && typeof json.piloto.desdeIso === 'string' ? json.piloto.desdeIso : null;
+
   return {
     leerDelHospital: json.leerDelHospital === true,
     enviar: json.enviar === true,
     canales: leerCanales(json.canales),
     servicios,
     modoPrueba: { destinos },
+    piloto: { aprobado, desdeIso },
     calmaMinutos: enteroEntre(json.calmaMinutos, L.calmaMinutosMin, L.calmaMinutosMax) ?? L.calmaMinutosPorDefecto,
     horario,
     camposPlantilla: leerCamposPlantilla(json.camposPlantilla),
@@ -303,7 +313,8 @@ export type MotivoNoEnvio =
   | 'ENVIO_APAGADO'
   | 'CANAL_APAGADO'
   | 'SERVICIO_APAGADO'
-  | 'FUERA_DE_MODO_PRUEBA';
+  | 'FUERA_DE_MODO_PRUEBA'
+  | 'PILOTO_SIN_APROBAR';
 
 export const TEXTO_MOTIVO_NO_ENVIO: Record<MotivoNoEnvio, string> = {
   FUNCION_INEXISTENTE: 'La función no está habilitada para la clínica',
@@ -311,6 +322,7 @@ export const TEXTO_MOTIVO_NO_ENVIO: Record<MotivoNoEnvio, string> = {
   CANAL_APAGADO: 'Ese canal está apagado',
   SERVICIO_APAGADO: 'El servicio de la consulta no tiene ese canal encendido',
   FUERA_DE_MODO_PRUEBA: 'Modo prueba: el destino no está en la lista del equipo',
+  PILOTO_SIN_APROBAR: 'El piloto no está aprobado: sin números del equipo no sale nada',
 };
 
 /**
@@ -331,6 +343,10 @@ export function puedeEnviarPorCanal(
     const destino = normalizarDestino(envio.canal, envio.destino);
     const lista = config.modoPrueba.destinos.map((d) => normalizarDestino(envio.canal, d));
     if (!destino || !lista.includes(destino)) return { ok: false, motivo: 'FUERA_DE_MODO_PRUEBA' };
+  } else if (!config.piloto.aprobado) {
+    // Sin la lista del equipo, solo el piloto aprobado deja salir a pacientes:
+    // una configuración rota o escrita a mano nunca le envía a nadie.
+    return { ok: false, motivo: 'PILOTO_SIN_APROBAR' };
   }
   return { ok: true };
 }

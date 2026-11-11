@@ -26,7 +26,7 @@ export const TEXTOS_RESUMEN = {
   enviando: (fecha: string) =>
     `Con gusto. Estos son los documentos de su consulta del ${fecha}:`,
   listo: (enlace: string | null) =>
-    `Listo. Puede imprimirlos o mostrarlos en la farmacia o el laboratorio. Son una copia para usted: el hospital conserva el original.${
+    `Listo. Son una copia para usted: el hospital conserva el original. Para reclamar medicamentos o hacerse los exámenes, siga las indicaciones del hospital y de su EPS.${
       enlace ? `\n\nPara volver a descargarlos durante 30 días: ${enlace}` : ''
     }`,
   baja: 'Listo, no le enviaremos más los documentos de sus consultas por este medio. Su atención en el hospital no cambia. Si cambia de opinión, escriba «activar resúmenes».',

@@ -19,6 +19,8 @@ import { getErrorMessage } from '../common/error-message.util';
 export interface OutboundMessageContext {
   kind?: WhatsappMessageKind;
   appointmentId?: string | null;
+  /** El envío del resumen de la atención al que pertenece el mensaje. */
+  attentionSummaryDeliveryId?: string | null;
 }
 
 /** Un `statuses[]` del webhook de Meta, en lo que este servicio usa. */
@@ -122,6 +124,8 @@ export class WhatsappMessageLogService {
           messageType: params.messageType,
           kind: params.context?.kind ?? 'BOT_REPLY',
           appointmentId: params.context?.appointmentId ?? null,
+          attentionSummaryDeliveryId:
+            params.context?.attentionSummaryDeliveryId ?? null,
         },
       });
     } catch (error: unknown) {
@@ -160,12 +164,13 @@ export class WhatsappMessageLogService {
       const detalle = error
         ? (error.error_data?.details ?? error.message ?? error.title)
         : undefined;
+      const cuando = fechaDeMeta(update.timestamp);
 
       const { count } = await this.prisma.whatsappMessageLog.updateMany({
         where: { wamid: update.id, status: { in: PUEDE_VENIR_DE[nuevo] } },
         data: {
           status: nuevo,
-          statusAt: fechaDeMeta(update.timestamp),
+          statusAt: cuando,
           errorCode:
             error?.code !== undefined && error.code !== null
               ? String(error.code)
@@ -176,18 +181,53 @@ export class WhatsappMessageLogService {
         },
       });
 
-      if (count === 0) {
+      const horas = await this.anotarHoras(update.id, nuevo, cuando);
+
+      if (count === 0 && !horas) {
         this.logger.debug(
           `Estado '${update.status}' de ${update.id} sin efecto (mensaje desconocido o estado ya superado).`,
         );
       }
-      return count > 0;
+      return count > 0 || horas;
     } catch (error: unknown) {
       this.logger.error(
         `No se pudo aplicar el estado '${update.status}' de ${update.id}: ${getErrorMessage(error)}`,
       );
       return false;
     }
+  }
+
+  /**
+   * La hora de cada estado (`deliveredAt`, `readAt`), aparte de `status`: el
+   * estado solo avanza, pero las horas se guardan aunque los webhooks lleguen
+   * en desorden. Un «leído» también deja la hora de entrega si no la había, y un
+   * «entregado» que llega tarde la corrige a la más temprana. Devuelve si anotó
+   * alguna.
+   */
+  private async anotarHoras(
+    wamid: string,
+    nuevo: WhatsappMessageStatus,
+    cuando: Date,
+  ): Promise<boolean> {
+    let cambio = false;
+    if (nuevo === 'DELIVERED' || nuevo === 'READ') {
+      const { count } = await this.prisma.whatsappMessageLog.updateMany({
+        where: {
+          wamid,
+          OR: [{ deliveredAt: null }, { deliveredAt: { gt: cuando } }],
+        },
+        data: { deliveredAt: cuando },
+      });
+      cambio = count > 0;
+    }
+    if (nuevo === 'READ') {
+      const { count } = await this.prisma.whatsappMessageLog.updateMany({
+        where: { wamid, readAt: null },
+        data: { readAt: cuando },
+      });
+      cambio = cambio || count > 0;
+    }
+    return cambio;
   }
 }
 

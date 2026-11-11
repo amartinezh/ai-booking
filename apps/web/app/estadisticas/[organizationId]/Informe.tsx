@@ -76,6 +76,23 @@ export default function Informe({
             detalle: [{ color: fuera ? COLOR.serie1 : COLOR.apagado, texto: `Mensajes: ${ent(n)}` }],
         };
     });
+    const doc = d.documentos;
+    const documentosPorDia: ColumnaDeBarras[] = (doc?.porDia ?? []).map((r) => {
+        const trozos = [r.leidos, r.entregados - r.leidos, Math.max(0, r.avisos - r.entregados)];
+        return {
+            etiqueta: diaCorto(r.dia),
+            titulo: dia(r.dia),
+            valores: trozos,
+            detalle: [
+                { texto: `Avisos enviados: ${ent(r.avisos)}` },
+                { color: COLOR.serie1, texto: `Leídos: ${ent(trozos[0])}` },
+                { color: COLOR.serie2, texto: `Entregados, aún sin leer: ${ent(trozos[1])}` },
+                { color: COLOR.apagado, texto: `Sin confirmación (Telegram, correo o no entregados): ${ent(trozos[2])}` },
+                { texto: `Pidieron sus documentos: ${ent(r.pidieron)}` },
+                { texto: `Recibieron sus documentos: ${ent(r.recibieron)}` },
+            ],
+        };
+    });
     const gestionMax = Math.max(1, ...d.gestiones.map((g) => g.n));
     const { citasChat: cc, cancelaciones: can, espera: esp } = d;
     const porChat = esp?.canales.find((c) => c.canal === 'chat');
@@ -111,6 +128,13 @@ export default function Informe({
                         De <b>{ent(d.recordatorios.enviados)}</b> enviados por WhatsApp. Se leyó el{' '}
                         <b>{pct(d.recordatorios.leidos, d.recordatorios.entregados)}</b> de los entregados.
                     </Cifra>
+                    {doc && (
+                        <Cifra nombre="Documentos de la consulta recibidos" valor={ent(doc.totales.recibieron)}>
+                            De <b>{ent(doc.totales.avisos.total)}</b> avisos desde el <b>{dia(doc.desde)}</b>: resumen, fórmula y
+                            órdenes en el celular. Se leyó el <b>{pct(doc.totales.whatsapp.leidos, doc.totales.whatsapp.entregados)}</b>{' '}
+                            de los avisos de WhatsApp entregados.
+                        </Cifra>
+                    )}
                     <Cifra nombre="Pacientes que confirmaron su cita" valor={ent(d.personasQueConfirmaron)}>
                         Respondieron al recordatorio por WhatsApp con un «sí, voy».
                     </Cifra>
@@ -176,6 +200,63 @@ export default function Informe({
                                 ]}
                                 alto={250}
                                 descripcion="Recordatorios enviados por día: leídos, entregados sin leer y no entregados"
+                            />
+                        </Tarjeta>
+                    </Seccion>
+                )}
+
+                {doc && (
+                    <Seccion titulo="Los documentos de la consulta llegan al celular">
+                        <Tarjeta
+                            titulo="Avisos de documentos por día"
+                            nota={`Cuando el médico termina la consulta, el paciente recibe un aviso para pedir su resumen, su fórmula y sus órdenes. Cada barra son los avisos de ese día, según lo que informa WhatsApp; Telegram y el correo no informan si se leyó. Sin los envíos de prueba.${doc.recortada ? ` ${ultimos}` : ''}`}
+                        >
+                            <Leyenda
+                                items={[
+                                    [COLOR.serie1, 'Leídos'],
+                                    [COLOR.serie2, 'Entregados, aún sin leer'],
+                                    [COLOR.apagado, 'Sin confirmación'],
+                                ]}
+                            />
+                            <Barras
+                                columnas={documentosPorDia}
+                                series={[
+                                    { nombre: 'Leídos', color: COLOR.serie1 },
+                                    { nombre: 'Entregados, aún sin leer', color: COLOR.serie2 },
+                                    { nombre: 'Sin confirmación', color: COLOR.apagado },
+                                ]}
+                                alto={220}
+                                descripcion="Avisos de documentos de la consulta por día: leídos, entregados sin leer y sin confirmación"
+                            />
+                            <Datos
+                                items={[
+                                    ['Consultas leídas del sistema del hospital', ent(doc.totales.atenciones.leidas)],
+                                    ['Avisos enviados', ent(doc.totales.avisos.total)],
+                                    [
+                                        'Por canal',
+                                        `WhatsApp ${ent(doc.totales.avisos.whatsapp)} · Telegram ${ent(doc.totales.avisos.telegram)} · correo ${ent(doc.totales.avisos.correo)}`,
+                                    ],
+                                    ['Reenviados a pedido del paciente', ent(doc.totales.avisos.reenvios)],
+                                    [
+                                        'Avisos de WhatsApp entregados',
+                                        `${ent(doc.totales.whatsapp.entregados)} (${pct(doc.totales.whatsapp.entregados, doc.totales.avisos.whatsapp)})`,
+                                    ],
+                                    [
+                                        'Avisos de WhatsApp leídos',
+                                        `${ent(doc.totales.whatsapp.leidos)} (${pct(doc.totales.whatsapp.leidos, doc.totales.avisos.whatsapp)})`,
+                                    ],
+                                    ['Avisos de WhatsApp no entregados', ent(doc.totales.whatsapp.fallidos)],
+                                    ['Pacientes que pidieron sus documentos', ent(doc.totales.pidieron)],
+                                    ['Pacientes que recibieron sus documentos', ent(doc.totales.recibieron)],
+                                    [
+                                        'Archivos por WhatsApp (PDF e imágenes)',
+                                        `${ent(doc.totales.archivos.enviados)} enviados · ${ent(doc.totales.archivos.entregados)} entregados · ${ent(doc.totales.archivos.leidos)} vistos`,
+                                    ],
+                                    ['Abrieron la página con sus documentos', ent(doc.totales.abrieronLaPagina)],
+                                    ['No se envían (temas sensibles o baja del paciente)', ent(doc.totales.atenciones.excluidas)],
+                                    ['Sin celular utilizable', ent(doc.totales.atenciones.sinContacto)],
+                                    ['Pidieron no recibir más documentos', ent(doc.totales.bajas)],
+                                ]}
                             />
                         </Tarjeta>
                     </Seccion>

@@ -34,6 +34,7 @@ describe('leerConfigResumenAtencion', () => {
       canales: { WHATSAPP: false, TELEGRAM: false, EMAIL: false },
       servicios: {},
       modoPrueba: { destinos: [] },
+      piloto: { aprobado: false, desdeIso: null },
       calmaMinutos: 120,
       horario: { desdeHora: 7, hastaHora: 20 },
       camposPlantilla: null,
@@ -107,11 +108,31 @@ describe('puedeEnviarPorCanal', () => {
     enviar: true,
     canales: { WHATSAPP: true, TELEGRAM: true, EMAIL: false },
     servicios: { S39141: { WHATSAPP: true, TELEGRAM: true }, S39145: {} },
+    piloto: { aprobado: true, desdeIso: '2026-11-11T15:00:00.000Z' },
   };
   const envio = { canal: 'WHATSAPP' as const, servicio: 'S39141', destino: '573001234567' };
 
   it('con todo encendido para ese servicio y canal, sale', () => {
     expect(puedeEnviarPorCanal(leerConfigResumenAtencion(encendida), envio)).toEqual({ ok: true });
+  });
+
+  it('🛡️ sin números del equipo y sin el piloto aprobado no sale nada, aunque todo esté encendido', () => {
+    const { piloto: _p, ...sinPiloto } = encendida;
+    expect(puedeEnviarPorCanal(leerConfigResumenAtencion(sinPiloto), envio)).toEqual({ ok: false, motivo: 'PILOTO_SIN_APROBAR' });
+    // Un dato roto («true» en texto) se lee sin aprobar.
+    expect(puedeEnviarPorCanal(leerConfigResumenAtencion({ ...sinPiloto, piloto: { aprobado: 'true' } }), envio)).toEqual({
+      ok: false,
+      motivo: 'PILOTO_SIN_APROBAR',
+    });
+    // Con la lista del equipo manda el modo prueba, haya piloto o no.
+    expect(puedeEnviarPorCanal(leerConfigResumenAtencion({ ...sinPiloto, modoPrueba: { destinos: ['573001234567'] } }), envio)).toEqual({
+      ok: true,
+    });
+  });
+
+  it('lee la fecha de aprobación del piloto solo si está aprobado', () => {
+    expect(leerConfigResumenAtencion(encendida)?.piloto).toEqual({ aprobado: true, desdeIso: '2026-11-11T15:00:00.000Z' });
+    expect(leerConfigResumenAtencion({ piloto: { aprobado: false, desdeIso: 'x' } })?.piloto).toEqual({ aprobado: false, desdeIso: null });
   });
 
   it('cada interruptor apagado frena con su motivo, en orden', () => {

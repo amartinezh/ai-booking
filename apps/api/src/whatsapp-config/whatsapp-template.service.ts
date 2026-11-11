@@ -195,6 +195,8 @@ export class WhatsappTemplateService {
     bodyParams?: string[];
     /** Cita a la que se refiere (recordatorios): queda en el libro de mensajes. */
     appointmentId?: string | null;
+    /** El envío del resumen de la atención (su aviso): queda en el libro de mensajes. */
+    attentionSummaryDeliveryId?: string | null;
     /**
      * Lo que devuelve cada botón de respuesta rápida al tocarlo, en el orden de
      * la plantilla (el resumen de la atención manda el envío). Sin esto, Meta
@@ -344,6 +346,7 @@ export class WhatsappTemplateService {
         context: {
           kind: TIPO_DE_MENSAJE[kind],
           appointmentId: params.appointmentId ?? null,
+          attentionSummaryDeliveryId: params.attentionSummaryDeliveryId ?? null,
         },
       });
       return {

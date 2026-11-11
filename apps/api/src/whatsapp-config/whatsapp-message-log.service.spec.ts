@@ -63,6 +63,7 @@ describe('WhatsappMessageLogService', () => {
           messageType: 'TEXT',
           kind: 'BOT_REPLY',
           appointmentId: null,
+          attentionSummaryDeliveryId: null,
         },
       });
     });
@@ -275,6 +276,92 @@ describe('WhatsappMessageLogService', () => {
       await expect(
         service.applyStatus({ id: WAMID, status: 'delivered' }),
       ).resolves.toBe(false);
+    });
+  });
+
+  describe('horas de entregado y leído (trazabilidad del resumen)', () => {
+    const T = new Date(1789900000 * 1000);
+
+    it("'delivered' anota la hora de entrega, o la corrige si llega una más temprana", async () => {
+      const { service, prisma } = build();
+      await service.applyStatus({
+        id: WAMID,
+        status: 'delivered',
+        timestamp: '1789900000',
+      });
+      expect(prisma.whatsappMessageLog.updateMany).toHaveBeenCalledWith({
+        where: {
+          wamid: WAMID,
+          OR: [{ deliveredAt: null }, { deliveredAt: { gt: T } }],
+        },
+        data: { deliveredAt: T },
+      });
+      expect(prisma.whatsappMessageLog.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { readAt: T } }),
+      );
+    });
+
+    it("'read' anota la hora de lectura y, si no la había, la de entrega", async () => {
+      const { service, prisma } = build();
+      await service.applyStatus({
+        id: WAMID,
+        status: 'read',
+        timestamp: '1789900000',
+      });
+      expect(prisma.whatsappMessageLog.updateMany).toHaveBeenCalledWith({
+        where: { wamid: WAMID, readAt: null },
+        data: { readAt: T },
+      });
+      expect(prisma.whatsappMessageLog.updateMany).toHaveBeenCalledWith({
+        where: {
+          wamid: WAMID,
+          OR: [{ deliveredAt: null }, { deliveredAt: { gt: T } }],
+        },
+        data: { deliveredAt: T },
+      });
+    });
+
+    it('un «entregado» que llega después del «leído» no cambia el estado pero sí deja su hora', async () => {
+      const { service, prisma } = build();
+      // El estado ya es READ (0 filas) y la hora de entrega sí se corrige (1 fila).
+      prisma.whatsappMessageLog.updateMany
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+      await expect(
+        service.applyStatus({
+          id: WAMID,
+          status: 'delivered',
+          timestamp: '1789900000',
+        }),
+      ).resolves.toBe(true);
+    });
+
+    it("'sent' y 'failed' no tocan las horas", async () => {
+      for (const status of ['sent', 'failed']) {
+        const { service, prisma } = build();
+        await service.applyStatus({ id: WAMID, status });
+        expect(prisma.whatsappMessageLog.updateMany).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('guarda el envío del resumen al que pertenece el mensaje', async () => {
+      const { service, prisma } = build();
+      await service.recordOutbound({
+        organizationId: ORG,
+        recipientId: '573001112233',
+        messageType: 'DOCUMENT',
+        metaResponse: { messages: [{ id: WAMID }] },
+        context: {
+          kind: 'ATTENTION_SUMMARY',
+          attentionSummaryDeliveryId: 'entrega-1',
+        },
+      });
+      expect(prisma.whatsappMessageLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          kind: 'ATTENTION_SUMMARY',
+          attentionSummaryDeliveryId: 'entrega-1',
+        }),
+      });
     });
   });
 });

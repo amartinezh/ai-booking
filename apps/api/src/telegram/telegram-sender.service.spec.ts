@@ -140,6 +140,7 @@ describe('TelegramSenderService', () => {
         messageType: 'TEXT',
         kind: 'BOOKING_CONFIRMATION',
         appointmentId: 'apt-1',
+        attentionSummaryDeliveryId: null,
         status: 'ACCEPTED',
         errorCode: null,
         errorDetail: null,

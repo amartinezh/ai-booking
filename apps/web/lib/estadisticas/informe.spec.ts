@@ -58,6 +58,7 @@ function datosDel24(): DatosDeEstadisticas {
             conversacion: { citas: 116, medidas: 83, medianaMin: 4.6, promedioMin: 6.0 },
             listaEspera: { asignadas: 7, medianaHoras: 8.5, promedioHoras: 22.7 },
         },
+        documentos: null,
     };
 }
 
@@ -138,6 +139,39 @@ describe('estadísticas — de las cifras a la página', () => {
         expect(armarInforme({ ...datosDel24(), espera: null }, corte('2026-10-24', '2026-10-25'), { conHospital: true })!.espera).toBeNull();
         const soloChat = { ...datosDel24(), espera: { ...datosDel24().espera!, oportunidad: datosDel24().espera!.oportunidad.filter((f) => f.canal === 'chat') } };
         expect(armarInforme(soloChat, corte('2026-10-24', '2026-10-25'), { conHospital: true })!.espera!.canales.map((c) => c.canal)).toEqual(['chat']);
+    });
+
+    it('📄 documentos de la consulta: sin avisos a pacientes no hay sección; con ellos, días con ceros y los totales', () => {
+        expect(armarInforme(datosDel24(), corte('2026-10-24', '2026-10-25'), { conHospital: true })!.documentos).toBeNull();
+        const conDocumentos = {
+            ...datosDel24(),
+            documentos: {
+                desde: '2026-10-20',
+                embudo: {
+                    atenciones: { leidas: 120, avisadas: 100, excluidas: 8, porBaja: 1, sinContacto: 5, sinEnviar: 7 },
+                    avisos: { total: 104, reenvios: 2, whatsapp: 90, telegram: 10, correo: 4 },
+                    avisosQueNoSalieron: 1,
+                    whatsapp: { entregados: 85, leidos: 70, fallidos: 3, sinConfirmar: 2 },
+                    pidieron: 60,
+                    verificados: 58,
+                    recibieron: 62,
+                    archivos: { enviados: 300, entregados: 295, leidos: 200 },
+                    abrieronLaPagina: 9,
+                    bajas: 2,
+                    porDia: [
+                        { dia: '2026-10-20', avisos: 50, entregados: 40, leidos: 30, pidieron: 25, recibieron: 26 },
+                        { dia: '2026-10-25', avisos: 54, entregados: 45, leidos: 40, pidieron: 35, recibieron: 36 },
+                    ],
+                },
+            },
+        };
+        const doc = armarInforme(conDocumentos, corte('2026-10-25', '2026-10-26'), { conHospital: true })!.documentos!;
+        expect(doc.desde).toBe('2026-10-20');
+        expect(doc.porDia.map((p) => p.dia)).toEqual(['2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']);
+        expect(doc.porDia[1]).toEqual({ dia: '2026-10-21', avisos: 0, entregados: 0, leidos: 0, pidieron: 0, recibieron: 0 });
+        expect(doc.recortada).toBe(false);
+        expect(doc.totales.recibieron).toBe(62);
+        expect('porDia' in doc.totales).toBe(false);
     });
 
     it('sin conexión con el hospital no habla del sistema del hospital', () => {

@@ -15,6 +15,8 @@ import type { TelegramSendOutcome } from './telegram.types';
 export interface BotOutboundContext {
   kind?: WhatsappMessageKind;
   appointmentId?: string | null;
+  /** El envío del resumen de la atención al que pertenece el mensaje. */
+  attentionSummaryDeliveryId?: string | null;
 }
 
 const NOT_SENT: TelegramSendOutcome = {
@@ -190,11 +192,18 @@ export class TelegramChannelService {
 function toTelegramCtx(ctx?: BotOutboundContext): {
   kind?: TelegramMessageKind;
   appointmentId?: string | null;
+  attentionSummaryDeliveryId?: string | null;
 } {
   if (!ctx) return {};
   const kind: TelegramMessageKind | undefined =
     ctx.kind === 'MASS_NOTICE' || ctx.kind === 'MASS_MESSAGE'
       ? 'SYSTEM_NOTICE'
       : ctx.kind;
-  return { kind, appointmentId: ctx.appointmentId ?? null };
+  return {
+    kind,
+    appointmentId: ctx.appointmentId ?? null,
+    ...(ctx.attentionSummaryDeliveryId
+      ? { attentionSummaryDeliveryId: ctx.attentionSummaryDeliveryId }
+      : {}),
+  };
 }

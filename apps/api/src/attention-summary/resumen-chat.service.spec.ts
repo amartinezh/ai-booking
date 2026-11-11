@@ -231,6 +231,30 @@ describe('ResumenChatService', () => {
     expect(a.accesos.map((x) => x.kind)).toEqual(['VERIFICAR_OK', 'DOCUMENTO']);
   });
 
+  it('trazabilidad: anota cuándo pidió y cuándo quedó verificado, y cada archivo lleva su envío', async () => {
+    const a = armar({
+      perfil: { whatsappId: NUMERO, bsuid: null },
+      escribio: true,
+    });
+    await a.s.manejarBoton(ORG, NUMERO, `resumen:${ID}`);
+    expect(a.entrega.requestedAt).toBeInstanceOf(Date);
+    expect(a.entrega.verifiedAt).toBeInstanceOf(Date);
+    for (const llamada of a.whatsapp.documento.mock.calls)
+      expect(llamada[4]).toBe(ID);
+    for (const llamada of a.whatsapp.imagen.mock.calls)
+      expect(llamada[4]).toBe(ID);
+    expect(a.whatsapp.texto.mock.calls.map((c: any[]) => c[3])).toEqual([
+      ID,
+      ID,
+    ]);
+
+    // «mis documentos» otra vez: no mueve la hora de la primera petición ni la de la verificación.
+    const [pidio, verifico] = [a.entrega.requestedAt, a.entrega.verifiedAt];
+    await a.s.manejarBoton(ORG, NUMERO, `resumen:${ID}`);
+    expect(a.entrega.requestedAt).toBe(pidio);
+    expect(a.entrega.verifiedAt).toBe(verifico);
+  });
+
   it('el número del HIS que nunca escribió no cuenta como verificado: pide la fecha', async () => {
     const a = armar({
       perfil: { whatsappId: NUMERO, bsuid: null },
@@ -241,6 +265,9 @@ describe('ResumenChatService', () => {
       expect.stringContaining('escriba la fecha de nacimiento'),
     ]);
     expect(a.whatsapp.documento).not.toHaveBeenCalled();
+    // Pidió los documentos, pero todavía no está verificado.
+    expect(a.entrega.requestedAt).toBeInstanceOf(Date);
+    expect(a.entrega.verifiedAt).toBeUndefined();
   });
 
   it('fecha correcta: entrega; equivocada: dice cuántos intentos quedan', async () => {

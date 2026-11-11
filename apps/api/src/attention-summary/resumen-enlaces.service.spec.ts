@@ -294,14 +294,14 @@ describe('ResumenEnlacesService', () => {
     await expect(
       a.servicio.contenido(otro.token, v.acceso, ORIGEN),
     ).resolves.toBeNull();
-    await expect(
-      a.servicio.contenido(
-        uno.token,
-        v.acceso.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')),
-        ORIGEN,
-      ),
-    ).resolves.toBeNull();
     const [id, , firma] = v.acceso.split('.');
+    // Se cambia la PRIMERA letra de la firma: la última de un base64 lleva bits
+    // de relleno y cambiarla (A↔B) puede dejar la misma firma (falla 1 de 16 veces).
+    const partes = v.acceso.split('.');
+    partes[2] = (firma[0] === 'A' ? 'B' : 'A') + firma.slice(1);
+    await expect(
+      a.servicio.contenido(uno.token, partes.join('.'), ORIGEN),
+    ).resolves.toBeNull();
     await expect(
       a.servicio.contenido(
         uno.token,

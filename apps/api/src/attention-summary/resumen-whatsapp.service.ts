@@ -18,7 +18,9 @@ export interface ResultadoWhatsapp {
  * los PDF y las imágenes de cada hoja (se suben a Meta y se mandan por su id),
  * el aviso con el botón «Recibir documentos» dentro de la ventana de 24 h y los
  * textos del asistente. Cada envío queda en el libro de mensajes como
- * `ATTENTION_SUMMARY`. Nunca lanza: devuelve si salió y, si no, por qué.
+ * `ATTENTION_SUMMARY` y, si se pasa, con el envío al que pertenece (`entrega`),
+ * para seguir su entrega y su lectura. Nunca lanza: devuelve si salió y, si no,
+ * por qué.
  *
  * Mismo camino que el audio del modo voz (`uploadToWhatsApp` del asistente),
  * aparte para no tocar el asistente.
@@ -82,6 +84,7 @@ export class ResumenWhatsappService {
     destino: string,
     tipo: WhatsappMessageType,
     mensaje: Record<string, unknown>,
+    entrega: string | null = null,
   ): Promise<ResultadoWhatsapp> {
     const c = await this.creds(organizationId);
     if (!c) return { ok: false, error: 'whatsapp-inactive' };
@@ -108,7 +111,10 @@ export class ResumenWhatsappService {
         recipientId: destino,
         messageType: tipo,
         metaResponse: res.data,
-        context: { kind: 'ATTENTION_SUMMARY' },
+        context: {
+          kind: 'ATTENTION_SUMMARY',
+          attentionSummaryDeliveryId: entrega,
+        },
       });
       const wamid =
         (res.data as { messages?: { id?: string }[] })?.messages?.[0]?.id ??
@@ -131,11 +137,15 @@ export class ResumenWhatsappService {
     organizationId: string,
     destino: string,
     cuerpo: string,
+    entrega: string | null = null,
   ): Promise<ResultadoWhatsapp> {
-    return this.enviar(organizationId, destino, 'TEXT', {
-      type: 'text',
-      text: { preview_url: false, body: cuerpo },
-    });
+    return this.enviar(
+      organizationId,
+      destino,
+      'TEXT',
+      { type: 'text', text: { preview_url: false, body: cuerpo } },
+      entrega,
+    );
   }
 
   documento(
@@ -143,11 +153,15 @@ export class ResumenWhatsappService {
     destino: string,
     mediaId: string,
     nombreArchivo: string,
+    entrega: string | null = null,
   ): Promise<ResultadoWhatsapp> {
-    return this.enviar(organizationId, destino, 'DOCUMENT', {
-      type: 'document',
-      document: { id: mediaId, filename: nombreArchivo },
-    });
+    return this.enviar(
+      organizationId,
+      destino,
+      'DOCUMENT',
+      { type: 'document', document: { id: mediaId, filename: nombreArchivo } },
+      entrega,
+    );
   }
 
   imagen(
@@ -155,11 +169,18 @@ export class ResumenWhatsappService {
     destino: string,
     mediaId: string,
     pie?: string,
+    entrega: string | null = null,
   ): Promise<ResultadoWhatsapp> {
-    return this.enviar(organizationId, destino, 'IMAGE', {
-      type: 'image',
-      image: { id: mediaId, ...(pie ? { caption: pie } : {}) },
-    });
+    return this.enviar(
+      organizationId,
+      destino,
+      'IMAGE',
+      {
+        type: 'image',
+        image: { id: mediaId, ...(pie ? { caption: pie } : {}) },
+      },
+      entrega,
+    );
   }
 
   /** Mensaje con botones de respuesta (solo dentro de la ventana de 24 h; título de hasta 20 letras). */
@@ -168,19 +189,26 @@ export class ResumenWhatsappService {
     destino: string,
     cuerpo: string,
     botones: { id: string; titulo: string }[],
+    entrega: string | null = null,
   ): Promise<ResultadoWhatsapp> {
-    return this.enviar(organizationId, destino, 'INTERACTIVE', {
-      type: 'interactive',
-      interactive: {
-        type: 'button',
-        body: { text: cuerpo },
-        action: {
-          buttons: botones.map((b) => ({
-            type: 'reply',
-            reply: { id: b.id, title: b.titulo.slice(0, 20) },
-          })),
+    return this.enviar(
+      organizationId,
+      destino,
+      'INTERACTIVE',
+      {
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: { text: cuerpo },
+          action: {
+            buttons: botones.map((b) => ({
+              type: 'reply',
+              reply: { id: b.id, title: b.titulo.slice(0, 20) },
+            })),
+          },
         },
       },
-    });
+      entrega,
+    );
   }
 }

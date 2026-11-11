@@ -2,22 +2,24 @@
 
 import { useState, useTransition } from 'react';
 import { formatAppointmentShort } from '@/lib/date';
-import { listarEnviosAction, reenviarResumenAction, type AtencionConEnvios } from '@/app/actions/resumen-envios';
+import {
+    exportarEnviosAction,
+    listarEnviosAction,
+    reenviarResumenAction,
+    type AtencionConEnvios,
+} from '@/app/actions/resumen-envios';
+import {
+    CANAL_DEL_ENVIO as CANAL,
+    ESTADO_DE_LA_ATENCION as ESTADO_ATENCION,
+    ESTADO_DEL_ENVIO as ESTADO_ENVIO,
+    filasDelRegistro,
+    lineaDeLaPagina,
+    lineasDelEnvio,
+    nombreDelRegistro,
+} from '@/lib/resumen/registro-envios';
+import { hoyLocal } from '@/lib/encuestas/etiquetas';
+import { sumarDiasAFecha } from '@agenia/shared';
 
-const CANAL: Record<string, string> = { WHATSAPP: 'WhatsApp', TELEGRAM: 'Telegram', EMAIL: 'Correo' };
-const ESTADO_ENVIO: Record<string, string> = {
-    AVISO_ENVIADO: 'Aviso enviado (no ha pedido los documentos)',
-    DOCUMENTOS_ENVIADOS: '✓ Documentos entregados',
-    FALLO: '⚠ No salió',
-    NO_ENVIADO: 'Sin correo utilizable',
-};
-const ESTADO_ATENCION: Record<string, string> = {
-    RECIBIDO: 'Sin enviar todavía',
-    ENVIADO: 'Avisado',
-    EXCLUIDO: 'No se envía',
-    SIN_CONTACTO: 'Sin celular utilizable',
-    CADUCADO: 'Ya se borró (30 días)',
-};
 const PROPOSITO: Record<string, string> = { PRUEBA: 'prueba', REENVIO: 'reenvío' };
 
 /** El seguimiento sin contenido y «Reenviar» con la verificación de identidad. */
@@ -30,6 +32,37 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
     const [verificada, setVerificada] = useState(false);
     const [reenviando, startReenviar] = useTransition();
     const [resultado, setResultado] = useState<{ id: string; ok: boolean; texto: string } | null>(null);
+    const hoy = hoyLocal();
+    const [desdeDia, setDesdeDia] = useState(() => sumarDiasAFecha(hoy, -29));
+    const [hastaDia, setHastaDia] = useState(hoy);
+    const [descargando, startDescargar] = useTransition();
+    const [descarga, setDescarga] = useState<{ ok: boolean; texto: string } | null>(null);
+
+    const descargar = (e: React.FormEvent) => {
+        e.preventDefault();
+        setDescarga(null);
+        startDescargar(async () => {
+            const r = await exportarEnviosAction(desdeDia, hastaDia);
+            if (!r.success) {
+                setDescarga({ ok: false, texto: r.error });
+                return;
+            }
+            try {
+                const XLSX = await import('xlsx');
+                const libro = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(libro, XLSX.utils.aoa_to_sheet(filasDelRegistro(r.atenciones)), 'Envíos');
+                XLSX.writeFile(libro, nombreDelRegistro(desdeDia, hastaDia));
+                setDescarga({
+                    ok: true,
+                    texto: r.truncado
+                        ? `Se descargaron las primeras ${r.atenciones.length} atenciones. Acorte las fechas para bajar el resto.`
+                        : `Descargadas ${r.atenciones.length} atenciones.`,
+                });
+            } catch {
+                setDescarga({ ok: false, texto: 'No se pudo armar el archivo. Intente de nuevo.' });
+            }
+        });
+    };
 
     const buscar = (e?: React.FormEvent) => {
         e?.preventDefault();
@@ -64,10 +97,53 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
             <header className="space-y-1">
                 <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">Envíos de documentos</h1>
                 <p className="max-w-3xl text-sm text-zinc-600 dark:text-zinc-400">
-                    Si al paciente le llegaron los documentos de su consulta (resumen, fórmula y órdenes) y por qué canal. Si los
-                    pide en ventanilla, verifique su identidad y reenvíelos. Aquí no se ve el contenido clínico.
+                    Si al paciente le llegaron los documentos de su consulta (resumen, fórmula y órdenes), por qué canal y qué
+                    hizo con ellos: si el aviso se entregó y se leyó, si pidió los documentos, si los recibió y si abrió la
+                    página. Si los pide en ventanilla, verifique su identidad y reenvíelos. Aquí no se ve el contenido clínico.
                 </p>
             </header>
+
+            <form onSubmit={descargar} className="flex flex-wrap items-end gap-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                <label className="text-xs text-zinc-600 dark:text-zinc-400">
+                    Desde
+                    <input
+                        type="date"
+                        value={desdeDia}
+                        max={hastaDia}
+                        onChange={(e) => setDesdeDia(e.target.value)}
+                        aria-label="Registro desde"
+                        className="mt-1 block rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                    />
+                </label>
+                <label className="text-xs text-zinc-600 dark:text-zinc-400">
+                    Hasta
+                    <input
+                        type="date"
+                        value={hastaDia}
+                        min={desdeDia}
+                        max={hoy}
+                        onChange={(e) => setHastaDia(e.target.value)}
+                        aria-label="Registro hasta"
+                        className="mt-1 block rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                    />
+                </label>
+                <button
+                    type="submit"
+                    disabled={descargando}
+                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                    {descargando ? 'Preparando…' : 'Descargar registro (Excel)'}
+                </button>
+                <span className="basis-full text-xs text-zinc-500">
+                    Una fila por envío, con cada hora (enviado, entregado, leído, pidió, verificó, documentos) y por qué no se
+                    envió a quien no le llegó. Hasta 3 meses por archivo. Queda anotado quién lo descargó.
+                </span>
+                {descarga && (
+                    <span className={`basis-full text-sm ${descarga.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
+                        {descarga.texto}
+                    </span>
+                )}
+            </form>
 
             <form onSubmit={buscar} className="flex flex-wrap items-center gap-2">
                 <input
@@ -115,9 +191,9 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                                 </p>
                             )}
                             {a.envios.length > 0 && (
-                                <ul className="space-y-1 text-sm">
+                                <ul className="space-y-2 text-sm">
                                     {a.envios.map((e, i) => (
-                                        <li key={i} className="text-zinc-700 dark:text-zinc-300">
+                                        <li key={i} className="text-zinc-700 dark:text-zinc-300" data-testid="envio">
                                             <span className="font-medium">{CANAL[e.canal] ?? e.canal}</span>
                                             <span className="font-mono text-xs text-zinc-500"> {e.destino}</span>
                                             {PROPOSITO[e.proposito] && (
@@ -126,14 +202,19 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                                                 </span>
                                             )}
                                             <span> · {ESTADO_ENVIO[e.estado] ?? e.estado}</span>
-                                            {(e.documentosIso ?? e.avisoIso) && (
-                                                <span className="text-xs text-zinc-500"> · {formatAppointmentShort((e.documentosIso ?? e.avisoIso)!)}</span>
+                                            {e.estado === 'NO_ENVIADO' ? null : (
+                                                <ul className="mt-0.5 space-y-0.5 border-l-2 border-zinc-200 pl-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                                                    {lineasDelEnvio(e).map((l) => (
+                                                        <li key={l}>{l}</li>
+                                                    ))}
+                                                    {e.motivo && e.estado === 'FALLO' && <li>⚠ {e.motivo}</li>}
+                                                </ul>
                                             )}
-                                            {e.motivo && e.estado !== 'NO_ENVIADO' && <span className="block text-xs text-zinc-500">{e.motivo}</span>}
                                         </li>
                                     ))}
                                 </ul>
                             )}
+                            {lineaDeLaPagina(a) && <p className="text-xs text-zinc-600 dark:text-zinc-400">{lineaDeLaPagina(a)}</p>}
 
                             {resultado?.id === a.id && (
                                 <p className={`text-sm ${resultado.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>

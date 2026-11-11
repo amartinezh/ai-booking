@@ -281,6 +281,11 @@ export interface CambioEnvioResumen {
   serviciosCorreo?: string[];
   /** Números del equipo del modo prueba; reemplaza la lista. */
   destinosPrueba?: string[];
+  /**
+   * Aprobar el piloto (o volver a solo modo prueba). Aprobado, «Enviar» puede
+   * quedar sin números del equipo: entonces salen a los pacientes.
+   */
+  piloto?: boolean;
 }
 
 /** Un destino del equipo: celular colombiano, de 10 a 15 dígitos, un chat de Telegram («tg:123456») o un correo. */
@@ -301,9 +306,13 @@ function destinoDePrueba(crudo: string): string | null {
  * con al menos un destino del equipo (número, chat de Telegram «tg:<chat>» o
  * correo), y solo a esos destinos.
  */
+/** Lo que el administrador escribe para aprobar el piloto: un clic no basta para enviarle a pacientes. */
+export const FRASE_APROBAR_PILOTO = 'ENVIAR A PACIENTES';
+
 export function aplicarCambioDeEnvio(
   json: unknown,
   cambio: CambioEnvioResumen,
+  ahora: Date = new Date(),
 ): { ok: true; config: Record<string, unknown>; cambios: string[] } | { ok: false; error: string } {
   // Sin configuración (null) la función no existe para la clínica: no hay qué encender.
   if (!esObjeto(json)) return { ok: false, error: 'La función no está habilitada para esta clínica.' };
@@ -381,6 +390,16 @@ export function aplicarCambioDeEnvio(
     base.correosDeRelleno = lista;
   }
 
+  let piloto = antes.piloto.aprobado;
+  if (cambio.piloto !== undefined) {
+    const nuevo = cambio.piloto === true;
+    if (nuevo !== piloto) {
+      cambios.push(nuevo ? 'Piloto: sin aprobar → aprobado' : 'Piloto: aprobado → sin aprobar (solo modo prueba)');
+      base.piloto = nuevo ? { aprobado: true, desdeIso: ahora.toISOString() } : { aprobado: false, desdeIso: null };
+    }
+    piloto = nuevo;
+  }
+
   let enviar = antes.enviar;
   if (cambio.enviar !== undefined) {
     const nuevo = cambio.enviar === true;
@@ -388,11 +407,19 @@ export function aplicarCambioDeEnvio(
     enviar = nuevo;
     base.enviar = nuevo;
   }
-  if (enviar && destinos.length === 0) {
-    return {
-      ok: false,
-      error: 'Mientras no se apruebe el piloto, «Enviar» solo funciona en modo prueba: agregue al menos un número del equipo.',
-    };
+  if (enviar && destinos.length === 0 && !piloto) {
+    // Quitar la aprobación siempre se puede: si no quedan números del equipo,
+    // el envío se apaga solo en vez de dejar el cambio a medias.
+    if (cambio.piloto === false && antes.piloto.aprobado) {
+      enviar = false;
+      base.enviar = false;
+      cambios.push('Enviar a pacientes: encendido → apagado (sin piloto y sin números del equipo)');
+    } else {
+      return {
+        ok: false,
+        error: 'Mientras no se apruebe el piloto, «Enviar» solo funciona en modo prueba: agregue al menos un número del equipo.',
+      };
+    }
   }
   return { ok: true, config: base, cambios };
 }

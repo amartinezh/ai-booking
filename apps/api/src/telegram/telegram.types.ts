@@ -139,6 +139,8 @@ export interface TelegramWebhookStatus extends PublicTelegramConfig {
 export interface TelegramOutboundContext {
   kind?: TelegramMessageKind;
   appointmentId?: string | null;
+  /** El envío del resumen de la atención al que pertenece el mensaje. */
+  attentionSummaryDeliveryId?: string | null;
 }
 
 export interface TelegramSendOutcome {

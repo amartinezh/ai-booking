@@ -177,6 +177,44 @@ describe('aplicarCambioDeEnvio', () => {
   it('sin la función habilitada no hay nada que cambiar', () => {
     expect(aplicarCambioDeEnvio(null, { whatsapp: true }).ok).toBe(false);
   });
+
+  describe('el piloto', () => {
+    const AHORA = new Date('2026-11-11T15:00:00.000Z');
+    const enPrueba = { ...leyendo, enviar: true, modoPrueba: { destinos: ['573001234567'] } };
+
+    it('aprobado, «Enviar» puede quedar sin números del equipo (salen a los pacientes); queda la fecha', () => {
+      const r = aplicarCambioDeEnvio(enPrueba, { piloto: true, destinosPrueba: [] }, AHORA);
+      if (!r.ok) throw new Error(r.error);
+      const c = leerConfigResumenAtencion(r.config)!;
+      expect(c.piloto).toEqual({ aprobado: true, desdeIso: '2026-11-11T15:00:00.000Z' });
+      expect(c.enviar).toBe(true);
+      expect(c.modoPrueba.destinos).toEqual([]);
+      expect(r.cambios).toContain('Piloto: sin aprobar → aprobado');
+    });
+
+    it('aprobarlo no saca del modo prueba: mientras haya números, solo ellos', () => {
+      const r = aplicarCambioDeEnvio(enPrueba, { piloto: true }, AHORA);
+      if (!r.ok) throw new Error(r.error);
+      expect(leerConfigResumenAtencion(r.config)!.modoPrueba.destinos).toEqual(['573001234567']);
+    });
+
+    it('quitar la aprobación sin números del equipo apaga el envío solo, nunca deja enviando', () => {
+      const aprobado = { ...leyendo, enviar: true, piloto: { aprobado: true, desdeIso: AHORA.toISOString() } };
+      const r = aplicarCambioDeEnvio(aprobado, { piloto: false, enviar: true }, AHORA);
+      if (!r.ok) throw new Error(r.error);
+      const c = leerConfigResumenAtencion(r.config)!;
+      expect(c.piloto.aprobado).toBe(false);
+      expect(c.enviar).toBe(false);
+      expect(r.cambios).toEqual([
+        'Piloto: aprobado → sin aprobar (solo modo prueba)',
+        'Enviar a pacientes: encendido → apagado (sin piloto y sin números del equipo)',
+      ]);
+    });
+
+    it('sin aprobar, encender «Enviar» sin números sigue prohibido', () => {
+      expect(aplicarCambioDeEnvio(leyendo, { enviar: true, piloto: false }).ok).toBe(false);
+    });
+  });
 });
 
 describe('Telegram y la baja escrita', () => {

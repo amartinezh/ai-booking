@@ -1,5 +1,6 @@
 import { sumarDiasAFecha } from '@agenia/shared';
 import type { DatosDeEstadisticas } from './consultas';
+import type { EmbudoDelEnvio } from '@/lib/resumen/trazabilidad';
 import { ESTADISTICAS, diasEntre, type CorteDeEstadisticas } from './periodo';
 
 /**
@@ -54,6 +55,17 @@ export interface Informe {
     asistencia: { grupo: string; citas: number; asistieron: number; destacado: boolean }[];
     /** ⏱️ Cuánto espera el paciente por su cita; null si no hay citas que medir. */
     espera: EsperaPorLaCita | null;
+    /** 📄 Documentos de la consulta; null mientras ningún paciente haya recibido un aviso. */
+    documentos: DocumentosDeLaConsulta | null;
+}
+
+/** 📄 Lo que pasó con los documentos de la consulta (resumen de la atención). */
+export interface DocumentosDeLaConsulta {
+    desde: string;
+    /** Uno por día de la ventana de las gráficas, con ceros donde no hubo. */
+    porDia: { dia: string; avisos: number; entregados: number; leidos: number; pidieron: number; recibieron: number }[];
+    recortada: boolean;
+    totales: Omit<EmbudoDelEnvio, 'porDia'>;
 }
 
 export interface CanalDeEspera {
@@ -191,5 +203,25 @@ export function armarInforme(
                   ]
                 : [],
         espera: armarEspera(d.espera),
+        documentos: armarDocumentos(d.documentos, corte, desdeGrafica, ventana),
+    };
+}
+
+function armarDocumentos(
+    datos: DatosDeEstadisticas['documentos'],
+    corte: CorteDeEstadisticas,
+    desdeGrafica: (primerDia: string) => string,
+    ventana: string,
+): DocumentosDeLaConsulta | null {
+    if (!datos) return null;
+    const { porDia, ...totales } = datos.embudo;
+    const dias = new Map(porDia.map((p) => [p.dia, p]));
+    return {
+        desde: datos.desde,
+        porDia: diasEntre(desdeGrafica(datos.desde), corte.ultimoDia).map(
+            (dia) => dias.get(dia) ?? { dia, avisos: 0, entregados: 0, leidos: 0, pidieron: 0, recibieron: 0 },
+        ),
+        recortada: datos.desde < ventana,
+        totales,
     };
 }

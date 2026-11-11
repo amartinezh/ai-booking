@@ -95,7 +95,10 @@ export default async function ResumenPage(props: { params: Promise<{ token: stri
 
                 <section className="space-y-3 rounded-2xl border border-[#dde3eb] bg-white p-5 shadow-sm">
                     <h2 className="text-xl font-semibold">Sus documentos</h2>
-                    <p className="text-base text-[#586378]">Puede descargarlos, imprimirlos o mostrarlos en la farmacia.</p>
+                    <p className="text-base text-[#586378]">
+                        Puede descargarlos e imprimirlos. Son una copia informativa: para reclamar medicamentos o hacerse los
+                        exámenes, siga las indicaciones del hospital y de su EPS.
+                    </p>
                     <ul className="divide-y divide-[#eef1f5]">
                         {c.documentos.map((d) => (
                             <li key={d.id} className="space-y-2 py-3">

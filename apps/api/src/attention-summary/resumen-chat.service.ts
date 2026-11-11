@@ -34,6 +34,8 @@ const SELECT_ENTREGA = {
   failedAttempts: true,
   lockedUntil: true,
   destinationHash: true,
+  requestedAt: true,
+  verifiedAt: true,
   attentionSummary: {
     select: {
       id: true,
@@ -51,6 +53,8 @@ type Entrega = {
   failedAttempts: number;
   lockedUntil: Date | null;
   destinationHash: string;
+  requestedAt: Date | null;
+  verifiedAt: Date | null;
   attentionSummary: {
     id: string;
     organizationId: string;
@@ -102,8 +106,9 @@ export class ResumenChatService {
     organizationId: string,
     remitente: string,
     cuerpo: string,
-    opciones: { quitarTeclado?: boolean } = {},
+    opciones: { quitarTeclado?: boolean; entrega?: string } = {},
   ): Promise<boolean> {
+    const entrega = opciones.entrega ?? null;
     if (isTelegramSender(remitente)) {
       if (!this.telegram) return false;
       const r = await this.telegram.sendTextConTeclado(
@@ -111,11 +116,13 @@ export class ResumenChatService {
         remitente,
         cuerpo,
         { quitar: opciones.quitarTeclado },
-        { kind: 'ATTENTION_SUMMARY' },
+        { kind: 'ATTENTION_SUMMARY', attentionSummaryDeliveryId: entrega },
       );
       return r.ok;
     }
-    return (await this.whatsapp.texto(organizationId, remitente, cuerpo)).ok;
+    return (
+      await this.whatsapp.texto(organizationId, remitente, cuerpo, entrega)
+    ).ok;
   }
 
   /** El toque de un botón. `true` si era de un resumen (y ya se atendió). */
@@ -205,6 +212,14 @@ export class ResumenChatService {
     remitente: string,
     e: Entrega,
   ): Promise<void> {
+    // Trazabilidad: la primera vez que el paciente pidió sus documentos.
+    if (!e.requestedAt) {
+      e.requestedAt = new Date();
+      await this.prisma.attentionSummaryDelivery.update({
+        where: { id: e.id },
+        data: { requestedAt: e.requestedAt },
+      });
+    }
     const resumen = this.resumenDe(e);
     if (!resumen) {
       await this.texto(organizationId, remitente, TEXTOS_RESUMEN.noDisponible);
@@ -384,12 +399,16 @@ export class ResumenChatService {
       TEXTOS_RESUMEN.enviando(
         formatDateOnly(resumen.historia.guardadaIso, { timeZone }),
       ),
+      { entrega: e.id },
     );
     const g = await this.documentos.generador(organizationId, resumen);
     const porTelegram = isTelegramSender(remitente);
     let fallos = 0;
     if (porTelegram && this.telegram) {
-      const ctx = { kind: 'ATTENTION_SUMMARY' as const };
+      const ctx = {
+        kind: 'ATTENTION_SUMMARY' as const,
+        attentionSummaryDeliveryId: e.id,
+      };
       for (const doc of g.listar()) {
         const pdf = await g.pdf(doc.id);
         if (
@@ -445,6 +464,7 @@ export class ResumenChatService {
             remitente,
             idPdf,
             pdf.nombreArchivo,
+            e.id,
           )
         ).ok
       )
@@ -466,8 +486,15 @@ export class ResumenChatService {
         if (
           !png ||
           !idPng ||
-          !(await this.whatsapp.imagen(organizationId, remitente, idPng, pie))
-            .ok
+          !(
+            await this.whatsapp.imagen(
+              organizationId,
+              remitente,
+              idPng,
+              pie,
+              e.id,
+            )
+          ).ok
         )
           fallos++;
       }
@@ -488,16 +515,19 @@ export class ResumenChatService {
       organizationId,
       remitente,
       fallos ? TEXTOS_RESUMEN.incompleto(enlace) : TEXTOS_RESUMEN.listo(enlace),
-      { quitarTeclado: true },
+      { quitarTeclado: true, entrega: e.id },
     );
 
+    const ahora = new Date();
     await this.prisma.attentionSummaryDelivery.update({
       where: { id: e.id },
       data: {
         status: fallos ? 'FALLO' : 'DOCUMENTOS_ENVIADOS',
         statusReason: fallos ? `${fallos} archivo(s) no salieron` : null,
         verifiedBy: verificadoPor,
-        documentsSentAt: new Date(),
+        // La primera verificación; las siguientes («mis documentos») no la mueven.
+        verifiedAt: e.verifiedAt ?? ahora,
+        documentsSentAt: ahora,
       },
     });
     await this.prisma.attentionSummaryAccess.create({

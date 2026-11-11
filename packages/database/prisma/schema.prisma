@@ -1418,6 +1418,10 @@ model AttentionSummaryDelivery {
   failedAttempts     Int              @default(0)
   lockedUntil        DateTime?
   noticeSentAt       DateTime?
+  // La primera vez que el paciente pidió los documentos (tocó «Recibir mis
+  // documentos» o escribió «mis documentos») y cuándo quedó verificado.
+  requestedAt        DateTime?
+  verifiedAt         DateTime?
   documentsSentAt    DateTime?
   createdByUserId    String?
   createdAt          DateTime         @default(now())
@@ -3133,9 +3137,18 @@ model WhatsappMessageLog {
   /// es evidencia y debe sobrevivir al borrado de la cita.
   appointmentId String?
 
+  /// Envío del resumen de la atención al que pertenece el mensaje (el aviso, los
+  /// documentos y los textos de ese flujo). Sin FK a propósito: es evidencia.
+  attentionSummaryDeliveryId String?
+
   status      WhatsappMessageStatus @default(ACCEPTED)
   /// Cuándo ocurrió `status` (la hora que reporta Meta; la de aceptación al inicio).
   statusAt    DateTime              @default(now())
+  /// La hora más temprana en que Meta dijo «entregado» (un «leído» también lo
+  /// implica). Null en los mensajes anteriores al 2026-11-11.
+  deliveredAt DateTime?
+  /// La hora en que Meta dijo «leído».
+  readAt      DateTime?
   errorCode   String?
   errorDetail String?
 
@@ -3143,6 +3156,7 @@ model WhatsappMessageLog {
 
   @@index([organizationId, recipientId, createdAt])
   @@index([appointmentId])
+  @@index([attentionSummaryDeliveryId])
 }
 
 enum TelegramMessageType {
@@ -3197,6 +3211,9 @@ model TelegramMessageLog {
   /// Cita a la que se refiere, cuando se sabe. Sin FK: es evidencia.
   appointmentId String?
 
+  /// Envío del resumen de la atención al que pertenece. Sin FK: es evidencia.
+  attentionSummaryDeliveryId String?
+
   status      TelegramMessageStatus
   errorCode   String?
   errorDetail String?
@@ -3205,6 +3222,7 @@ model TelegramMessageLog {
 
   @@index([organizationId, chatId, createdAt])
   @@index([appointmentId])
+  @@index([attentionSummaryDeliveryId])
 }
 
 /// Bitácora de las consultas hechas en la pantalla de rastreo de paciente.

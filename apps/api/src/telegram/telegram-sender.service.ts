@@ -292,6 +292,7 @@ export class TelegramSenderService {
           messageType: p.messageType,
           kind,
           appointmentId: p.ctx.appointmentId ?? null,
+          attentionSummaryDeliveryId: p.ctx.attentionSummaryDeliveryId ?? null,
           status: p.messageId !== null ? 'ACCEPTED' : 'FAILED',
           errorCode: p.errorCode,
           errorDetail: p.errorDetail,

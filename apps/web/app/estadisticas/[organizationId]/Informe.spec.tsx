@@ -53,6 +53,7 @@ const datos: DatosDeEstadisticas = {
         conversacion: { citas: 116, medidas: 83, medianaMin: 4.6, promedioMin: 6.0 },
         listaEspera: { asignadas: 7, medianaHoras: 8.5, promedioHoras: 22.7 },
     },
+    documentos: null,
 };
 
 describe('estadísticas — la página', () => {
@@ -94,6 +95,43 @@ describe('estadísticas — la página', () => {
         render(<Informe informe={informe} clinica="Clínica" organizationId={ORG} />);
         expect(screen.queryByText('¿Cuánto espera el paciente por su cita?')).not.toBeInTheDocument();
         expect(screen.queryByText('Días hasta la cita por chat')).not.toBeInTheDocument();
+    });
+
+    it('📄 documentos de la consulta: la cifra arriba y la sección con lo que pasó con cada aviso', () => {
+        const informe = armarInforme(
+            {
+                ...datos,
+                documentos: {
+                    desde: '2026-10-20',
+                    embudo: {
+                        atenciones: { leidas: 120, avisadas: 100, excluidas: 8, porBaja: 1, sinContacto: 5, sinEnviar: 7 },
+                        avisos: { total: 104, reenvios: 2, whatsapp: 90, telegram: 10, correo: 4 },
+                        avisosQueNoSalieron: 1,
+                        whatsapp: { entregados: 85, leidos: 70, fallidos: 3, sinConfirmar: 2 },
+                        pidieron: 60,
+                        verificados: 58,
+                        recibieron: 62,
+                        archivos: { enviados: 300, entregados: 295, leidos: 200 },
+                        abrieronLaPagina: 9,
+                        bajas: 2,
+                        porDia: [
+                            { dia: '2026-10-20', avisos: 50, entregados: 40, leidos: 30, pidieron: 25, recibieron: 26 },
+                            { dia: '2026-10-25', avisos: 54, entregados: 45, leidos: 40, pidieron: 35, recibieron: 36 },
+                        ],
+                    },
+                },
+            },
+            corte,
+            { conHospital: true },
+        )!;
+        render(<Informe informe={informe} clinica="Hospital San Vicente de Paúl" organizationId={ORG} />);
+        const cifras = within(screen.getByRole('region', { name: 'Cifras principales' }));
+        expect(cifras.getByText('Documentos de la consulta recibidos').nextSibling).toHaveTextContent('62');
+        expect(cifras.getByText(/avisos desde el/)).toHaveTextContent('Se leyó el 82,4 % de los avisos de WhatsApp entregados');
+        expect(screen.getByRole('heading', { level: 2, name: 'Los documentos de la consulta llegan al celular' })).toBeInTheDocument();
+        expect(screen.getByText('Avisos de WhatsApp entregados').nextSibling).toHaveTextContent('85 (94,4 %)');
+        expect(screen.getByText('Pacientes que pidieron sus documentos').nextSibling).toHaveTextContent('60');
+        expect(screen.getByText('Archivos por WhatsApp (PDF e imágenes)').nextSibling).toHaveTextContent('300 enviados · 295 entregados · 200 vistos');
     });
 
     it('sin conexión con el hospital no menciona su sistema', () => {

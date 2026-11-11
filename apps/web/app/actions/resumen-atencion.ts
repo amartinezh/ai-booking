@@ -24,7 +24,10 @@ import { prisma } from '@/lib/prisma';
 import { adminDelResumen } from '@/lib/resumen/acceso';
 import { INTERNAL_API_URL } from '@/lib/resumen/api';
 import { registrarActividad } from '@/lib/actividad/registrar';
+import { consultarEmbudoDelEnvio, type EmbudoDelEnvio } from '@/lib/resumen/trazabilidad';
 import {
+    DEFAULT_TIMEZONE,
+    FRASE_APROBAR_PILOTO,
     LIMITES_RESUMEN_ATENCION,
     aplicarCambioDeContenido,
     aplicarCambioDeDocumentos,
@@ -117,20 +120,14 @@ export interface PanelResumenAtencion {
     };
 }
 
-export interface MedicionPiloto {
-    /** Avisos que salieron, por canal (a pacientes y reenvíos). */
-    avisos: { WHATSAPP: number; TELEGRAM: number; EMAIL: number };
-    /** Pacientes que pidieron los documentos por el chat (o les llegaron por correo). */
-    documentos: number;
-    /** Lo que Meta dijo de los avisos por WhatsApp: entregados (o leídos) y fallidos. */
-    meta: { entregados: number; leidos: number; fallidos: number; total: number };
-    /** Resúmenes que alguien abrió en la página (con la fecha de nacimiento). */
-    abiertosEnLaPagina: number;
-    /** «no quiero resúmenes» (por número) y fichas con la baja. */
-    bajas: number;
-    /** Envíos que no salieron. */
-    errores: number;
-}
+/**
+ * «Cómo va el envío» (últimos 30 días): las mismas cifras que las estadísticas
+ * para compartir (`consultarEmbudoDelEnvio`), más las bajas vigentes.
+ */
+export type MedicionPiloto = EmbudoDelEnvio & {
+    /** «no quiero resúmenes» por número, más las fichas con la baja (todas, no solo del período). */
+    bajasVigentes: number;
+};
 
 export interface EntregaDelPanel {
     id: string;
@@ -219,8 +216,8 @@ export async function getPanelResumenAtencionAction(): Promise<
         }),
     ]);
 
-    const org = await prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { name: true } });
-    const piloto = await medicionDelPiloto(auth.organizationId, desde30);
+    const org = await prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { name: true, timezone: true } });
+    const piloto = await medicionDelPiloto(auth.organizationId, desde30, new Date(ahora), org?.timezone || DEFAULT_TIMEZONE);
     const [plantilla, entregas, estados, sinCorreo, correoConfigurado] = await Promise.all([
         prisma.whatsappTemplate.findFirst({
             where: { organizationId: auth.organizationId, kind: 'ATTENTION_SUMMARY_READY', isActive: true },
@@ -595,6 +592,44 @@ export async function updateEnvioResumenAction(
     return { success: true };
 }
 
+/**
+ * Aprobar el piloto (o volver a solo modo prueba). Aprobado, «Enviar a
+ * pacientes» puede quedar sin números del equipo y entonces salen a los
+ * pacientes de los servicios y canales encendidos. Aprobar exige escribir
+ * `FRASE_APROBAR_PILOTO`; quitar la aprobación, no. Queda en la Actividad de usuarios.
+ */
+export async function aprobarPilotoResumenAction(
+    aprobar: boolean,
+    frase?: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+    const auth = await requireAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    if (aprobar === true && (typeof frase !== 'string' || frase.trim().toUpperCase() !== FRASE_APROBAR_PILOTO)) {
+        return { success: false, error: `Para aprobar el piloto escriba «${FRASE_APROBAR_PILOTO}».` };
+    }
+    const fila = await prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId: auth.organizationId },
+        select: { resumenAtencion: true },
+    });
+    const r = aplicarCambioDeEnvio(fila?.resumenAtencion, { piloto: aprobar === true });
+    if (!r.ok) return { success: false, error: r.error };
+    if (!r.cambios.length) return { success: true };
+    await prisma.hospitalMirrorConfig.update({
+        where: { organizationId: auth.organizationId },
+        data: { resumenAtencion: r.config as object },
+    });
+    await registrarActividad({
+        action: aprobar === true ? 'ATTENTION_SUMMARY_PILOT_APPROVED' : 'ATTENTION_SUMMARY_PILOT_REVOKED',
+        level: 'WARNING',
+        message: aprobar === true ? 'Aprobó el piloto del resumen de la atención' : 'Volvió el resumen de la atención a solo modo prueba',
+        actor: { userId: auth.userId, role: auth.role },
+        organizationId: auth.organizationId,
+        metadata: { detalle: r.cambios.join(' · ').slice(0, 400) },
+    });
+    revalidatePath('/dashboard/espejo/resumen-atencion');
+    return { success: true };
+}
+
 /** «Enviar de prueba»: el aviso de este resumen a un número del modo prueba. */
 export async function enviarDePruebaAction(
     id: string,
@@ -655,44 +690,12 @@ export async function updateContenidoResumenAction(
     return { success: true };
 }
 
-/** La medición del piloto: lo que ya se guarda, sumado. Sin envíos de prueba ni contenido. */
-async function medicionDelPiloto(organizationId: string, desde: Date): Promise<MedicionPiloto> {
-    const deLaClinica = { attentionSummary: { organizationId }, createdAt: { gte: desde } };
-    const [porCanal, documentos, errores, meta, abiertos, bajasNumero, bajasFicha] = await Promise.all([
-        prisma.attentionSummaryDelivery.groupBy({
-            by: ['channel'],
-            where: { ...deLaClinica, purpose: { in: ['PACIENTE', 'REENVIO'] }, status: { in: ['AVISO_ENVIADO', 'DOCUMENTOS_ENVIADOS'] } },
-            _count: { _all: true },
-        }),
-        prisma.attentionSummaryDelivery.count({
-            where: { ...deLaClinica, purpose: { in: ['PACIENTE', 'REENVIO'] }, status: 'DOCUMENTOS_ENVIADOS' },
-        }),
-        prisma.attentionSummaryDelivery.count({ where: { ...deLaClinica, purpose: { in: ['PACIENTE', 'REENVIO'] }, status: 'FALLO' } }),
-        prisma.whatsappMessageLog.groupBy({
-            by: ['status'],
-            where: { organizationId, kind: 'ATTENTION_SUMMARY', messageType: { in: ['TEMPLATE', 'INTERACTIVE'] }, createdAt: { gte: desde } },
-            _count: { _all: true },
-        }),
-        prisma.attentionSummaryAccess.groupBy({
-            by: ['attentionSummaryId'],
-            where: { attentionSummary: { organizationId }, kind: 'VER', createdAt: { gte: desde } },
-        }),
+/** La medición del piloto: el embudo de los últimos 30 días, sin envíos de prueba ni contenido. */
+async function medicionDelPiloto(organizationId: string, desde: Date, hasta: Date, timeZone: string): Promise<MedicionPiloto> {
+    const [embudo, bajasNumero, bajasFicha] = await Promise.all([
+        consultarEmbudoDelEnvio(organizationId, { desde, hasta }, timeZone),
         prisma.attentionSummaryOptOut.count({ where: { organizationId } }),
         prisma.patientProfile.count({ where: { organizationId, summariesOptOut: true } }),
     ]);
-    const canal = (c: string) => porCanal.find((p) => p.channel === c)?._count._all ?? 0;
-    const estado = (e: string) => meta.find((m) => m.status === e)?._count._all ?? 0;
-    return {
-        avisos: { WHATSAPP: canal('WHATSAPP'), TELEGRAM: canal('TELEGRAM'), EMAIL: canal('EMAIL') },
-        documentos,
-        meta: {
-            entregados: estado('DELIVERED') + estado('READ'),
-            leidos: estado('READ'),
-            fallidos: estado('FAILED'),
-            total: meta.reduce((n, m) => n + m._count._all, 0),
-        },
-        abiertosEnLaPagina: abiertos.length,
-        bajas: bajasNumero + bajasFicha,
-        errores,
-    };
+    return { ...embudo, bajasVigentes: bajasNumero + bajasFicha };
 }

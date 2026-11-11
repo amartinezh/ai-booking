@@ -3,9 +3,10 @@
 import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LIMITES_RESUMEN_ATENCION, enmascararDestino } from '@agenia/shared';
+import { FRASE_APROBAR_PILOTO, LIMITES_RESUMEN_ATENCION, enmascararDestino } from '@agenia/shared';
 import { formatAppointmentCompact } from '@/lib/date';
 import {
+    aprobarPilotoResumenAction,
     updateEnvioResumenAction,
     updateLecturaResumenAction,
     type PanelResumenAtencion,
@@ -31,7 +32,8 @@ function duracion(ms: number): string {
  * Los interruptores del resumen de la atención (plan §3.11): la lectura en
  * sombra (Fase 1) y el envío por WhatsApp (Fase 4). Mientras no se apruebe el
  * piloto, «Enviar a pacientes» solo enciende en modo prueba: solo reciben los
- * números, correos y chats de Telegram del equipo.
+ * números, correos y chats de Telegram del equipo. Aprobado (escribiendo la
+ * frase), la lista vacía deja salir el aviso a los pacientes (plan §8.10).
  */
 export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAtencion }) {
     const router = useRouter();
@@ -63,6 +65,21 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
     const [serviciosCorreo, setServiciosCorreo] = useState<Set<string>>(() => new Set(correoAntes));
     const [relleno, setRelleno] = useState(panel.envio.correosDeRelleno.join('\n'));
     const [destinos, setDestinos] = useState(panel.config.modoPrueba.destinos.join('\n'));
+    const [frasePiloto, setFrasePiloto] = useState('');
+    const [cambiandoPiloto, startPiloto] = useTransition();
+    const [errorPiloto, setErrorPiloto] = useState<string | null>(null);
+    const cambiarPiloto = (aprobar: boolean) => {
+        setErrorPiloto(null);
+        startPiloto(async () => {
+            const r = await aprobarPilotoResumenAction(aprobar, aprobar ? frasePiloto : undefined);
+            if (!r.success) {
+                setErrorPiloto(r.error);
+                return;
+            }
+            setFrasePiloto('');
+            router.refresh();
+        });
+    };
 
     const cambiosLectura = useMemo(() => {
         const antes = panel.servicios.filter((s) => s.seLee).map((s) => s.codigo).sort().join(',');
@@ -175,7 +192,7 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                     Cuando el médico termina la historia en el sistema del hospital, el paciente recibirá el resumen de su
                     consulta, su fórmula y sus órdenes. Por ahora existen la <strong>lectura en sombra</strong> (AgenIA lee las
                     historias terminadas y las guarda cifradas 30 días para revisarlas), los <strong>documentos</strong> en PDF
-                    e imagen y el <strong>envío por WhatsApp, Telegram y correo en modo prueba</strong>.{' '}
+                    e imagen y el <strong>envío por WhatsApp, Telegram y correo</strong>.{' '}
                     <strong>Mientras no se apruebe el piloto, solo reciben los números del equipo; ningún paciente.</strong>
                 </p>
                 <p className="text-sm font-medium" data-testid="estado-lectura">
@@ -186,15 +203,70 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                     )}
                 </p>
                 <p className="text-sm font-medium" data-testid="estado-envio">
-                    {panel.config.enviar ? (
+                    {!panel.config.enviar ? (
+                        <span className="text-zinc-500">○ Envío apagado: no sale nada</span>
+                    ) : panel.config.modoPrueba.destinos.length ? (
                         <span className="text-amber-700 dark:text-amber-400">
                             ● Enviando en modo prueba a {panel.config.modoPrueba.destinos.map(enmascararDestino).join(', ')}
                         </span>
                     ) : (
-                        <span className="text-zinc-500">○ Envío apagado: no sale nada</span>
+                        <span className="text-emerald-700 dark:text-emerald-400">
+                            ● Enviando a los pacientes de los servicios y canales encendidos (piloto aprobado)
+                        </span>
                     )}
                 </p>
             </header>
+
+            <section className="space-y-2 rounded-xl border border-zinc-200 p-4 text-sm dark:border-zinc-800" data-testid="piloto">
+                <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Piloto</h2>
+                {panel.config.piloto.aprobado ? (
+                    <>
+                        <p className="text-zinc-700 dark:text-zinc-300">
+                            ✓ Aprobado
+                            {panel.config.piloto.desdeIso ? ` desde ${formatAppointmentCompact(new Date(panel.config.piloto.desdeIso))}` : ''}.
+                            {panel.config.modoPrueba.destinos.length > 0
+                                ? ` Sigue en modo prueba: solo reciben los ${panel.config.modoPrueba.destinos.length} número(s) del equipo. Para enviar a los pacientes, vacíe «Números del modo prueba» y guarde.`
+                                : ' Con «Enviar a pacientes» encendido, el aviso sale a los pacientes de los servicios y canales marcados.'}
+                        </p>
+                        <button
+                            onClick={() => cambiarPiloto(false)}
+                            disabled={cambiandoPiloto}
+                            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-800 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                        >
+                            Volver a solo modo prueba
+                        </button>
+                        <p className="text-xs text-zinc-500">
+                            Sin números del equipo, volver a modo prueba apaga «Enviar a pacientes»: no sale nada más.
+                        </p>
+                    </>
+                ) : (
+                    <>
+                        <p className="text-zinc-700 dark:text-zinc-300">
+                            Sin aprobar: «Enviar a pacientes» solo funciona en modo prueba, con los números del equipo. Apruébelo
+                            cuando el hospital lo haya autorizado. Después, con «Enviar» encendido y la lista de números del equipo
+                            vacía, el aviso sale a los pacientes de los servicios y canales marcados.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <input
+                                value={frasePiloto}
+                                onChange={(e) => setFrasePiloto(e.target.value)}
+                                placeholder={`Escriba ${FRASE_APROBAR_PILOTO}`}
+                                aria-label="Frase para aprobar el piloto"
+                                className="w-64 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                            />
+                            <button
+                                onClick={() => cambiarPiloto(true)}
+                                disabled={cambiandoPiloto || frasePiloto.trim().toUpperCase() !== FRASE_APROBAR_PILOTO}
+                                className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+                            >
+                                Aprobar el piloto
+                            </button>
+                        </div>
+                        <p className="text-xs text-zinc-500">Queda registrado quién lo aprobó y cuándo, en la Actividad de usuarios.</p>
+                    </>
+                )}
+                {errorPiloto && <p className="text-sm text-red-600">{errorPiloto}</p>}
+            </section>
 
             <section className="space-y-4 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
                 <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Interruptores generales</h2>
@@ -226,7 +298,8 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                         <span className="font-medium">Enviar a pacientes</span>
                         <span className="block text-xs text-zinc-500">
                             El freno general. Mientras no se apruebe el piloto, solo funciona en modo prueba: el aviso sale solo
-                            a los números del equipo de abajo. Nace apagado.
+                            a los números del equipo de abajo. Con el piloto aprobado y sin números del equipo, sale a los
+                            pacientes. Nace apagado.
                         </span>
                     </span>
                 </label>
@@ -301,9 +374,10 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                         className="mt-1 block w-full max-w-sm rounded-lg border border-zinc-300 bg-white px-3 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
                     />
                     <span className="mt-1 block text-xs text-zinc-500">
-                        Uno por línea, hasta 10: celulares, correos o chats de Telegram («tg:» y su número). Solo estos reciben avisos, y
-                        a ellos se envía de prueba desde «Revisar contra el HIS». Quien usa el asistente por Telegram lo recibe
-                        por ahí; si falla, por WhatsApp.
+                        Uno por línea, hasta 10: celulares, correos o chats de Telegram («tg:» y su número). Mientras haya
+                        alguno, solo estos reciben avisos, y a ellos se envía de prueba desde «Revisar contra el HIS». Vacía,
+                        con el piloto aprobado, reciben los pacientes. Quien usa el asistente por Telegram lo recibe por ahí;
+                        si falla, por WhatsApp.
                     </span>
                 </label>
                 <label className="block text-sm text-zinc-700 dark:text-zinc-300">

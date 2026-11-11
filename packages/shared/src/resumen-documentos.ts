@@ -193,7 +193,7 @@ export interface SeccionDelResumen {
 
 /** Texto del pie del resumen mientras el hospital no ponga el suyo (D21: copia informativa). */
 export const PIE_RESUMEN_POR_DEFECTO =
-  'Este resumen es informativo. Para reclamar medicamentos o hacerse los exámenes use la fórmula y las órdenes que vienen con él.';
+  'Este resumen y sus documentos son una copia informativa. Para reclamar medicamentos o hacerse los exámenes, siga las indicaciones del hospital y de su EPS.';
 
 /** Si el médico no escribió cómo tomarlo (D19). */
 export const SIN_INDICACION = 'Tómelo como se lo explicaron en la consulta.';

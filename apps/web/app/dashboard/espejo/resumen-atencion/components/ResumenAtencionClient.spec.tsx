@@ -25,6 +25,7 @@ const updateContenidoResumenAction = jest.fn(async (...args: unknown[]): Promise
     return { success: true };
 });
 const enviarDePruebaAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
+const aprobarPilotoResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 const revisarResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 jest.mock('@/app/actions/resumen-atencion', () => ({
     updateLecturaResumenAction: (...a: unknown[]) => updateLecturaResumenAction(...a),
@@ -36,7 +37,25 @@ jest.mock('@/app/actions/resumen-atencion', () => ({
     updateEnvioResumenAction: (...a: unknown[]) => updateEnvioResumenAction(...a),
     updateContenidoResumenAction: (...a: unknown[]) => updateContenidoResumenAction(...a),
     enviarDePruebaAction: (...a: unknown[]) => enviarDePruebaAction(...a),
+    aprobarPilotoResumenAction: (...a: unknown[]) => aprobarPilotoResumenAction(...a),
 }));
+
+/** «Cómo va el envío» en ceros, con lo que se cambie. */
+const medicion = (c: Record<string, unknown> = {}) => ({
+    atenciones: { leidas: 0, avisadas: 0, excluidas: 0, porBaja: 0, sinContacto: 0, sinEnviar: 0 },
+    avisos: { total: 0, reenvios: 0, whatsapp: 0, telegram: 0, correo: 0 },
+    avisosQueNoSalieron: 0,
+    whatsapp: { entregados: 0, leidos: 0, fallidos: 0, sinConfirmar: 0 },
+    pidieron: 0,
+    verificados: 0,
+    recibieron: 0,
+    archivos: { enviados: 0, entregados: 0, leidos: 0 },
+    abrieronLaPagina: 0,
+    bajas: 0,
+    porDia: [],
+    bajasVigentes: 0,
+    ...c,
+});
 
 import { EXCLUSIONES_POR_DEFECTO, configResumenAtencionApagada, leerConfigDocumentos } from '@agenia/shared';
 import ResumenAtencionClient from './ResumenAtencionClient';
@@ -58,7 +77,7 @@ const panel = (cambios: Partial<PanelResumenAtencion> = {}): PanelResumenAtencio
     documentos: leerConfigDocumentos(null),
     exclusiones: EXCLUSIONES_POR_DEFECTO,
     nombreClinica: 'Hospital de prueba',
-    envio: { plantillaConfigurada: false, correoConfigurado: false, correosDeRelleno: ['pacienteshospital@gmail.com'], sinCorreo: 0, piloto: { avisos: { WHATSAPP: 0, TELEGRAM: 0, EMAIL: 0 }, documentos: 0, meta: { entregados: 0, leidos: 0, fallidos: 0, total: 0 }, abiertosEnLaPagina: 0, bajas: 0, errores: 0 }, entregas: [], porEstado: {} },
+    envio: { plantillaConfigurada: false, correoConfigurado: false, correosDeRelleno: ['pacienteshospital@gmail.com'], sinCorreo: 0, piloto: medicion(), entregas: [], porEstado: {} },
     ...cambios,
 });
 
@@ -206,7 +225,7 @@ describe('ResumenAtencionClient', () => {
         render(<ResumenAtencionClient panel={panel()} />);
         fireEvent.click(screen.getByLabelText('Enviar a pacientes'));
         fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
-        expect(await screen.findByText(/solo funciona en modo prueba/)).toBeInTheDocument();
+        expect(await screen.findByText(/agregue al menos un número del equipo/)).toBeInTheDocument();
         expect(updateLecturaResumenAction).not.toHaveBeenCalled();
     });
 
@@ -220,14 +239,18 @@ describe('ResumenAtencionClient', () => {
                         correoConfigurado: true,
                         correosDeRelleno: [],
                         sinCorreo: 7,
-                        piloto: {
-                            avisos: { WHATSAPP: 30, TELEGRAM: 5, EMAIL: 2 },
-                            documentos: 21,
-                            meta: { entregados: 27, leidos: 20, fallidos: 2, total: 30 },
-                            abiertosEnLaPagina: 4,
+                        piloto: medicion({
+                            atenciones: { leidas: 50, avisadas: 37, excluidas: 3, porBaja: 1, sinContacto: 2, sinEnviar: 8 },
+                            avisos: { total: 37, reenvios: 1, whatsapp: 30, telegram: 5, correo: 2 },
+                            whatsapp: { entregados: 27, leidos: 20, fallidos: 2, sinConfirmar: 1 },
+                            pidieron: 24,
+                            verificados: 22,
+                            recibieron: 21,
+                            archivos: { enviados: 90, entregados: 88, leidos: 60 },
+                            abrieronLaPagina: 4,
                             bajas: 1,
-                            errores: 3,
-                        },
+                            bajasVigentes: 3,
+                        }),
                         porEstado: { ENVIADO: 3, EXCLUIDO: 1 },
                         entregas: [
                             { id: 'e1', historia: '2441058', canal: 'WHATSAPP', prueba: true, destino: '•••4567', estado: 'DOCUMENTOS_ENVIADOS', motivo: null, avisoIso: '2026-11-01T15:00:00.000Z', documentosIso: '2026-11-01T15:02:00.000Z', verificadoPor: 'FECHA_NACIMIENTO' },
@@ -247,10 +270,42 @@ describe('ResumenAtencionClient', () => {
         expect(seguimiento).toHaveTextContent('Telegram');
         expect(seguimiento).toHaveTextContent('7 atención(es) sin correo utilizable');
         const piloto = screen.getByTestId('medicion-piloto');
+        expect(piloto).toHaveTextContent('Consultas leídas del hospital50');
         expect(piloto).toHaveTextContent('Avisos enviados37');
-        expect(piloto).toHaveTextContent('27 de 30 (90 %)');
-        expect(piloto).toHaveTextContent('Recibieron los documentos21');
+        expect(piloto).toHaveTextContent('Avisos de WhatsApp entregados27 de 30 (90 %)');
+        expect(piloto).toHaveTextContent('Leídos 20 de 30 (67 %)');
+        expect(piloto).toHaveTextContent('Pidieron sus documentos24 de 35 (69 %)');
+        expect(piloto).toHaveTextContent('Recibieron sus documentos21');
+        expect(piloto).toHaveTextContent('88 entregados · 60 vistos');
         expect(seguimiento).not.toHaveTextContent('573001234567');
+    });
+
+    it('el piloto: aprobarlo exige escribir la frase; aprobado y sin números del equipo, dice que envía a los pacientes', async () => {
+        const { rerender } = render(<ResumenAtencionClient panel={panel()} />);
+        const piloto = screen.getByTestId('piloto');
+        expect(piloto).toHaveTextContent('Sin aprobar');
+        const aprobar = screen.getByRole('button', { name: 'Aprobar el piloto' });
+        expect(aprobar).toBeDisabled();
+        fireEvent.change(screen.getByLabelText('Frase para aprobar el piloto'), { target: { value: 'enviar a pacientes' } });
+        expect(aprobar).toBeEnabled();
+        fireEvent.click(aprobar);
+        await waitFor(() => expect(aprobarPilotoResumenAction).toHaveBeenCalledWith(true, 'enviar a pacientes'));
+
+        const aprobado = { aprobado: true, desdeIso: '2026-11-11T15:00:00.000Z' };
+        rerender(<ResumenAtencionClient panel={panel({ config: { ...configResumenAtencionApagada(), enviar: true, piloto: aprobado } })} />);
+        expect(screen.getByTestId('estado-envio')).toHaveTextContent('Enviando a los pacientes');
+        expect(screen.getByTestId('piloto')).toHaveTextContent('✓ Aprobado');
+        fireEvent.click(screen.getByRole('button', { name: 'Volver a solo modo prueba' }));
+        await waitFor(() => expect(aprobarPilotoResumenAction).toHaveBeenCalledWith(false, undefined));
+
+        // Aprobado pero con números del equipo: sigue en modo prueba y lo dice.
+        rerender(
+            <ResumenAtencionClient
+                panel={panel({ config: { ...configResumenAtencionApagada(), enviar: true, piloto: aprobado, modoPrueba: { destinos: ['573001234567'] } } })}
+            />,
+        );
+        expect(screen.getByTestId('estado-envio')).toHaveTextContent('Enviando en modo prueba a •••4567');
+        expect(screen.getByTestId('piloto')).toHaveTextContent('Sigue en modo prueba');
     });
 
     it('guarda la lectura con los servicios marcados y la calma', async () => {
