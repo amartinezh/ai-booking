@@ -3114,6 +3114,26 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(lastSent()).toContain('no se pueden gestionar por este medio');
     });
 
+    // 🗓️ 2026-11-12: «cambiar fecha» de la IA solo con una cita próxima de quien
+    // escribe (o si nombra el cambio). La consulta real, contra el doble que sí busca
+    // por el número de quien escribe.
+    it('tieneCitaProxima: con una cita (del bot o de otro servicio) sí; sin ninguna, no', async () => {
+      const yo = { senderId: SENDER, phone: SENDER, bsuid: null };
+      seedPaciente();
+      await expect((service as any).tieneCitaProxima(ORG_ID, yo)).resolves.toBe(
+        false,
+      );
+      seedCita('apt-hta', MANANA, SVC_HTA);
+      await expect((service as any).tieneCitaProxima(ORG_ID, yo)).resolves.toBe(
+        true,
+      );
+      db.appointments.length = 0;
+      seedCita('apt-mg', MANANA);
+      await expect((service as any).tieneCitaProxima(ORG_ID, yo)).resolves.toBe(
+        true,
+      );
+    });
+
     // 💬 Caso real 2026-11-09: el hospital registra las citas del Dr. Germán García
     // con un servicio nuevo (s39141-13) que AgenIA no tiene activo; el espejo se lo
     // puso al cupo, y la paciente que pidió por el chat cancelar la cita que el

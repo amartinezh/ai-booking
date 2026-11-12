@@ -1299,6 +1299,34 @@ describe('AvisoCambioHospitalService — 🔗 la cadena de cambios del hospital'
     });
   });
 
+  // 2026-11-12 (8787f2): anulada, recreada igual (sin aviso, cerrado solo) y anulada
+  // otra vez sin otra cita: el aviso de cancelación salió bien, pero el caso quedó
+  // con el `motivo: MISMA_CITA` de la vuelta anterior.
+  it('anulada, recreada igual y anulada otra vez: el aviso de cancelación sale y el caso no guarda el motivo viejo', async () => {
+    const t = armarCadena();
+    t.crear('apt-bot', 'WHATSAPP', EN_2H, AP08, min(-600));
+    await t.anular('apt-bot', AHORA);
+    t.crear('apt-igual', 'MIRROR', EN_2H, AP08, min(2));
+    await t.svc.avisarLosPendientes(min(11));
+    expect(t.caso()).toMatchObject({
+      status: 'AUTO_RESUELTA',
+      meta: { aviso: 'NO_HIZO_FALTA', motivo: 'MISMA_CITA' },
+    });
+
+    await t.anular('apt-igual', min(30));
+    await t.svc.avisarLosPendientes(min(41));
+
+    expect(t.textos()).toHaveLength(1);
+    expect(t.textos()[0]).toContain('fue *cancelada*');
+    expect(t.caso().kind).toBe('CITA_CANCELADA_POR_HOSPITAL');
+    expect(t.caso().meta).toMatchObject({
+      aviso: 'ENVIADO',
+      via: 'TEXTO',
+      informadaCitaId: null,
+    });
+    expect(t.caso().meta).not.toHaveProperty('motivo');
+  });
+
   it('un caso que cerró una persona no se sigue (ella se hizo cargo)', async () => {
     const t = armarCadena();
     t.crear('apt-bot', 'WHATSAPP', EN_2H, AP08, min(-600));

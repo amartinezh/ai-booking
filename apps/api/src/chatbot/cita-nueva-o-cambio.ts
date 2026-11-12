@@ -36,6 +36,19 @@ const CITA_NUEVA =
 const CAMBIO =
   /\b(cambi\w*|mover\w*|muev\w*|movamos|reprogram\w*|reagend\w*|aplaz\w*|adelant\w*|pospon\w*|traslad\w*|modific\w*|correr\w*|corra|corrala)\b|\bno\s+(puedo|podre|podria|alcanzo|me\s+queda|me\s+sirve|voy|asisto)\b|\b(en\s+vez|en\s+lugar)\s+de\b|\botra\s+(fecha|hora|dia)\b/;
 
+/**
+ * ¿Nombra el cambio de una cita? «Cambiar», «mover», «reprogramar», «aplazar»,
+ * «trasladar», «modificar», «otra fecha / hora / día» (2026-11-12). Sin los «no
+ * puedo», «no me queda», «no me sirve» de `CAMBIO`: con ellos también se rechaza
+ * un horario que se está eligiendo («la otra a las 6 nos queda muy difícil»).
+ */
+const NOMBRA_CAMBIO =
+  /\b(cambi\w*|mover\w*|muev\w*|movamos|reprogram\w*|reagend\w*|aplaz\w*|pospon\w*|traslad\w*|modific\w*)\b|\botra\s+(fecha|hora|dia)\b/;
+
+export function nombraCambioDeCita(texto: string | null | undefined): boolean {
+  return NOMBRA_CAMBIO.test(normalizar(texto));
+}
+
 /** ¿Pide una cita más (para sí o para otra persona) y no cambiar la que tiene? */
 export function pideCitaNueva(texto: string | null | undefined): boolean {
   const t = normalizar(texto);

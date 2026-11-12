@@ -1,4 +1,8 @@
-import { esCancelarASecas, pideCitaNueva } from './cita-nueva-o-cambio';
+import {
+  esCancelarASecas,
+  nombraCambioDeCita,
+  pideCitaNueva,
+} from './cita-nueva-o-cambio';
 
 describe('pideCitaNueva — una cita más, no cambiar la que tiene', () => {
   it.each([
@@ -42,5 +46,33 @@ describe('esCancelarASecas', () => {
     null,
   ])('«%s» → no: nombra la cita o es otra cosa', (frase) => {
     expect(esCancelarASecas(frase)).toBe(false);
+  });
+});
+
+// 2026-11-12: «la otra a las 6 nos queda muy difícil» mientras elegía horario abrió
+// «cambiar fecha» a quien no tenía cita.
+describe('nombraCambioDeCita', () => {
+  it.each([
+    'Necesito cambiar la cita de mi mamá',
+    'Es posible cambiarme la hora de la cita',
+    '¿Me la pueden mover para el viernes?',
+    'quiero reprogramar',
+    'Hay que aplazarla',
+    'Necesito otra fecha',
+    'Trasladar la cita',
+    'Modificar mi cita',
+  ])('«%s» nombra el cambio', (texto) => {
+    expect(nombraCambioDeCita(texto)).toBe(true);
+  });
+
+  it.each([
+    'Ay, qué pena, pero es que somos de una vereda y nos queda muy difícil la otra a las 6',
+    'Preferiblemente que sea en las horas de la tarde la cita',
+    'Debe de ser el turno después de las 11:30',
+    'No me sirve a las 6',
+    'No puedo en la mañana',
+    '',
+  ])('«%s» no lo nombra', (texto) => {
+    expect(nombraCambioDeCita(texto)).toBe(false);
   });
 });

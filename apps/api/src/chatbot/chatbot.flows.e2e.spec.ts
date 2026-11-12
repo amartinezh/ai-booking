@@ -2091,6 +2091,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     const CEDULA = '1088123456';
 
     beforeEach(() => {
+      // Quien escribe tiene una cita (la de abajo). El doble de la base no busca
+      // citas por el número de quien escribe: se fija aquí (la consulta real se
+      // prueba en chatbot.consulta-citas.e2e.spec.ts).
+      jest.spyOn(service as any, 'tieneCitaProxima').mockResolvedValue(true);
       db.patients.push({
         id: 'pat-1',
         cedula: CEDULA,
@@ -2158,6 +2162,73 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_CEDULA);
       expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
       expect(db.appointments[0].scheduleSlotId).toBe('slot-old');
+    });
+
+    // 2026-11-12: la IA tomaba como «cambiar fecha» una preferencia de horario de
+    // quien no tiene cita, y le pedía la cédula «para modificar su cita».
+    it('3.1d con una cita próxima, la IA sí lleva a cambiar la fecha aunque no lo nombre', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ isModification: true }),
+      );
+      await say('¿Me la pueden poner para más tarde?');
+      expect([
+        ChatState.AWAITING_MODIFY_CEDULA,
+        ChatState.AWAITING_MODIFY_NEW_SLOT,
+      ]).toContain(await state());
+    });
+
+    describe('3.N la IA dice «cambiar fecha», pero quien escribe no tiene cita', () => {
+      beforeEach(() => {
+        db.appointments.length = 0;
+        (service as any).tieneCitaProxima.mockResolvedValue(false);
+      });
+
+      // Fue una nota de voz: con audio la IA transcribe y marca la intención antes
+      // de que el menú lea el mensaje.
+      it('en el menú de horarios, la nota de voz «nos queda muy difícil la otra a las 6» no abre cambiar la fecha', async () => {
+        await say('Hola');
+        await say('A');
+        await say('A');
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+
+        jest
+          .spyOn(service as any, 'downloadWhatsAppAudio')
+          .mockResolvedValue(Buffer.from('x'));
+        jest
+          .spyOn(service as any, 'resolveCredentialsForOrg')
+          .mockResolvedValue({ isActive: true, accessToken: 't' });
+        provider.extractSchedulingIntent.mockResolvedValue(
+          extraction({
+            transcript:
+              'Ay, qué pena, pero es que somos de una vereda, de Anserma y nos queda muy difícil la otra a las 6.',
+            intent: 'agendar_cita',
+            isModification: true,
+          }),
+        );
+        await service.processIncomingMessage(audioEvent());
+
+        expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_CEDULA);
+        expect(sent().join('\n')).not.toMatch(
+          /modificar la fecha|reprogramar/i,
+        );
+      });
+
+      it('en reposo, «Preferiblemente en la tarde» tampoco', async () => {
+        provider.extractSchedulingIntent.mockResolvedValueOnce(
+          extraction({ isModification: true }),
+        );
+        await say('Preferiblemente que sea en las horas de la tarde la cita');
+        expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_CEDULA);
+        expect(lastSent()).not.toMatch(/modificar la fecha|reprogramar/i);
+      });
+
+      it('si nombra el cambio, sí entra (puede ser la cita de un familiar con otro número)', async () => {
+        provider.extractSchedulingIntent.mockResolvedValueOnce(
+          extraction({ isModification: true }),
+        );
+        await say('Necesito cambiar la cita de mi mamá');
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_CEDULA);
+      });
     });
 
     it('3.1c «otra cita porque no puedo ir» sí es un cambio', async () => {

@@ -736,6 +736,9 @@ export class AvisoCambioHospitalService {
     });
     if (count !== 1) return;
 
+    // Lo que se pasa como `undefined` se quita del caso (2026-11-12: un aviso de
+    // cancelación que salió en una cadena quedaba con el `motivo: MISMA_CITA` de la
+    // vuelta anterior).
     const terminar = (
       cambios: Record<string, unknown>,
       severidad?: SeveridadExcepcion,
@@ -744,7 +747,7 @@ export class AvisoCambioHospitalService {
         where: { id: caso.id, organizationId },
         data: {
           ...(severidad ? { severity: severidad } : {}),
-          meta: { ...meta, ...cambios } as Prisma.InputJsonValue,
+          meta: sinVacios({ ...meta, ...cambios }) as Prisma.InputJsonValue,
         },
       });
 
@@ -892,7 +895,7 @@ export class AvisoCambioHospitalService {
         {
           nuevaIso: nueva.scheduleSlot.startTime.toISOString(),
           nuevaCitaId: nueva.id,
-          ...aviso,
+          ...resultadoCompleto(aviso),
           ...(aviso.aviso === 'ENVIADO' ? { informadaCitaId: nueva.id } : {}),
         },
         severidadPorCercania(
@@ -943,7 +946,7 @@ export class AvisoCambioHospitalService {
       {
         nuevaIso: null,
         nuevaCitaId: null,
-        ...aviso,
+        ...resultadoCompleto(aviso),
         ...(aviso.aviso === 'ENVIADO' ? { informadaCitaId: null } : {}),
       },
       severidadPorCercania(
@@ -1233,6 +1236,29 @@ function citaInformada(
     return kind === 'CITA_MOVIDA_POR_HOSPITAL' ? (nuevaId ?? citaId) : null;
   }
   return citaId;
+}
+
+/**
+ * El resultado de un aviso con TODOS sus campos: lo que no trae queda `undefined`
+ * y `terminar` lo quita, para que no sobreviva el motivo, la vía o la plantilla de
+ * un aviso anterior del mismo caso (2026-11-12).
+ */
+function resultadoCompleto(aviso: ResultadoAviso): Record<string, unknown> {
+  return {
+    canal: undefined,
+    via: undefined,
+    plantilla: undefined,
+    motivo: undefined,
+    enviadoIso: undefined,
+    ...aviso,
+  };
+}
+
+/** El objeto sin las llaves cuyo valor es `undefined`. */
+function sinVacios(o: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(o).filter(([, v]) => v !== undefined),
+  );
 }
 
 /** Milisegundos de una fecha ISO guardada en `meta`; `NaN` si no es una. */

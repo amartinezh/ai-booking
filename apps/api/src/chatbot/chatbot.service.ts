@@ -52,7 +52,11 @@ import {
 import { esPreguntaEnVezDeRespuesta } from './pregunta-al-confirmar';
 import { servicioQueNoSeAgenda } from './servicio-no-agendable';
 import { dudaSobreLaCita } from './duda-cita-agendada';
-import { esCancelarASecas, pideCitaNueva } from './cita-nueva-o-cambio';
+import {
+  esCancelarASecas,
+  nombraCambioDeCita,
+  pideCitaNueva,
+} from './cita-nueva-o-cambio';
 import { esRechazoPorAgendaDelHis } from '../mirror/rechazo-del-his';
 import { cupoBloqueadoParaElAsistente } from 'src/appointments/bloqueos-agenda';
 import {
@@ -4806,6 +4810,29 @@ export class ChatbotService implements OnModuleInit {
       .slice(0, MAX_CITAS_EN_RESPUESTA);
   }
 
+  /**
+   * ¿Quien escribe tiene alguna cita próxima, con la que AgenIA trabaja o no?
+   * Si no se puede saber, `true`: ante la duda se deja el camino de siempre.
+   */
+  private async tieneCitaProxima(
+    organizationId: string,
+    identity: SenderIdentity,
+  ): Promise<boolean> {
+    try {
+      return (
+        (await this.citasProximasDelRemitente(organizationId, identity))
+          .length > 0 ||
+        (await this.citasFueraDelAlcanceDelRemitente(organizationId, identity))
+          .length > 0
+      );
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo revisar si ${identity.senderId} tiene citas próximas: ${getErrorMessage(error)}`,
+      );
+      return true;
+    }
+  }
+
   /** Las citas próximas (sin pasar) de quien escribe, recordadas o no. */
   private async citasProximasDelRemitente(
     organizationId: string,
@@ -7510,6 +7537,27 @@ export class ChatbotService implements OnModuleInit {
     if (aiData.isModification && !isQuickModify && pideCitaNueva(text)) {
       aiData.isModification = false;
       aiData.intent = 'agendar_cita';
+    }
+
+    // 🗓️ «Somos de una vereda… la otra a las 6 nos queda muy difícil» mientras
+    // elegía horario, o «Preferiblemente en la tarde» después de anotarse en la
+    // lista: la IA lo tomaba como cambiar la fecha de una cita, y a quien no tiene
+    // ninguna se le pedía la cédula «para modificar su cita» (2026-11-12: la del
+    // menú de horarios terminó escribiendo «Salir» sin agendar). Sin una cita
+    // próxima de quien escribe y sin nombrar el cambio («cambiar», «mover»,
+    // «reprogramar», «otra fecha»…), es una preferencia de horario: sigue el paso
+    // en que estaba. Quien cambia la cita de un familiar desde otro número nombra
+    // el cambio, y ese sí entra.
+    if (
+      aiData.isModification &&
+      !isQuickModify &&
+      !nombraCambioDeCita(text) &&
+      !(await this.tieneCitaProxima(organizationId, identity))
+    ) {
+      aiData.isModification = false;
+      this.logger.log(
+        `[Tenant: ${organizationId}] La IA entendió «cambiar fecha», pero ${senderId} no tiene citas próximas ni nombra el cambio: se toma como preferencia de horario.`,
+      );
     }
 
     // 🔒 Cancelar o cambiar una cita con su interruptor apagado: no se abre el
