@@ -63,6 +63,7 @@ import {
   fueraDelPlazoParaElAsistente,
   plazoDeLaClinica,
 } from 'src/appointments/plazo-agendar';
+import { chatEnElTopeAlReservar } from 'src/appointments/reserva-presencial';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
   OrganizationSettingsService,
@@ -5690,6 +5691,30 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
+  /**
+   * 🏥 ¿El «no hay cupos» es por la reserva para la atención presencial (el
+   * asistente ya tomó su parte de la agenda) y no porque la agenda esté llena?
+   * Sin reserva, o si la consulta falla, false: se responde como siempre.
+   */
+  private async sinCuposPorLaReserva(
+    serviceName: string,
+    epsId: string | null,
+    organizationId: string,
+  ): Promise<boolean> {
+    try {
+      return await this.appointmentsService.sinCuposPorLaReserva(
+        serviceName,
+        epsId,
+        organizationId,
+      );
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo revisar la reserva presencial (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
   private contactoDe(
     MSGS: ReturnType<typeof buildMessages>,
     org: Organization | null,
@@ -8820,6 +8845,15 @@ export class ChatbotService implements OnModuleInit {
             epsIdForSlots,
             organizationId,
           );
+          // 🏥 ¿O es la reserva para la atención presencial? Entonces la agenda
+          // no está «completa»: por este medio ya no quedan (2026-11-13).
+          const porReserva = masAlla
+            ? false
+            : await this.sinCuposPorLaReserva(
+                resolvedServiceName as string,
+                epsIdForSlots,
+                organizationId,
+              );
           const reply = masAlla
             ? MSGS.sinCuposEnElPlazo(
                 resolvedServiceName as string,
@@ -8827,10 +8861,15 @@ export class ChatbotService implements OnModuleInit {
                 masAlla.hasta,
                 masAlla.desde,
               )
-            : MSGS.preguntaWaitlist(
-                resolvedServiceName as string,
-                resolvedEpsName,
-              );
+            : porReserva
+              ? MSGS.sinCuposPorEsteMedio(
+                  resolvedServiceName as string,
+                  resolvedEpsName,
+                )
+              : MSGS.preguntaWaitlist(
+                  resolvedServiceName as string,
+                  resolvedEpsName,
+                );
           await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(
             organizationId,
@@ -8846,6 +8885,7 @@ export class ChatbotService implements OnModuleInit {
               service: resolvedServiceName,
               eps: resolvedEpsName,
               ...(masAlla ? { porPlazo: true, desde: masAlla.desdeIso } : {}),
+              ...(porReserva ? { porReserva: true } : {}),
             },
           });
           return;
@@ -9577,7 +9617,13 @@ export class ChatbotService implements OnModuleInit {
     );
     const conApartados =
       apartados.length > 0
-        ? { ...(opts ?? {}), excluir: [...(opts?.excluir ?? []), ...apartados] }
+        ? {
+            ...(opts ?? {}),
+            excluir: [...(opts?.excluir ?? []), ...apartados],
+            // 🏥 Con la reserva para la atención presencial, lo apartado por
+            // otros pacientes cuenta como del chat (2026-11-13).
+            apartados,
+          }
         : opts;
     if (conApartados) {
       return this.appointmentsService.getAvailableSlots(
@@ -9665,6 +9711,12 @@ export class ChatbotService implements OnModuleInit {
     medicoNoDisponible?: boolean;
     /** El hospital ajustó su agenda: el médico ya no tiene ese horario (2026-10-29). */
     agendaDelHospital?: boolean;
+    /**
+     * El asistente ya tomó su parte de la agenda de ese médico ese día (reserva
+     * para la atención presencial, 2026-11-13). Se le dice lo mismo que con
+     * `medicoNoDisponible` («dejó de estar disponible por este medio»).
+     */
+    reservaPresencial?: boolean;
   }): Promise<string> {
     const { organizationId, senderId, MSGS } = p;
     await this.soltarCupoApartado(organizationId, senderId, p.slotIdTomado);
@@ -9746,9 +9798,11 @@ export class ChatbotService implements OnModuleInit {
         specialty: serviceName,
         motivo: p.agendaDelHospital
           ? 'AGENDA_DEL_HOSPITAL'
-          : p.medicoNoDisponible
-            ? 'MEDICO_NO_DISPONIBLE'
-            : 'CUPO_TOMADO',
+          : p.reservaPresencial
+            ? 'RESERVA_PRESENCIAL'
+            : p.medicoNoDisponible
+              ? 'MEDICO_NO_DISPONIBLE'
+              : 'CUPO_TOMADO',
       },
     });
     return (
@@ -10146,6 +10200,13 @@ export class ChatbotService implements OnModuleInit {
       p.epsIdForSlots,
       organizationId,
     );
+    const porReserva = masAlla
+      ? false
+      : await this.sinCuposPorLaReserva(
+          p.serviceName,
+          p.epsIdForSlots,
+          organizationId,
+        );
     const reply = MSGS.sinOtrosCuposListaEspera(masAlla?.hasta, masAlla?.desde);
     await this.smartReply(organizationId, senderId, reply);
     await this.setUserState(
@@ -10161,6 +10222,7 @@ export class ChatbotService implements OnModuleInit {
         desde: 'OTRO_HORARIO_SIN_CUPOS',
         pedido: p.pedido,
         ...(masAlla ? { porPlazo: true, plazoDesde: masAlla.desdeIso } : {}),
+        ...(porReserva ? { porReserva: true } : {}),
       },
     });
     return true;
@@ -11427,7 +11489,12 @@ export class ChatbotService implements OnModuleInit {
           MSGS,
           userMessage: text,
           slotIdTomado: slotIdFinal,
-          medicoNoDisponible: bookingResult.reason === 'DOCTOR_NOT_BOOKABLE',
+          // 🏥 La reserva para la atención presencial tampoco es «otro
+          // paciente»: el horario dejó de estar disponible por este medio.
+          medicoNoDisponible:
+            bookingResult.reason === 'DOCTOR_NOT_BOOKABLE' ||
+            bookingResult.reason === 'RESERVA_PRESENCIAL',
+          reservaPresencial: bookingResult.reason === 'RESERVA_PRESENCIAL',
         });
 
         await this.auditFailure(senderId, organizationId, {
@@ -11437,6 +11504,9 @@ export class ChatbotService implements OnModuleInit {
           metadata: {
             slotId: slotIdFinal,
             cedula: cedulaFinal,
+            ...(bookingResult.reason === 'RESERVA_PRESENCIAL'
+              ? { motivo: 'RESERVA_PRESENCIAL' }
+              : {}),
           },
         });
         return;
@@ -12232,7 +12302,7 @@ export class ChatbotService implements OnModuleInit {
     const quedan = await this.citasRecordadasDelRemitente(
       organizationId,
       ctx.identity,
-    ).catch(() => []);
+    ).catch((): { id: string }[] => []);
     if (quedan.some((c) => c.id !== aptId)) {
       await this.smartReply(organizationId, senderId, MSGS.cancelarOtraCita());
     }
@@ -13005,6 +13075,20 @@ export class ChatbotService implements OnModuleInit {
           ) {
             throw new Error('NEW_SLOT_TAKEN');
           }
+          // 🏥 Ni por encima de la parte de la agenda del asistente (reserva
+          // para la atención presencial). La cita que se mueve no cuenta dos
+          // veces si el cupo nuevo es del mismo médico y día. Sin reserva no
+          // consulta nada.
+          if (
+            await chatEnElTopeAlReservar(
+              tx,
+              organizationId,
+              { doctorId: newSlot.doctorId, startTime: newSlot.startTime },
+              { excluirCitaId: aptId },
+            )
+          ) {
+            throw new Error('NEW_SLOT_RESERVA_PRESENCIAL');
+          }
           await tx.appointment.update({
             where: { id: aptId },
             data: { scheduleSlotId: newSlotId },
@@ -13142,13 +13226,15 @@ export class ChatbotService implements OnModuleInit {
         const mensaje = e instanceof Error ? e.message : undefined;
         if (
           mensaje === 'NEW_SLOT_TAKEN' ||
-          mensaje === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE'
+          mensaje === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE' ||
+          mensaje === 'NEW_SLOT_RESERVA_PRESENCIAL'
         ) {
           // Dos motivos distintos con el mismo desenlace (volver a ofrecer),
           // pero mensajes distintos: decir "lo tomó otro paciente" cuando el
           // cupo sigue libre le hace perder el tiempo a quien luego llama.
           const reply =
-            mensaje === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE'
+            mensaje === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE' ||
+            mensaje === 'NEW_SLOT_RESERVA_PRESENCIAL'
               ? MSGS.medicoNoDisponiblePorWhatsapp()
               : MSGS.slotTomado();
           await this.smartReply(organizationId, senderId, reply);
@@ -13160,6 +13246,9 @@ export class ChatbotService implements OnModuleInit {
               stage: 'MODIFY_NEW_SLOT_TAKEN',
               appointmentId: aptId,
               newSlotId,
+              ...(mensaje === 'NEW_SLOT_RESERVA_PRESENCIAL'
+                ? { motivo: 'RESERVA_PRESENCIAL' }
+                : {}),
             },
           });
           // Reofrecemos cupos frescos para el mismo appointment.

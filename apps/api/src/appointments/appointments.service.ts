@@ -35,6 +35,11 @@ import {
   fueraDelPlazoParaElAsistente,
   plazoDeLaClinica,
 } from './plazo-agendar';
+import {
+  chatEnElTopeAlReservar,
+  parteDelChatDeLaClinica,
+  tramosReservadosParaElHospital,
+} from './reserva-presencial';
 
 /**
  * Hasta cuándo se convierten los días sin citas en tramos para la consulta
@@ -102,9 +107,16 @@ export class AppointmentsService {
     // cuando pide otro horario (2026-10-27).
     // `hora`: pidió una hora («para las 3:30», 2026-10-28): se ofrecen los
     // cupos más cercanos a ella en vez de mitad mañana y mitad tarde.
+    // `ignorarReserva`: sin la reserva para la atención presencial. Solo para
+    // saber si el «no hay cupos» es por la reserva (`sinCuposPorLaReserva`);
+    // nunca para ofrecerlos.
+    // `apartados`: cupos que otros pacientes del chat tienen apartados ahora;
+    // con la reserva cuentan como del chat (2026-11-13).
     opts: {
       todos?: boolean;
       ignorarPlazo?: boolean;
+      ignorarReserva?: boolean;
+      apartados?: readonly string[];
       franja?: FranjaDelDia | null;
       excluir?: readonly string[];
       hora?: HoraPreferida | null;
@@ -153,6 +165,37 @@ export class AppointmentsService {
       bloqueos.timeZone,
     );
 
+    // 🏥 Reserva para la atención presencial (Configuración › Asistente Virtual,
+    // 2026-11-13): los médico-días donde el asistente ya llegó a su parte de la
+    // agenda no se ofrecen. Se quitan en la consulta misma —si no, un médico en
+    // el tope se comería la bolsa de cupos— y la reserva los revalida. Sin
+    // porcentaje (lo de siempre) no hay tramos y la consulta no cambia. Si el
+    // conteo falla, se busca sin la reserva: la reserva de la cita la revalida,
+    // y un error aquí nunca deja al asistente sin cupos para ofrecer.
+    const reservados = opts.ignorarReserva
+      ? []
+      : await tramosReservadosParaElHospital(
+          this.prisma,
+          organizationId,
+          startTimeFilter.gte,
+          startTimeFilter.lte ??
+            finDelPlazo ??
+            new Date(startTimeFilter.gte.getTime() + HORIZONTE_BLOQUEOS_MS),
+          { apartados: opts.apartados },
+        ).catch((error: unknown) => {
+          this.logger.error(
+            `Reserva presencial: no se pudo contar la agenda de ${organizationId}; se buscan cupos sin la reserva: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
+        });
+    const fueraDeLaOferta: Prisma.ScheduleSlotWhereInput[] = [
+      ...tramos.map((t) => ({ startTime: { gte: t.gte, lt: t.lt } })),
+      ...reservados.map((r) => ({
+        doctorId: r.doctorId,
+        startTime: { gte: r.gte, lt: r.lt },
+      })),
+    ];
+
     const [rawSlots, org] = await Promise.all([
       this.prisma.scheduleSlot.findMany({
         where: {
@@ -166,13 +209,7 @@ export class AppointmentsService {
           // Filtro clave: El slot debe ser universal (null) o ser exclusivo para la EPS del paciente
           OR: [{ allowedEpsId: null }, { allowedEpsId: epsId }],
           ...(opts.excluir?.length ? { id: { notIn: [...opts.excluir] } } : {}),
-          ...(tramos.length > 0
-            ? {
-                NOT: tramos.map((t) => ({
-                  startTime: { gte: t.gte, lt: t.lt },
-                })),
-              }
-            : {}),
+          ...(fueraDeLaOferta.length > 0 ? { NOT: fueraDeLaOferta } : {}),
         },
         include: { doctor: true, service: true },
         orderBy: { startTime: 'asc' },
@@ -280,6 +317,31 @@ export class AppointmentsService {
   }
 
   /**
+   * 🏥 No hay cupos para ofrecer, ¿y es por la reserva para la atención
+   * presencial? Sí cuando la clínica tiene reserva y, sin ella, el asistente
+   * tendría algún cupo dentro del plazo. Entonces no puede decir «la agenda está
+   * completa»: dice que por este medio ya no quedan. Sin reserva, false sin
+   * consultar la agenda.
+   */
+  async sinCuposPorLaReserva(
+    serviceName: string,
+    epsId: string | null,
+    organizationId: string,
+  ): Promise<boolean> {
+    if (!(await parteDelChatDeLaClinica(this.prisma, organizationId))) {
+      return false;
+    }
+    const cupos = await this.getAvailableSlots(
+      serviceName,
+      epsId,
+      organizationId,
+      null,
+      { todos: true, ignorarReserva: true },
+    );
+    return cupos.length > 0;
+  }
+
+  /**
    * Qué médicos pueden recibir reservas por WhatsApp en esta organización.
    *
    * Dos condiciones, y la segunda solo aplica con espejo:
@@ -381,7 +443,9 @@ export class AppointmentsService {
       | 'DOCTOR_NOT_BOOKABLE'
       | 'EPS_REGIME_NOT_BILLABLE'
       | 'PATIENT_REGIME_MISSING'
-      | 'PATIENT_LIMIT_REACHED';
+      | 'PATIENT_LIMIT_REACHED'
+      /** El asistente ya tomó su parte de la agenda de ese médico ese día. */
+      | 'RESERVA_PRESENCIAL';
     /** Solo con `PATIENT_LIMIT_REACHED`: qué límite y cuántas citas tenía. */
     limite?: LimiteDelPaciente;
   }> {
@@ -464,6 +528,19 @@ export class AppointmentsService {
           ))
         ) {
           throw new Error('SLOT_TAKEN_OR_INVALID');
+        }
+        // 🏥 Ni por encima de la parte de la agenda del asistente (reserva para
+        // la atención presencial): otro paciente del chat pudo tomar el último
+        // cupo del chat de ese médico ese día entre la oferta y el «sí». Con
+        // candado por médico y día. Solo el bot; sin reserva no consulta nada.
+        if (
+          (origin === 'WHATSAPP' || origin === 'TELEGRAM') &&
+          (await chatEnElTopeAlReservar(tx, organizationId, {
+            doctorId: slot.doctorId,
+            startTime: slot.startTime,
+          }))
+        ) {
+          throw new Error('RESERVA_PRESENCIAL');
         }
 
         // 🚦 LÍMITE DE CITAS POR PACIENTE: el bot no le asigna a un paciente
@@ -629,6 +706,17 @@ export class AppointmentsService {
           reason: 'DOCTOR_NOT_BOOKABLE',
           message:
             'Ese horario dejó de estar disponible para agendamiento por este medio.',
+        };
+      }
+
+      if (message === 'RESERVA_PRESENCIAL') {
+        this.logger.warn(
+          `Reserva frenada: el asistente ya tomó su parte de la agenda del médico del cupo ${scheduleSlotId} ese día (reserva para la atención presencial).`,
+        );
+        return {
+          success: false,
+          reason: 'RESERVA_PRESENCIAL',
+          message: 'Ese horario quedó reservado para agendar en el hospital.',
         };
       }
 

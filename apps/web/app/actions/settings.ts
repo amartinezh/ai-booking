@@ -10,11 +10,15 @@ import {
     diaLocal,
     normalizarAnticipacionRecordatorio,
     normalizarCuposOfrecidos,
+    normalizarParteDelChat,
     normalizarPlazoAgendar,
     operacionHisDelEvento,
+    textoParteDelChat,
     textoPlazoAgendar,
+    validarParteDelChat,
     validarPlazoAgendar,
 } from '@agenia/shared';
+import { OP_CAMBIO_RESERVA, cargarResumenDeLaReserva } from '@/lib/reserva-presencial/resumen';
 import { OP_CAMBIO_PLAZO, cargarResumenDelPlazo } from '@/lib/plazo-agendar/resumen';
 import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import { listarCambios } from '@/lib/actividad/catalogo';
@@ -62,6 +66,7 @@ export async function getMyOrgSettings() {
             cancelEnabled: true,
             rescheduleEnabled: true,
             bookingMaxDaysAhead: true,
+            botAgendaSharePercent: true,
             organization: { select: { timezone: true } },
         },
     });
@@ -82,6 +87,8 @@ export async function getMyOrgSettings() {
         rescheduleEnabled: s?.rescheduleEnabled ?? true,
         // Sin fila (o sin valor) = sin límite, lo de siempre.
         bookingMaxDaysAhead: normalizarPlazoAgendar(s?.bookingMaxDaysAhead),
+        // Sin fila (o sin valor) = sin reserva para la atención presencial.
+        botAgendaSharePercent: normalizarParteDelChat(s?.botAgendaSharePercent),
         // «Hoy» en la zona de la clínica: el panel muestra con fechas reales
         // hasta qué día ofrece citas el asistente.
         hoyEnLaClinica: diaLocal(new Date(), s?.organization?.timezone || undefined),
@@ -252,6 +259,90 @@ export async function getMyPlazoAgendarResumen() {
     if (!session || session.role !== 'ORG_ADMIN') return { success: false as const, error: 'Acceso denegado' };
     try {
         return { success: true as const, resumen: await cargarResumenDelPlazo(session.organizationId!) };
+    } catch (e) {
+        return { success: false as const, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * 🏥 Reserva para la atención presencial: qué porcentaje de la agenda de cada
+ * médico, cada día, puede tomar el asistente (con 80: como mucho el 80 %; el
+ * resto solo se agenda en el hospital). null o 100 = sin reserva. Guarda al
+ * instante; el bot lo lee cada vez que busca o confirma un cupo. El personal y
+ * el hospital agendan sin tope, y las citas ya dadas no cambian.
+ */
+export async function setMyBotAgendaSharePercent(porcentaje: number | null) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false as const, error: 'Acceso denegado' };
+
+    // Un valor inválido es un error, no «sin reserva»: quien quiso poner 80 % no
+    // debe quedar sin reserva por un dato mal enviado.
+    const v = validarParteDelChat(porcentaje);
+    if (!v.ok) return { success: false as const, error: v.error };
+    // 100 % es lo mismo que sin reserva: se guarda vacío.
+    const botAgendaSharePercent = normalizarParteDelChat(v.porcentaje);
+    try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { botAgendaSharePercent: true },
+        });
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, botAgendaSharePercent },
+            update: { botAgendaSharePercent },
+        });
+        const anterior = normalizarParteDelChat(antes?.botAgendaSharePercent);
+        if (anterior !== botAgendaSharePercent) {
+            const actor = session.email ?? session.userId ?? 'desconocido';
+            const detalle =
+                `«Parte de la agenda para el asistente» cambió de «${textoParteDelChat(anterior)}» a ` +
+                `«${textoParteDelChat(botAgendaSharePercent)}»`;
+            // En la auditoría del espejo y en la Actividad de usuarios. Si alguna
+            // falla, no deshace el cambio: solo queda en el log.
+            try {
+                await prisma.syncAudit.create({
+                    data: {
+                        organizationId: session.organizationId!,
+                        direction: SYNC_AUDIT_DIRECTION.CONFIG,
+                        entityType: 'OrganizationSettings',
+                        op: OP_CAMBIO_RESERVA,
+                        outcome: 'OK',
+                        detail: `${detalle} desde Configuración por ${actor}.`,
+                    },
+                });
+            } catch (e) {
+                console.error('[configuración] no se pudo anotar el cambio de la reserva en la auditoría', {
+                    error: getErrorMessage(e),
+                });
+            }
+            try {
+                await anotarAjuste(session, 'BOT_SETTINGS_CHANGED', `Asistente: ${detalle}`, {
+                    anterior,
+                    nuevo: botAgendaSharePercent,
+                });
+            } catch (e) {
+                console.error('[configuración] no se pudo anotar el cambio de la reserva en la actividad', {
+                    error: getErrorMessage(e),
+                });
+            }
+        }
+        revalidatePath('/dashboard/configuracion');
+        return { success: true as const, botAgendaSharePercent };
+    } catch (e) {
+        return { success: false as const, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * 🏥 Cómo va la reserva en los próximos días (capacidad, tope del asistente,
+ * citas del asistente y del hospital, libres) y quién la cambió por última vez.
+ * Solo lectura.
+ */
+export async function getMyReservaPresencialResumen() {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false as const, error: 'Acceso denegado' };
+    try {
+        return { success: true as const, resumen: await cargarResumenDeLaReserva(session.organizationId!) };
     } catch (e) {
         return { success: false as const, error: getErrorMessage(e) };
     }

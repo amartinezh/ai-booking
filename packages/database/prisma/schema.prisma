@@ -196,6 +196,16 @@ model OrganizationSettings {
   // en @agenia/shared (plazo-agendar.ts). Rango 1-365 (CHECK en la migración).
   bookingMaxDaysAhead Int?
 
+  // 🏥 RESERVA PARA LA ATENCIÓN PRESENCIAL (2026-11-13): qué porcentaje de la
+  // agenda de cada médico, cada día, puede tomar el asistente (WhatsApp y
+  // Telegram). Con 80: como mucho piso(capacidad × 80 %) citas del chat por
+  // médico y día; el resto solo se agenda en el hospital. Aplica al agendar, al
+  // cambiar la fecha y a la lista de espera; el personal (panel) y el hospital
+  // (MIRROR) agendan sin tope. null = sin reserva (lo de siempre). Lo edita el
+  // ORG_ADMIN en /dashboard/configuracion; la regla vive en @agenia/shared
+  // (reserva-presencial.ts). Rango 10-100 (CHECK en la migración).
+  botAgendaSharePercent Int?
+
   // 🚦 LÍMITE DE CITAS POR PACIENTE (por el bot) — /dashboard/limites-citas,
   // lo editan ORG_ADMIN y BOOKING_AGENT. Cuántas citas vigentes puede tener un
   // paciente el MISMO DÍA y en el MISMO MES calendario (por la fecha de la

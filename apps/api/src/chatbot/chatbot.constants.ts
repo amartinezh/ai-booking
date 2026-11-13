@@ -1787,6 +1787,13 @@ const FORMAL = {
     `Escríbanos desde el *${desde}* y con gusto le muestro los horarios siguientes.\n\n` +
     `Si lo desea, también le anoto en la *lista de espera* y le aviso por este medio si se libera un cupo antes. ¿Le anoto? Responda *SÍ* o *NO*.`,
 
+  // 🏥 Sin cupos por la reserva para la atención presencial (2026-11-13): la
+  // agenda no está «completa», pero el asistente ya tomó su parte. No se manda
+  // al paciente al hospital: esa parte es para quien no tiene el chat.
+  sinCuposPorEsteMedio: (servicio: string, eps: string) =>
+    `Revisé la agenda de *${servicio}* con *${eps}* y por este medio ya no quedan cupos para estos días.\n\n` +
+    `Si lo desea, le anoto en la *lista de espera* y le aviso por aquí apenas se libere un cupo. ¿Le anoto? Responda *SÍ* o *NO*.`,
+
   respuestaInvalidaSiNo: () =>
     pick([
       `No logré interpretar su respuesta. ¿Me ayuda respondiendo *SÍ* para confirmar o *NO* para cancelar?`,
@@ -3178,6 +3185,10 @@ const INFORMAL = {
     `Por ahora agendamos citas hasta el *${hasta}*, y hasta esa fecha ya no quedan cupos de *${servicio}* con *${eps}*. 🙏\n\n` +
     `Escríbeme desde el *${desde}* y te muestro los horarios siguientes. 😊\n\n` +
     `Si quieres, también te anoto en la *lista de espera* y te aviso por acá si se libera un cupo antes. ¿Te anoto? Responde *SÍ* o *NO*.`,
+
+  sinCuposPorEsteMedio: (servicio: string, eps: string) =>
+    `Revisé la agenda de *${servicio}* con *${eps}* y por aquí ya no quedan cupos para estos días. 🙏\n\n` +
+    `Si quieres, te anoto en la *lista de espera* y te aviso por acá apenas se libere un cupo. ¿Te anoto? Responde *SÍ* o *NO*.`,
 
   respuestaInvalidaSiNo: () =>
     pick([

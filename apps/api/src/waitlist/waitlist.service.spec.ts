@@ -282,12 +282,101 @@ describe('WaitlistService', () => {
         where: { id: 'slot-1', organizationId: ORG },
         select: {
           isAvailable: true,
+          doctorId: true,
+          startTime: true,
           doctor: { select: { whatsappBookingEnabled: true } },
         },
       });
       expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
       expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
       expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+    });
+
+    describe('🏥 reserva para la atención presencial (2026-11-13)', () => {
+      const conReserva = (fila: unknown[] | Error) => {
+        prisma.organizationSettings.findUnique.mockResolvedValue({
+          botAgendaSharePercent: 80,
+        });
+        prisma.scheduleSlot.findFirst.mockResolvedValue({
+          isAvailable: true,
+          doctorId: 'doc-1',
+          startTime: params.slotDate,
+          doctor: { whatsappBookingEnabled: true },
+        });
+        prisma.$queryRaw = jest.fn(async () => {
+          if (fila instanceof Error) throw fila;
+          return fila;
+        });
+        prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+      };
+
+      it('un cupo de un médico-día donde el chat ya tomó su parte no se ofrece: la cola queda intacta', async () => {
+        conReserva([
+          {
+            doctorId: 'doc-1',
+            dia: 'x',
+            capacidad: 20,
+            chat: 16,
+            apartados: 0,
+          },
+        ]);
+
+        await service.notifyWaitlist(params);
+
+        expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
+        expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+        expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+      });
+
+      it('lo ya ofrecido a otros de la lista cuenta como del chat', async () => {
+        conReserva([
+          {
+            doctorId: 'doc-1',
+            dia: 'x',
+            capacidad: 20,
+            chat: 14,
+            apartados: 2,
+          },
+        ]);
+
+        await service.notifyWaitlist(params);
+
+        expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('con el chat por debajo de su parte, el cupo se ofrece como siempre', async () => {
+        conReserva([
+          {
+            doctorId: 'doc-1',
+            dia: 'x',
+            capacidad: 20,
+            chat: 15,
+            apartados: 0,
+          },
+        ]);
+
+        await service.notifyWaitlist(params);
+
+        expect(prisma.waitlistEntry.findFirst).toHaveBeenCalled();
+      });
+
+      it('si el conteo falla, el cupo se ofrece como siempre', async () => {
+        conReserva(new Error('boom'));
+
+        await service.notifyWaitlist(params);
+
+        expect(prisma.waitlistEntry.findFirst).toHaveBeenCalled();
+      });
+
+      it('sin reserva (lo de siempre) no se cuenta la agenda', async () => {
+        prisma.$queryRaw = jest.fn();
+        prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+
+        await service.notifyWaitlist(params);
+
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+        expect(prisma.waitlistEntry.findFirst).toHaveBeenCalled();
+      });
     });
 
     // 2026-11-02: al vencer una oferta, el cupo se le ofrecía al siguiente aunque

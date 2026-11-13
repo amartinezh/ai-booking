@@ -1688,3 +1688,269 @@ describe('AppointmentsService — cupoMasAllaDelPlazo (no es agenda llena, es el
     expect(await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1')).toBeNull();
   });
 });
+
+describe('AppointmentsService — reserva para la atención presencial (tope del chat por médico y día)', () => {
+  const { diaLocal, sumarDiasAFecha } = jest.requireActual('@agenia/shared');
+  const maniana: string = sumarDiasAFecha(diaLocal(new Date()), 1);
+  const a = (fecha: string, hhmm: string) =>
+    new Date(`${fecha}T${hhmm}:00-05:00`);
+  const slotRow = (id: string, inicio: Date) => ({
+    id,
+    startTime: inicio,
+    isAvailable: true,
+    organizationId: 'org1',
+    doctorId: 'doc1',
+    doctor: { fullName: 'Ana Ruiz', whatsappBookingEnabled: true },
+    service: { name: 'Medicina General' },
+  });
+
+  describe('getAvailableSlots', () => {
+    const conReserva = async (
+      porcentaje: number | null,
+      filas: unknown[] | Error = [],
+      ofrecidos: unknown[] = [],
+    ) => {
+      const findMany = jest.fn(() => [slotRow('s1', a(maniana, '09:00'))]);
+      const queryRaw = jest.fn(async () => {
+        if (filas instanceof Error) throw filas;
+        return filas;
+      });
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: {
+              scheduleSlot: { findMany },
+              hospitalMirrorConfig: { findUnique: jest.fn(() => null) },
+              mirrorEntityMap: { findMany: jest.fn(() => []) },
+              bookingBlock: { findMany: jest.fn(() => []) },
+              waitlistEntry: { findMany: jest.fn(() => ofrecidos) },
+              organizationSettings: {
+                findUnique: jest.fn(() => ({
+                  bookingMaxDaysAhead: null,
+                  botAgendaSharePercent: porcentaje,
+                })),
+              },
+              organization: {
+                findUnique: jest.fn(() => ({
+                  timezone: 'America/Bogota',
+                  settings: null,
+                })),
+              },
+              $queryRaw: queryRaw,
+            },
+          },
+        ],
+      }).compile();
+      return {
+        svc: module.get<AppointmentsService>(AppointmentsService),
+        findMany,
+        queryRaw,
+      };
+    };
+    const where = (findMany: jest.Mock) => findMany.mock.calls[0][0].where;
+
+    it('sin reserva (lo de siempre), la consulta no cambia y no se cuenta la agenda', async () => {
+      const { svc, findMany, queryRaw } = await conReserva(null);
+      const r = await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(r.map((s) => s.slotId)).toEqual(['s1']);
+      expect(queryRaw).not.toHaveBeenCalled();
+      expect(where(findMany)).not.toHaveProperty('NOT');
+    });
+
+    it('con 100 % tampoco hay reserva', async () => {
+      const { svc, findMany, queryRaw } = await conReserva(100);
+      await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(queryRaw).not.toHaveBeenCalled();
+      expect(where(findMany)).not.toHaveProperty('NOT');
+    });
+
+    it('con 80 %, el médico que ya tiene 16 de 20 por el chat no se ofrece ese día; los demás sí', async () => {
+      const { svc, findMany } = await conReserva(80, [
+        {
+          doctorId: 'doc1',
+          dia: maniana,
+          capacidad: 20,
+          chat: 16,
+          apartados: 0,
+        },
+        {
+          doctorId: 'doc2',
+          dia: maniana,
+          capacidad: 20,
+          chat: 3,
+          apartados: 0,
+        },
+      ]);
+      await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(where(findMany).NOT).toEqual([
+        {
+          doctorId: 'doc1',
+          startTime: {
+            gte: a(maniana, '00:00'),
+            lt: a(sumarDiasAFecha(maniana, 1), '00:00'),
+          },
+        },
+      ]);
+    });
+
+    it('con el chat por debajo del tope, la consulta no quita a nadie', async () => {
+      const { svc, findMany } = await conReserva(80, [
+        {
+          doctorId: 'doc1',
+          dia: maniana,
+          capacidad: 20,
+          chat: 15,
+          apartados: 0,
+        },
+      ]);
+      await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(where(findMany)).not.toHaveProperty('NOT');
+    });
+
+    it('lo apartado por otros pacientes cuenta como del chat', async () => {
+      const { svc, findMany } = await conReserva(80, [
+        {
+          doctorId: 'doc1',
+          dia: maniana,
+          capacidad: 20,
+          chat: 15,
+          apartados: 1,
+        },
+      ]);
+      await svc.getAvailableSlots('Medicina', null, 'org1', null, {
+        apartados: ['s9'],
+      });
+      expect(where(findMany).NOT).toHaveLength(1);
+    });
+
+    it('`ignorarReserva` busca sin la reserva (para saber por qué no hay cupos)', async () => {
+      const { svc, findMany, queryRaw } = await conReserva(80, [
+        {
+          doctorId: 'doc1',
+          dia: maniana,
+          capacidad: 20,
+          chat: 16,
+          apartados: 0,
+        },
+      ]);
+      await svc.getAvailableSlots('Medicina', null, 'org1', null, {
+        todos: true,
+        ignorarReserva: true,
+      });
+      expect(queryRaw).not.toHaveBeenCalled();
+      expect(where(findMany)).not.toHaveProperty('NOT');
+    });
+
+    it('si el conteo falla, se ofrecen cupos como siempre: nunca deja al asistente sin agenda', async () => {
+      const { svc, findMany } = await conReserva(80, new Error('boom'));
+      const r = await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(r.map((s) => s.slotId)).toEqual(['s1']);
+      expect(where(findMany)).not.toHaveProperty('NOT');
+    });
+
+    it('sinCuposPorLaReserva: sin reserva es false sin mirar la agenda', async () => {
+      const { svc, findMany } = await conReserva(null);
+      expect(await svc.sinCuposPorLaReserva('Medicina', null, 'org1')).toBe(
+        false,
+      );
+      expect(findMany).not.toHaveBeenCalled();
+    });
+
+    it('sinCuposPorLaReserva: con reserva y cupos que solo ella esconde, true', async () => {
+      const { svc } = await conReserva(80);
+      expect(await svc.sinCuposPorLaReserva('Medicina', null, 'org1')).toBe(
+        true,
+      );
+    });
+  });
+
+  describe('bookAppointment — revalida al reservar', () => {
+    const reservar = async (
+      origin: any,
+      porcentaje: number | null,
+      fila = { doctorId: 'doc1', dia: maniana, capacidad: 20, chat: 16 },
+    ) => {
+      const tx = {
+        scheduleSlot: {
+          findUnique: jest.fn(() => ({
+            id: 's1',
+            isAvailable: true,
+            organizationId: 'org1',
+            doctorId: 'doc1',
+            startTime: a(maniana, '09:00'),
+            doctor: { whatsappBookingEnabled: true },
+          })),
+          update: jest.fn(),
+        },
+        appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
+        organizationSettings: {
+          findUnique: jest.fn(() => ({
+            bookingMaxDaysAhead: null,
+            botAgendaSharePercent: porcentaje,
+          })),
+        },
+        organization: {
+          findUnique: jest.fn(() => ({ timezone: 'America/Bogota' })),
+        },
+        $executeRawUnsafe: jest.fn(),
+        $executeRaw: jest.fn(),
+        $queryRaw: jest.fn(async () => [{ ...fila, apartados: 0 }]),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: { $transaction: jest.fn((cb: any) => cb(tx)) },
+          },
+        ],
+      }).compile();
+      const r = await module
+        .get<AppointmentsService>(AppointmentsService)
+        .bookAppointment('p1', 's1', null, origin, 'org1');
+      return { r, tx };
+    };
+
+    it.each(['WHATSAPP', 'TELEGRAM'] as const)(
+      'por el bot (%s), con el chat en su tope la cita no se crea y el motivo es la reserva',
+      async (origin) => {
+        const { r, tx } = await reservar(origin, 80);
+        expect(r.success).toBe(false);
+        expect(r.reason).toBe('RESERVA_PRESENCIAL');
+        expect(tx.appointment.create).not.toHaveBeenCalled();
+        expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+        // Con candado por médico y día.
+        expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('por el bot, con una cita menos que el tope sí se reserva', async () => {
+      const { r } = await reservar('WHATSAPP', 80, {
+        doctorId: 'doc1',
+        dia: maniana,
+        capacidad: 20,
+        chat: 15,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it.each(['MANUAL', 'MIRROR'] as const)(
+      '%s (el personal o el hospital) agenda sin tope y sin contar la agenda',
+      async (origin) => {
+        const { r, tx } = await reservar(origin, 80);
+        expect(r.success).toBe(true);
+        expect(tx.$queryRaw).not.toHaveBeenCalled();
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+      },
+    );
+
+    it('sin reserva (lo de siempre), el bot reserva sin candado ni conteo', async () => {
+      const { r, tx } = await reservar('WHATSAPP', null);
+      expect(r.success).toBe(true);
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+    });
+  });
+});

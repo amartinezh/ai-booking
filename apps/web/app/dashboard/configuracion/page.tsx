@@ -1,6 +1,11 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
-import { getMyHomologacionAutomatica, getMyOrgSettings, getMyPlazoAgendarResumen } from '@/app/actions/settings';
+import {
+    getMyHomologacionAutomatica,
+    getMyOrgSettings,
+    getMyPlazoAgendarResumen,
+    getMyReservaPresencialResumen,
+} from '@/app/actions/settings';
 import { getMyKnowledgeBase } from '@/app/actions/knowledge-base';
 import { getMyAiConfig } from '@/app/actions/ai-config';
 import { getMyWhatsappConfig } from '@/app/actions/whatsapp-config';
@@ -14,6 +19,7 @@ import BookingToggle from './BookingToggle';
 import CancelToggle from './CancelToggle';
 import RescheduleToggle from './RescheduleToggle';
 import PlazoAgendarSetting from './PlazoAgendarSetting';
+import ReservaPresencialSetting from './ReservaPresencialSetting';
 import HomologacionAutomatica from './HomologacionAutomatica';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
@@ -77,16 +83,22 @@ export default async function ConfiguracionPage({
     // 🗓️ Lo que el plazo deja ofrecer hoy. Aislado: si falla, el resto se muestra igual.
     let plazoResumen: Extract<Awaited<ReturnType<typeof getMyPlazoAgendarResumen>>, { success: true }>['resumen'] | null =
         null;
+    // 🏥 Cómo va la reserva para la atención presencial. Aislado como el del plazo.
+    let reservaResumen:
+        | Extract<Awaited<ReturnType<typeof getMyReservaPresencialResumen>>, { success: true }>['resumen']
+        | null = null;
     // 🩺 Médicos nuevos del hospital: solo con espejo. Aislado como los demás.
     let homologacion: Awaited<ReturnType<typeof getMyHomologacionAutomatica>> | null = null;
 
     if (activeTab === 'chatbot') {
-        const [setRes, audRes, plazoRes, homRes] = await Promise.allSettled([
+        const [setRes, audRes, plazoRes, homRes, reservaRes] = await Promise.allSettled([
             getMyOrgSettings(),
             getMyAudioConfig(),
             getMyPlazoAgendarResumen(),
             getMyHomologacionAutomatica(),
+            getMyReservaPresencialResumen(),
         ]);
+        if (reservaRes.status === 'fulfilled' && reservaRes.value.success) reservaResumen = reservaRes.value.resumen;
         if (homRes.status === 'fulfilled') homologacion = homRes.value;
         if (setRes.status === 'fulfilled') settings = setRes.value;
         if (plazoRes.status === 'fulfilled' && plazoRes.value.success) plazoResumen = plazoRes.value.resumen;
@@ -194,6 +206,13 @@ export default async function ConfiguracionPage({
                                 initialDias={settings.bookingMaxDaysAhead}
                                 hoy={settings.hoyEnLaClinica}
                                 resumenInicial={plazoResumen}
+                            />
+                        )}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {settings && (
+                            <ReservaPresencialSetting
+                                initialPorcentaje={settings.botAgendaSharePercent}
+                                resumenInicial={reservaResumen}
                             />
                         )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}

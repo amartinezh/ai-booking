@@ -1,6 +1,6 @@
 # Reserva de agenda para la atención presencial
 
-**Estado: EVALUACIÓN (2026-10-31), nada construido.** Falta medir con datos de producción (§2.4, el SQL está listo) y que el usuario apruebe R1 … R10 (§6).
+**Estado: CONSTRUIDO (2026-11-13), sin desplegar.** Medido con producción el 13-nov (§2.5), R1 … R10 aprobadas ese día con la recomendación de §6, y Fases 1 y 2 hechas (§9). Nace sin reserva: nada cambia hasta que el administrador ponga un porcentaje. Falta la Fase 3: desplegar y encender.
 
 ## 1. Qué se pide
 
@@ -48,6 +48,18 @@ ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 \
 Responde, para los últimos 14 días y los próximos 7, por médico y por día: capacidad, cuánto tomó el chat, cuánto el hospital y cuánto quedó libre (§1 y §3 del script); **cuántas veces habría frenado un tope del 90, 80, 70, 60 o 50 % y cuántas citas del chat no se habrían dado** (§2); con cuánta anticipación agenda cada origen (§4: si el hospital agenda casi todo para el mismo día, la reserva importa sobre todo en «hoy» y «mañana»); cuántos ya oyen «no hay cupos» por el chat (§5) y cuántas citas temporales crea el hospital (§6).
 
 Con eso se elige el porcentaje: si el chat nunca pasa del 50 %, un 80 % no frena nada hoy y queda como guarda para cuando crezca la demanda.
+
+### 2.5 La medición (13-nov-2026, 12:08)
+
+El usuario corrió el script contra producción. Días hábiles del 30-oct al 13-nov:
+
+- De 973 cupos, el hospital tomó 696 (72 %), el asistente 238 (24 %) y quedaron libres 39 (4 %). El día más alto del asistente fue el 31,9 %.
+- Ningún médico pasó del 60 % por el asistente en un día. Un tope del 90, 80, 70 o 60 % no habría frenado ninguna de las 257 citas del asistente; uno del 50 %, 3.
+- El hospital agenda antes: 351 de sus 890 citas (39 %) las dio a 4 días o más, y el asistente solo ve 4 días.
+- El asistente dijo «no hay cupos» y ofreció la lista de espera 284 veces en 15 días: quien se queda corto es el chat.
+- Citas temporales del hospital: 3 en el período.
+
+Conclusión: con 80 % la reserva no cambia nada hoy; queda como garantía para el hospital si la demanda del chat crece. Lo contrario (garantizarle al chat un 80 %) no se puede hacer desde AgenIA: el mostrador no ve los cupos apartados y AgenIA no toca la agenda del HIS.
 
 ## 3. La decisión de fondo: qué quiere decir «80 %»
 
@@ -119,7 +131,7 @@ El HIS, el agente (no hay que actualizarlo por AnyDesk), el driver, `CITAS_DISPO
 7. **Conocimiento** (obligatorio, CLAUDE.md): Parte 1, Configuración (paso a paso «Reservar parte de la agenda para el hospital» y preguntas: ¿la ventanilla ve algo distinto?, ¿qué pasa con las citas ya dadas si bajo el porcentaje?, ¿por qué el asistente dice que no hay cupos si la agenda tiene libres?); Parte 2 §3.3, §3.5 y §11; bitácora; decidir si el asistente de soporte lo lee.
 8. **Pruebas**: la regla pura (redondeos, días de 1 a 4 cupos, 100 %); la búsqueda (un médico en el tope no tapa a los demás), la reserva y el cambio de fecha (mismo día no cuenta doble), la lista de espera; los flujos del chat; la acción del panel; y contra un Postgres 15 real el SQL agrupado (cupo a las 23:30 en el día de Bogotá) y el candado con dos conexiones a la vez.
 
-## 6. Decisiones por aprobar
+## 6. Decisiones (aprobadas el 2026-11-13 con la recomendación)
 
 | # | Decisión | Recomendación | Alternativa |
 |---|---|---|---|
@@ -151,3 +163,22 @@ El HIS, el agente (no hay que actualizarlo por AnyDesk), el driver, `CITAS_DISPO
 - **Carreras** al confirmar el último cupo del chat: candado por médico y día (§4.3).
 - **Costo**: una consulta agrupada más por búsqueda. Con el plazo de 4 días son unos 70 médico-días; sin plazo hay que acotarla a los días de la bolsa de cupos.
 - **La ventanilla no ve el tope en CNT.** Si el hospital quiere saber cuánto le queda, lo ve en el panel de AgenIA (§4.5).
+
+## 9. Lo que se construyó (2026-11-13)
+
+- **Base:** migración `20261113120000_reserva_presencial`, columna `OrganizationSettings.botAgendaSharePercent` (10 a 100, vacía = sin reserva).
+- **Regla pura:** `packages/shared/src/reserva-presencial.ts`.
+- **API:** `apps/api/src/appointments/reserva-presencial.ts` (conteo por médico y día, tramos para la búsqueda, revalidación con candado). Conectada en `getAvailableSlots` (opciones `ignorarReserva` y `apartados`), `bookAppointment` (motivo `RESERVA_PRESENCIAL`), la transacción del cambio de fecha del chatbot y `motivoParaNoOfrecer` de la lista de espera.
+- **Chat:** texto nuevo `sinCuposPorEsteMedio` en los dos tonos; el rechazo al confirmar usa los textos de «dejó de estar disponible por este medio»; marcas `porReserva` y `motivo: RESERVA_PRESENCIAL` en la Caja Negra.
+- **Panel:** control «Parte de la agenda para el asistente» con la tabla de los próximos días (`ReservaPresencialSetting.tsx`, `apps/web/lib/reserva-presencial/resumen.ts`), acción `setMyBotAgendaSharePercent` con auditoría (`BOT_SHARE_CHANGE`) y actividad; el aviso de cupos del plazo descuenta los médico-días en el tope.
+- **Conocimiento:** `docs/conocimiento/AGENIA.md` (paso a paso y preguntas en Configuración, §3.3, §3.5, tabla de valores, bitácora).
+
+Diferencias con el diseño de §4:
+
+- **R9 ampliada:** además de lo apartado por otros pacientes del chat, cuentan como del asistente los cupos ofrecidos a la lista de espera que aún no tienen respuesta (el barrido de cupos libres del 31-oct no existía cuando se escribió el plan).
+- **Rechazo al confirmar (§4.4):** no dice «quedó para la atención en el hospital», sino «dejó de estar disponible por este medio», para no mandar al paciente al hospital (R6).
+- **Si el conteo falla** al buscar o al ofrecer a la lista, se sigue sin la reserva y queda en el log; la reserva de la cita lo revalida.
+- **Etiquetas en Caja Negra y Canales en vivo (§4.6):** no se agregaron; las marcas quedan en los metadatos, como `porPlazo`.
+- **La tabla del panel** es por día (suma de los médicos), con cuántos médicos están en su tope; no por médico.
+
+Verificado contra Postgres 15 real (desechable): la migración no deja deriva con el schema; el cupo de las 23:30 cuenta en su día de Bogotá; los cupos cerrados sin cita no cuentan; las citas del hospital y del panel no cuentan como del chat; de dos reservas simultáneas del último cupo del chat pasa una sola; el cambio de fecha dentro del mismo médico y día no cuenta doble; sin porcentaje, todo queda como antes.

@@ -17,6 +17,7 @@ import {
     resumenCuposDelPlazo,
     type ResumenCuposDelPlazo,
 } from '@agenia/shared';
+import { medicoDiasEnElTopeDelPanel } from '@/lib/reserva-presencial/resumen';
 
 /** La operación con que se anota en la auditoría un cambio del plazo. */
 export const OP_CAMBIO_PLAZO = 'BOOKING_MAX_DAYS_CHANGE';
@@ -38,7 +39,7 @@ export async function cargarResumenDelPlazo(organizationId: string, ahora = new 
     const [settings, org, espejo, reglas, ultimo] = await Promise.all([
         prisma.organizationSettings.findUnique({
             where: { organizationId },
-            select: { bookingMaxDaysAhead: true },
+            select: { bookingMaxDaysAhead: true, botAgendaSharePercent: true },
         }),
         prisma.organization.findUnique({ where: { id: organizationId }, select: { timezone: true } }),
         prisma.hospitalMirrorConfig.findUnique({ where: { organizationId }, select: { enabled: true } }),
@@ -72,16 +73,33 @@ export async function cargarResumenDelPlazo(organizationId: string, ahora = new 
                 ...(homologados ? { id: { in: homologados } } : {}),
             },
         },
-        select: { startTime: true },
+        select: { startTime: true, doctorId: true },
         orderBy: { startTime: 'asc' },
         take: MAX_CUPOS,
     });
 
     const timeZone = org?.timezone || undefined;
+    // 🏥 Sin los cupos de los médico-días donde el asistente ya tomó su parte de
+    // la agenda (reserva para la atención presencial, 2026-11-13): no los puede
+    // dar. Sin reserva no se consulta nada; si el conteo falla, se cuentan todos.
+    const enElTope =
+        cupos.length > 0
+            ? await medicoDiasEnElTopeDelPanel(
+                  organizationId,
+                  settings?.botAgendaSharePercent ?? null,
+                  cupos[0].startTime,
+                  cupos[cupos.length - 1].startTime,
+                  timeZone || 'America/Bogota',
+              ).catch(() => new Set<string>())
+            : new Set<string>();
+    const ofrecibles =
+        enElTope.size > 0
+            ? cupos.filter((c) => !enElTope.has(`${c.doctorId}|${diaLocal(c.startTime, timeZone)}`))
+            : cupos;
     const dias = normalizarPlazoAgendar(settings?.bookingMaxDaysAhead);
     return {
         ...resumenCuposDelPlazo({
-            inicios: cupos.map((c) => c.startTime),
+            inicios: ofrecibles.map((c) => c.startTime),
             ahora,
             dias,
             reglas,

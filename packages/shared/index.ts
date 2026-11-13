@@ -754,6 +754,17 @@ export {
   validarPlazoAgendar,
 } from './src/plazo-agendar';
 export type { ResumenCuposDelPlazo } from './src/plazo-agendar';
+// 🏥 Reserva de agenda para la atención presencial (tope del chat por médico y día).
+export {
+  RESERVA_PRESENCIAL,
+  chatEnElTope,
+  medicoDiasEnElTope,
+  normalizarParteDelChat,
+  textoParteDelChat,
+  topeDelChat,
+  validarParteDelChat,
+} from './src/reserva-presencial';
+export type { MedicoDia } from './src/reserva-presencial';
 // 🇨🇴 Festivos de Colombia, calculados (no cuentan para el plazo para agendar).
 export {
   domingoDePascua,

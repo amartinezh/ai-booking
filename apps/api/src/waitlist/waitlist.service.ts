@@ -20,6 +20,7 @@ import {
 import { Prisma } from '@agenia/database';
 import { cupoBloqueadoParaElAsistente } from '../appointments/bloqueos-agenda';
 import { fueraDelPlazoParaElAsistente } from '../appointments/plazo-agendar';
+import { cupoReservadoParaElHospital } from '../appointments/reserva-presencial';
 import { ConfigService } from '@nestjs/config';
 import { ChatbotService } from '../chatbot/chatbot.service';
 import { cupoApartadoKey } from '../chatbot/chatbot.constants';
@@ -466,6 +467,8 @@ export class WaitlistService {
       where: { id: slotId, organizationId },
       select: {
         isAvailable: true,
+        doctorId: true,
+        startTime: true,
         doctor: { select: { whatsappBookingEnabled: true } },
       },
     });
@@ -501,6 +504,29 @@ export class WaitlistService {
       await fueraDelPlazoParaElAsistente(this.prisma, organizationId, slotDate)
     ) {
       return `El cupo ${slotId} queda más allá del plazo máximo para agendar: no se ofrece a la lista de espera`;
+    }
+
+    // 🏥 Ni un cupo de un médico-día donde el asistente ya tomó su parte de la
+    // agenda (reserva para la atención presencial, 2026-11-13): al «SÍ» la
+    // reserva se rechazaría. La cola espera; si el cupo se liberó porque el chat
+    // canceló, el chat bajó de su tope y sí se ofrece. Cuenta lo ya ofrecido a
+    // otros de la lista. Sin reserva no consulta nada; si el conteo falla, se
+    // ofrece como siempre (la reserva de la cita lo revalida).
+    const reservado =
+      cupo.doctorId && cupo.startTime
+        ? await cupoReservadoParaElHospital(this.prisma, organizationId, {
+            id: slotId,
+            doctorId: cupo.doctorId,
+            startTime: cupo.startTime,
+          }).catch((error: unknown) => {
+            this.logger.error(
+              `Reserva presencial: no se pudo contar la agenda del cupo ${slotId}: ${getErrorMessage(error)}`,
+            );
+            return false;
+          })
+        : false;
+    if (reservado) {
+      return `El cupo ${slotId} es de un médico-día donde el asistente ya tomó su parte de la agenda (reserva para la atención presencial): no se ofrece a la lista de espera`;
     }
 
     // 🔁 Ya se le ofreció a alguien que aún no responde, lo tiene apartado un
