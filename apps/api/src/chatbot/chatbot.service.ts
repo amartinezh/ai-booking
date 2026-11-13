@@ -424,6 +424,11 @@ const LOOKUP_ENTRY_STATES: ChatState[] = [
   ChatState.AWAITING_LOOKUP_CHOICE,
 ];
 
+/** ¿Ya llegó la hora de la cita? */
+function yaEmpezo(cita: { scheduleSlot: { startTime: Date } }): boolean {
+  return cita.scheduleSlot.startTime.getTime() <= Date.now();
+}
+
 @Injectable()
 export class ChatbotService implements OnModuleInit {
   private readonly logger = new Logger(ChatbotService.name);
@@ -5137,7 +5142,14 @@ export class ChatbotService implements OnModuleInit {
       recordadas,
     );
     if (tipo === 'CONFIRMA' && recien.length > 0) return false;
-    const citas = this.juntarPorHora(recordadas, recien);
+    // ⏰ Una cita cuya hora ya pasó no se confirma (2026-11-13, …4523): la de las
+    // 8:40 sigue entre las recordadas una hora más —para «¿hay turno?» o «ya
+    // llegué»—, y a las 9:09 su «Muchas gracias», tras anotarse en la lista de
+    // espera porque la había perdido, recibió «¡Gracias por confirmar! Le
+    // esperamos… a las 08:40».
+    const citas = this.juntarPorHora(recordadas, recien).filter(
+      (c) => tipo !== 'CONFIRMA' || !yaEmpezo(c),
+    );
     const cita = citas[0];
     if ((tipo === 'CONFIRMA' || tipo === 'PREGUNTA_CITA') && !cita) {
       // 📅 «Para confirmar la cita de mañana» sin recordatorio: se le confirma su
@@ -5586,10 +5598,13 @@ export class ChatbotService implements OnModuleInit {
     operaciones: OperacionesBot;
     timeZone: string | undefined;
   }): Promise<boolean> {
-    const citas = await this.citasRecordadasDelRemitente(
-      p.organizationId,
-      p.identity,
-    );
+    // ⏰ Solo las que todavía no empiezan (2026-11-13, …4523): a las 8:51, un
+    // «Buenos días» de quien tenía cita a las 8:40 recibió «Le escribimos para
+    // recordarle la cita… a las 08:40». Si ya pasó, el saludo sigue el camino
+    // de siempre.
+    const citas = (
+      await this.citasRecordadasDelRemitente(p.organizationId, p.identity)
+    ).filter((c) => !yaEmpezo(c));
     const cita = citas[0];
     if (!cita) return false;
     // «Hola» es el atajo de agendar en los demás avisos; aquí no: otro «Hola» ya
@@ -7722,9 +7737,32 @@ export class ChatbotService implements OnModuleInit {
     // cambiar de intención a mitad del agendamiento, p.ej. lanzar una FAQ).
     // ══════════════════════════════════════════════════════════
     if (!aiData.isFallback && !isStrictStep) {
-      // ── Tarea A: insulto/abuso → respuesta firme y cierre de sesión ──
-      // Defensa en profundidad: complementa el guardrail por regex (que ya
-      // atrapó los casos obvios antes de gastar una llamada al LLM).
+      // ── Tarea A: la IA cree que hay un insulto ──
+      // 😠 Una queja no es un insulto (2026-11-13): las tres conversaciones que
+      // la IA cerró por «insultos» eran quejas —«😡😡😡» tras «no es posible
+      // agendar», «tenía cita a las 8 y son las 9», «¿por qué al niño ya me lo
+      // atendieron y ahora no está?» tras tres rechazos del padrón— y recibieron
+      // «cerraremos este chat» y la encuesta de insultos. El chat se cierra solo
+      // si el mensaje, o la transcripción de la nota de voz, tiene una palabra
+      // de la lista ([insults]); el texto escrito con una de ellas ya lo atrapó
+      // el guardrail de arriba. Si no, se responde como a una queja y la
+      // conversación sigue en el paso en que estaba.
+      if (
+        aiData.intent === 'insulto_abuso' &&
+        !(text && this.insultRegex.test(text))
+      ) {
+        const reply = MSGS.quejaDelPaciente(this.contactoDe(MSGS, org));
+        await this.smartReply(organizationId, senderId, reply);
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: {
+            step: 'QUEJA_DEL_PACIENTE',
+            previousState: currentState,
+          },
+        });
+        return;
+      }
       if (aiData.intent === 'insulto_abuso') {
         const humanPhone = org?.supportPhone || '';
         const reply = humanPhone
@@ -7741,13 +7779,15 @@ export class ChatbotService implements OnModuleInit {
           metadata: { guardrail: 'INSULT_LLM', previousState: currentState },
         });
 
-        // ⭐ CSAT: cierre por lenguaje abusivo (detección LLM).
+        // ⭐ CSAT: cierre por lenguaje abusivo (nota de voz con una palabra de
+        // la lista).
         await this.sendSurveyLink(
           organizationId,
           senderId,
           ResolutionStatus.BLOCKED_INSULT,
           {
-            chatSummary: 'Sesión cerrada por insulto detectado (LLM).',
+            chatSummary:
+              'Sesión cerrada por insulto en una nota de voz (lista de palabras).',
           },
         );
         return;

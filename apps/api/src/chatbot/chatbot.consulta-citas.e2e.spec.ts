@@ -1703,6 +1703,47 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       },
     );
 
+    // ⏰ 2026-11-13, …4523: cita a las 8:40. A las 8:51 su «Buenos días» recibió
+    // «Le escribimos para recordarle la cita… a las 08:40» y a las 9:09 su
+    // «Muchas gracias» —tras anotarse en la lista de espera porque la había
+    // perdido— «¡Gracias por confirmar! Le esperamos… a las 08:40».
+    describe('⏰ una cita cuya hora ya pasó', () => {
+      const conCitaHaceMinutos = (minutos: number) => {
+        seedPaciente();
+        seedCita('apt-1', new Date(AHORA.getTime() - minutos * 60_000));
+        db.appointments[0].reminderSentAt = new Date(
+          AHORA.getTime() - 24 * 3_600_000,
+        );
+      };
+      beforeEach(() => {
+        bookingEnabled = true;
+      });
+
+      it('el saludo no le recuerda una cita que ya pasó', async () => {
+        conCitaHaceMinutos(11);
+        await say('Buenos días');
+        expect(lastSent()).not.toContain('Le escribimos para recordarle');
+        expect(paso('SALUDO_TRAS_RECORDATORIO')).toBeUndefined();
+      });
+
+      it('«Muchas gracias» no la confirma ni dice «le esperamos»', async () => {
+        conCitaHaceMinutos(29);
+        await say('Muchas gracias');
+        const r = sent().join('\n');
+        expect(r).not.toContain('Gracias por confirmar');
+        expect(r).not.toContain('Le esperamos');
+        expect(paso('RECORDATORIO_CONFIRMADO')).toBeUndefined();
+      });
+
+      it('un minuto antes de la hora sí: el saludo la recuerda y el «gracias» la confirma', async () => {
+        conCitaHaceMinutos(-1);
+        await say('Buenos días');
+        expect(lastSent()).toContain('Le escribimos para recordarle');
+        await say('Muchas gracias');
+        expect(lastSent()).toContain('¡Gracias por confirmar!');
+      });
+    });
+
     it('🎙️ la confirmación por NOTA DE VOZ también se entiende (no «no es posible agendar»)', async () => {
       // Caso real 2026-10-15 18:10: «Confirmo mi asistencia a la cita de mañana»
       // dicho en un audio recibía el aviso de que agendar está apagado.

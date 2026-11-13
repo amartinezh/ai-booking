@@ -222,11 +222,13 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
   const ORG = 'org-1';
 
   // Las citas de los ejemplos son del 1-sep a las 14:00 UTC: el reloj se fija
-  // 4 h antes para que estén en plazo y lejos de la anticipación mínima (60
-  // min por defecto). Solo el reloj: los temporizadores siguen siendo reales.
+  // 2 h antes para que estén en plazo y lejos de la anticipación mínima (60
+  // min por defecto), a las 7:00 a. m. en Bogotá: de día, cuando salen los
+  // recordatorios (2026-11-13: de noche esperan todos). Solo el reloj: los
+  // temporizadores siguen siendo reales.
   beforeEach(() => {
     jest.useFakeTimers({
-      now: new Date('2026-09-01T10:00:00.000Z'),
+      now: new Date('2026-09-01T12:00:00.000Z'),
       doNotFake: [
         'nextTick',
         'setImmediate',
@@ -352,14 +354,14 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
 
   describe('runOnce', () => {
     describe('⏱️ anticipación mínima (caso real 2026-10-17: recordatorio a 4 min de la cita)', () => {
-      // Reloj en 2026-09-01T10:00Z.
+      // Reloj en 2026-09-01T12:00Z.
       const enMinutos = (min: number) =>
         cita({
           id: `apt-${min}`,
           scheduleSlot: {
             ...cita().scheduleSlot,
             startTime: new Date(
-              Date.parse('2026-09-01T10:00:00.000Z') + min * 60_000,
+              Date.parse('2026-09-01T12:00:00.000Z') + min * 60_000,
             ),
           },
         });
@@ -456,13 +458,13 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     // 💬 2026-10-27: las 17 citas del chat del 26 y 27 de octubre recibieron el
     // recordatorio entre 2 y 26 minutos después de la confirmación.
     describe('💬 agendada por el chat ya dentro de la ventana: la confirmación hizo de recordatorio', () => {
-      // Reloj: martes 1-sep 10:00Z (5:00 a. m. en Bogotá); la cita, 14:00Z.
+      // Reloj: martes 1-sep 12:00Z (7:00 a. m. en Bogotá); la cita, 14:00Z.
       const agendada = (origin: string, createdAt: string) =>
         cita({ id: `apt-${origin}`, origin, createdAt: new Date(createdAt) });
 
       it('WhatsApp hace 10 minutos: no sale, no se marca y el lote lo deja dicho', async () => {
         const { service, chatbot, templates, prisma, systemLog } = build({
-          eligibles: [agendada('WHATSAPP', '2026-09-01T09:50:00.000Z')],
+          eligibles: [agendada('WHATSAPP', '2026-09-01T11:50:00.000Z')],
         });
 
         await expect(service.runOnce()).resolves.toEqual({
@@ -487,7 +489,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
 
       it('Telegram, igual', async () => {
         const { service } = build({
-          eligibles: [agendada('TELEGRAM', '2026-09-01T09:50:00.000Z')],
+          eligibles: [agendada('TELEGRAM', '2026-09-01T11:50:00.000Z')],
         });
         await expect(service.runOnce()).resolves.toMatchObject({
           sent: 0,
@@ -497,7 +499,8 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       });
 
       it('por el chat pero con más anticipación (el viernes para el martes): sale, pero no de noche', async () => {
-        // El reloj de estas pruebas está a las 5:00 a. m. en Bogotá: espera.
+        // A las 5:00 a. m. en Bogotá: espera.
+        jest.setSystemTime(new Date('2026-09-01T10:00:00.000Z'));
         const { service, chatbot, prisma, systemLog } = build({
           eligibles: [agendada('WHATSAPP', '2026-08-28T14:00:00.000Z')],
         });
@@ -511,7 +514,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         expect(systemLog.event).toHaveBeenCalledWith(
           expect.objectContaining({
             message: expect.stringContaining(
-              '1 del chat esperan su hora (12 h después de la confirmación, de 7:00 a 20:00)',
+              '1 esperan su hora (de 7:00 a 20:00; las del chat, además, 12 h después de la confirmación)',
             ),
           }),
         );
@@ -554,11 +557,43 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         'la del %s agendada hace 10 minutos sí sale: nadie se la confirmó por el chat',
         async (origin) => {
           const { service } = build({
-            eligibles: [agendada(origin, '2026-09-01T09:50:00.000Z')],
+            eligibles: [agendada(origin, '2026-09-01T11:50:00.000Z')],
           });
           await expect(service.runOnce()).resolves.toMatchObject({
             sent: 1,
             yaConfirmadas: 0,
+            enEspera: 0,
+          });
+        },
+      );
+
+      // 2026-11-13: los viernes a las 00:0x salían los recordatorios de las
+      // citas del sábado que agendó el hospital.
+      it.each(['MIRROR', 'MANUAL'])(
+        'la del %s, de noche, espera la mañana: ni sale ni se marca',
+        async (origin) => {
+          jest.setSystemTime(new Date('2026-09-01T05:01:00.000Z')); // 00:01 a. m.
+          const { service, chatbot, templates, prisma, systemLog } = build({
+            eligibles: [agendada(origin, '2026-08-25T15:00:00.000Z')],
+          });
+          await expect(service.runOnce()).resolves.toMatchObject({
+            sent: 0,
+            enEspera: 1,
+          });
+          expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+          expect(templates.sendTemplate).not.toHaveBeenCalled();
+          expect(prisma.appointment.update).not.toHaveBeenCalled();
+          expect(systemLog.event).toHaveBeenCalledWith(
+            expect.objectContaining({
+              message: expect.stringContaining(
+                '1 esperan su hora (de 7:00 a 20:00',
+              ),
+            }),
+          );
+
+          jest.setSystemTime(new Date('2026-09-01T12:00:00.000Z')); // 7:00 a. m.
+          await expect(service.runOnce()).resolves.toMatchObject({
+            sent: 1,
             enEspera: 0,
           });
         },
@@ -1130,7 +1165,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     it.each([
       ['2026-09-22T14:00:00Z', '09:00 en Bogotá', 'Buenos días'],
       ['2026-09-22T19:21:00Z', '02:21 p. m. en Bogotá', 'Buenas tardes'],
-      ['2026-09-23T01:00:00Z', '08:00 p. m. en Bogotá', 'Buenas noches'],
+      ['2026-09-23T00:30:00Z', '07:30 p. m. en Bogotá', 'Buenas noches'],
     ])('a las %s (%s) saluda «%s»', async (ahoraIso, _local, saludo) => {
       jest.useFakeTimers().setSystemTime(new Date(ahoraIso));
       try {
@@ -1733,11 +1768,55 @@ describe('recordatorioDelChat', () => {
     ).toBe(esperado);
   });
 
-  it('del hospital, del panel o sin origen → se envía como siempre, a cualquier hora', () => {
-    const noche = new Date('2026-10-27T08:00:00.000Z'); // 3:00 a. m.
+  it('del hospital, del panel o sin origen → se envía de día aunque se haya agendado hace un momento', () => {
+    const dia = new Date('2026-10-27T14:00:00.000Z'); // martes 9:00 a. m.
     for (const origin of ['MIRROR', 'MANUAL', null]) {
-      expect(decidir(origin, '2026-10-27T07:50:00.000Z', noche)).toBe('ENVIAR');
+      expect(decidir(origin, '2026-10-27T13:50:00.000Z', dia)).toBe('ENVIAR');
     }
+  });
+
+  // 2026-11-13: la ventana cuenta horas hábiles, así que el viernes a las 00:00
+  // ya entran las citas del sábado, y las que agendó el hospital salían a
+  // medianoche (9 desde el 15 de octubre; la última, viernes 13 a las 00:01
+  // para el sábado 14 a las 10:00).
+  it('del hospital, del panel o sin origen, de noche → espera la mañana', () => {
+    const sabado10 = new Date('2026-11-14T15:00:00.000Z');
+    const agendada = '2026-11-07T15:13:00.000Z';
+    for (const origin of ['MIRROR', 'MANUAL', null]) {
+      // Viernes 13, 00:01 a. m.
+      expect(
+        decidir(
+          origin,
+          agendada,
+          new Date('2026-11-13T05:01:00.000Z'),
+          sabado10,
+        ),
+      ).toBe('ESPERAR');
+      // Jueves 12, 8:00 p. m.
+      expect(
+        decidir(
+          origin,
+          agendada,
+          new Date('2026-11-13T01:00:00.000Z'),
+          sabado10,
+        ),
+      ).toBe('ESPERAR');
+      // Viernes 13, 7:00 a. m.: sale, 27 horas antes de la cita.
+      expect(
+        decidir(
+          origin,
+          agendada,
+          new Date('2026-11-13T12:00:00.000Z'),
+          sabado10,
+        ),
+      ).toBe('ENVIAR');
+    }
+  });
+
+  it('sin fecha de creación, de noche → también espera la mañana', () => {
+    expect(
+      decidir('WHATSAPP', null, new Date('2026-10-27T08:00:00.000Z')),
+    ).toBe('ESPERAR');
   });
 
   it('sin fecha de creación → se envía', () => {

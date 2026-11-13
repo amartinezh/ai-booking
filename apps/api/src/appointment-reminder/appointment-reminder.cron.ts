@@ -72,9 +72,16 @@ export const ORIGENES_AGENDADOS_POR_EL_PACIENTE = [
 export const HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO = 12;
 
 /**
- * 💬 Horario del recordatorio de una cita que el paciente se agendó por el chat,
- * en la hora de la clínica (2026-11-02): lo que libera la espera de arriba puede
- * caer de noche, y ahí se guarda hasta la mañana.
+ * 🌙 Horario de los recordatorios, en la hora de la clínica: de noche se guardan
+ * hasta la mañana. Primero solo los del chat (2026-11-02: lo que libera la
+ * espera de arriba puede caer de noche); desde 2026-11-13, todos: la ventana
+ * cuenta horas hábiles (sin sábados ni domingos), así que el viernes a las
+ * 00:00 ya entran todas las citas del sábado, y las que agendó el hospital
+ * salían a medianoche (9 desde el 15 de octubre; también un sábado a las 11 p. m.
+ * para el lunes). Una cita que ya estaba agendada entra en la ventana con 24
+ * horas reales o más: esperar a la mañana no la deja sin recordatorio. Solo una
+ * agendada de noche para la madrugada siguiente se quedaría sin él (el hospital
+ * agenda de día).
  */
 export const HORARIO_RECORDATORIO_DEL_CHAT = {
   desdeHora: 7,
@@ -108,8 +115,9 @@ export type RecordatorioDelChat = 'ENVIAR' | 'YA_CONFIRMADA' | 'ESPERAR';
  * para el martes 3 de noviembre (con el lunes festivo) quedaron como «agendadas
  * poco antes»: ninguna iba a recibir recordatorio.
  *
- * Solo las del chat: las del panel y las del hospital no le confirmaron nada al
- * paciente por este medio (ENVIAR, como siempre).
+ * Lo de la confirmación es solo de las del chat: las del panel y las del
+ * hospital no le confirmaron nada al paciente por este medio. El horario (de
+ * 7:00 a 20:00) es de todas (2026-11-13).
  */
 export function recordatorioDelChat(
   apt: {
@@ -122,26 +130,25 @@ export function recordatorioDelChat(
   timeZone?: string,
 ): RecordatorioDelChat {
   if (
-    !apt.createdAt ||
-    !(ORIGENES_AGENDADOS_POR_EL_PACIENTE as readonly string[]).includes(
+    apt.createdAt &&
+    (ORIGENES_AGENDADOS_POR_EL_PACIENTE as readonly string[]).includes(
       apt.origin ?? '',
     )
   ) {
-    return 'ENVIAR';
-  }
-  const hora = 3_600_000;
-  const creada = apt.createdAt.getTime();
-  if (
-    apt.scheduleSlot.startTime.getTime() - creada <=
-    (businessHoursBefore + HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO) * hora
-  ) {
-    return 'YA_CONFIRMADA';
-  }
-  if (
-    ahora.getTime() - creada <
-    HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO * hora
-  ) {
-    return 'ESPERAR';
+    const hora = 3_600_000;
+    const creada = apt.createdAt.getTime();
+    if (
+      apt.scheduleSlot.startTime.getTime() - creada <=
+      (businessHoursBefore + HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO) * hora
+    ) {
+      return 'YA_CONFIRMADA';
+    }
+    if (
+      ahora.getTime() - creada <
+      HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO * hora
+    ) {
+      return 'ESPERAR';
+    }
   }
   const minuto = minutoLocal(ahora, timeZone);
   if (
@@ -267,7 +274,7 @@ export class AppointmentReminderCronService
     tooClose: number;
     /** Agendadas por el chat poco antes: la confirmación hizo de recordatorio. */
     yaConfirmadas: number;
-    /** Del chat que esperan: muy poco después de la confirmación, o de noche. */
+    /** Las que esperan: del chat muy poco después de la confirmación, o de noche. */
     enEspera: number;
   }> {
     const start = Date.now();
@@ -315,7 +322,8 @@ export class AppointmentReminderCronService
     const tooClose = eligible.length - conAnticipacion.length;
     // 💬 La que el paciente se agendó por el chat poco antes (la ventana más 12 h, en
     // horas reales): la confirmación le acaba de decir lo mismo. La que se agendó
-    // con más anticipación espera 12 h desde la confirmación y la mañana. Ninguna
+    // con más anticipación espera 12 h desde la confirmación y la mañana. Las del
+    // hospital y las del panel, de noche, esperan la mañana (2026-11-13). Ninguna
     // se marca, como las de arriba: se vuelven a mirar en la siguiente vuelta.
     const decision = new Map(
       conAnticipacion.map((apt) => [
@@ -339,7 +347,7 @@ export class AppointmentReminderCronService
     ).length;
     if (aEnviar.length === 0) {
       this.logger.debug(
-        `Sin recordatorios para enviar: ${tooClose} cita(s) empiezan antes de la anticipación mínima, ${yaConfirmadas} se agendaron por el chat poco antes y ${enEspera} del chat esperan su hora.`,
+        `Sin recordatorios para enviar: ${tooClose} cita(s) empiezan antes de la anticipación mínima, ${yaConfirmadas} se agendaron por el chat poco antes y ${enEspera} esperan su hora.`,
       );
       if (tooClose > 0 || yaConfirmadas > 0 || enEspera > 0) {
         await this.registrarLote(
@@ -436,7 +444,7 @@ export class AppointmentReminderCronService
         : '';
     const esperan =
       enEspera > 0
-        ? `, ${enEspera} del chat esperan su hora (${HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO} h después de la confirmación, de ${HORARIO_RECORDATORIO_DEL_CHAT.desdeHora}:00 a ${HORARIO_RECORDATORIO_DEL_CHAT.hastaHora}:00)`
+        ? `, ${enEspera} esperan su hora (de ${HORARIO_RECORDATORIO_DEL_CHAT.desdeHora}:00 a ${HORARIO_RECORDATORIO_DEL_CHAT.hastaHora}:00; las del chat, además, ${HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO} h después de la confirmación)`
         : '';
     this.logger.log(
       `Resumen lote — enviados=${sent}, fallidos=${failed}, omitidos=${skipped}, muy cerca=${tooClose}, ya confirmadas=${yaConfirmadas}, en espera=${enEspera} (${durationMs}ms).`,

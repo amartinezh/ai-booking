@@ -833,26 +833,104 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     expect(provider.extractSchedulingIntent).toHaveBeenCalledTimes(1);
   });
 
-  // ── INTENT ROUTER · Tarea A: insulto_abuso ──
-  it('intent=insulto_abuso → guardrail firme + cierre de sesión', async () => {
-    // Texto que NO matchea el regex de insultos por defecto: fuerza la vía LLM.
-    provider.extractSchedulingIntent.mockResolvedValueOnce(
-      extraction({ intent: 'insulto_abuso' }),
-    );
+  // ── INTENT ROUTER · Tarea A: la IA cree que hay un insulto ──
+  // 😠 2026-11-13: las tres conversaciones que la IA cerró por «insultos» eran
+  // quejas. Sin una palabra de la lista, es una queja: no se cierra el chat.
+  describe('la IA marca insulto_abuso', () => {
+    const audioEvent = () => ({
+      from: SENDER,
+      type: 'audio',
+      audio: { id: 'audio-queja-1' },
+      metadata: { phone_number_id: PHONE_ID },
+    });
+    const conAudio = () => {
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
+    };
 
-    await service.processIncomingMessage(
-      makeTextEvent('ustedes son unos ineptos que no sirven para nada'),
-    );
+    it('una queja escrita sin groserías de la lista recibe empatía y el contacto del hospital; el chat no se cierra', async () => {
+      const cleanUp = jest.spyOn(service as any, 'cleanUpSession');
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ intent: 'insulto_abuso' }),
+      );
 
-    const replies = sentMessages();
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toContain('respetuosa');
-    // No se intenta responder FAQ ni continuar agendamiento.
-    expect(provider.answerFAQ).not.toHaveBeenCalled();
-    // Sesión cerrada → estado vuelve a IDLE.
-    expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
-      ChatState.IDLE,
-    );
+      await service.processIncomingMessage(
+        makeTextEvent(
+          'Que groseria de hospital juegan con los pacientes como les da la gana tenia cita a las 8 y son las 9 mal educadas son lo peor',
+        ),
+      );
+
+      const replies = sentMessages();
+      expect(replies).toHaveLength(1);
+      expect(replies[0]).toContain('Lamento mucho');
+      expect(replies[0]).toContain('606 853 8838');
+      expect(replies[0]).not.toContain('respetuosa');
+      expect(replies[0]).not.toContain('cerraremos');
+      expect(cleanUp).not.toHaveBeenCalled();
+      expect((service as any).sendSurveyLink).not.toHaveBeenCalled();
+      expect(provider.answerFAQ).not.toHaveBeenCalled();
+    });
+
+    it('«😡😡😡» es molestia, no un insulto', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ intent: 'insulto_abuso' }),
+      );
+
+      await service.processIncomingMessage(makeTextEvent('😡😡😡'));
+
+      expect(sentMessages()).toEqual([
+        expect.stringContaining('entiendo su molestia'),
+      ]);
+      expect((service as any).sendSurveyLink).not.toHaveBeenCalled();
+    });
+
+    it('una nota de voz de queja tampoco cierra el chat', async () => {
+      conAudio();
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({
+          transcript:
+            'Ustedes están mal, por qué al niño ya me lo atendieron y ahora no está',
+          intent: 'insulto_abuso',
+        }),
+      );
+
+      await service.processIncomingMessage(audioEvent());
+
+      const all = sentMessages().join('\n');
+      expect(all).toContain('Lamento mucho');
+      expect(all).not.toContain('respetuosa');
+      expect((service as any).sendSurveyLink).not.toHaveBeenCalled();
+    });
+
+    it('una nota de voz con una grosería de la lista sí cierra el chat, con la encuesta de insultos', async () => {
+      conAudio();
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({
+          transcript: 'usted es un idiota, no sirve para nada',
+          intent: 'insulto_abuso',
+        }),
+      );
+
+      await service.processIncomingMessage(audioEvent());
+
+      const all = sentMessages().join('\n');
+      expect(all).toContain('respetuosa');
+      expect(all).not.toContain('Lamento mucho');
+      expect((service as any).sendSurveyLink).toHaveBeenCalledWith(
+        ORG_ID,
+        SENDER,
+        'BLOCKED_INSULT',
+        expect.anything(),
+      );
+      // Sesión cerrada → estado vuelve a IDLE.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.IDLE,
+      );
+    });
   });
 
   // ── 🩺 Resumen de la atención (Fase 4): el botón y los textos pasan primero ──

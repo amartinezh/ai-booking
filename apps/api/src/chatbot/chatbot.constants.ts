@@ -1420,6 +1420,13 @@ const FORMAL = {
     `Por ahora, cerraremos este chat. Estaremos listos para atenderle cuando lo desee de forma cordial.\n\n` +
     `Solo escriba *"Hola"* para reiniciar el asistente.`,
 
+  // 😠 La IA vio molestia pero no hay groserías de la lista (2026-11-13): es una
+  // queja. No se cierra el chat ni se reprocha; `contacto`, de contactoClinica.
+  quejaDelPaciente: (contacto: string) =>
+    `Lamento mucho lo que pasó y entiendo su molestia. 🙏\n\n` +
+    `Para dejar su queja o que alguien del hospital revise su caso, comuníquese con ${contacto}.\n\n` +
+    `Si lo desea, por aquí sigo para ayudarle con sus citas.`,
+
   // 🚑 Derivación de EMERGENCIA. Contrato del mensaje: (a) condicional
   // ("podría"), el bot NO diagnostica ni tranquiliza; (b) acción inmediata
   // (línea 123 / urgencias / equipo humano); (c) NO continúa el agendamiento;
@@ -2861,6 +2868,9 @@ const INFORMAL = {
 
   guardrailInsulto: (_phone: string, _botName: string) =>
     `Para brindarte la mejor ayuda, necesitamos mantener una conversación respetuosa. 🙏 En este momento, cerraremos este chat. Estamos listos para ayudarte cuando lo desees de forma cordial. Solo escribe *"Hola"* para reiniciar el asistente.`,
+
+  quejaDelPaciente: (contacto: string) =>
+    `Lamento mucho lo que pasó y entiendo tu molestia. 🙏 Para dejar tu queja o que alguien del hospital revise tu caso, comunícate con ${contacto}. Si quieres, por aquí sigo para ayudarte con tus citas.`,
 
   // 🚑 Derivación de EMERGENCIA (mismo contrato que el pool FORMAL:
   // condicional, acción inmediata, sin agendamiento, cierre no punitivo).
