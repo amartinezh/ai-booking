@@ -14,6 +14,7 @@ import {
   formatFeHoraCit,
   mapSexo,
   resolveConvenio,
+  convenioAlReagendar,
   resolveEspecialidad,
   cuposDelTurno,
   duracionDeServicio,
@@ -1148,6 +1149,39 @@ describe('especialidades — el mapa que se aplica en producción', () => {
 // factura mal en el 99 % de los casos — y en silencio, porque el 467 es un
 // convenio perfectamente válido de la EPS correcta.
 // ══════════════════════════════════════════════════════════════════════════
+// 💳 2026-11-17: el 3-nov una cita del hospital (sin EPS en AgenIA) cambiada de
+// fecha por el chat quedó en el 26 (PARTICULARES).
+describe('convenioAlReagendar', () => {
+  const sura = '800088702';
+
+  it('sin EPS en AgenIA conserva el convenio de la cita que se mueve', () => {
+    expect(convenioAlReagendar(MAPPING, {}, 467)).toBe(467);
+  });
+
+  it('con EPS en AgenIA lo calcula como cualquier alta, aunque la anterior tuviera otro', () => {
+    expect(
+      convenioAlReagendar(
+        MAPPING,
+        { epsNit: sura, patientRegime: 'CONTRIBUTIVO' },
+        467,
+      ),
+    ).toBe(473);
+  });
+
+  it.each([null, undefined, 0])(
+    'sin EPS y sin convenio anterior útil (%p): particular, como siempre',
+    (anterior) => {
+      expect(convenioAlReagendar(MAPPING, {}, anterior)).toBe(26);
+    },
+  );
+
+  it('con EPS sin régimen sigue negándose: no adivina el convenio', () => {
+    expect(() => convenioAlReagendar(MAPPING, { epsNit: sura }, 467)).toThrow(
+      MappingIncompletoError,
+    );
+  });
+});
+
 describe('resolveConvenio — facturación por evento', () => {
   const REAL = JSON.parse(
     readFileSync(

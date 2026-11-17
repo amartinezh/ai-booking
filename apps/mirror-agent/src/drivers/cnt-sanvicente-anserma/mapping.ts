@@ -450,6 +450,37 @@ export function resolveConvenio(
   return convenio;
 }
 
+/**
+ * El convenio de la cita nueva cuando AgenIA le cambia la fecha a una cita
+ * (2026-11-17).
+ *
+ * Una cita que agendó el hospital llega a AgenIA sin EPS: la EPS y el convenio
+ * los eligió el hospital. Al moverla por el chat, la cita nueva salía de
+ * `resolveConvenio` con esos datos vacíos, o sea como PARTICULARES: el 3-nov una
+ * paciente de Sura subsidiado cambió por el chat la fecha de su cita del
+ * hospital, la nueva quedó en el 26 y no asistió. Mover una cita no cambia
+ * quién la paga: sin EPS en AgenIA, la nueva conserva el convenio de la que se
+ * mueve.
+ *
+ * Con EPS en AgenIA se calcula como en cualquier alta: AgenIA conoce la EPS y
+ * el régimen. Sin convenio anterior (la cita ya no estaba en el hospital, o no
+ * tenía uno), también.
+ */
+export function convenioAlReagendar(
+  mapping: AnsermaMapping,
+  datos: Parameters<typeof resolveConvenio>[1],
+  convenioAnterior: number | null | undefined,
+): number {
+  if (
+    !datos.epsNit &&
+    typeof convenioAnterior === 'number' &&
+    convenioAnterior > 0
+  ) {
+    return convenioAnterior;
+  }
+  return resolveConvenio(mapping, datos);
+}
+
 export const MARCA_ORIGEN_TELEGRAM_POR_DEFECTO = 'ASIGNADA POR TELEGRAM';
 
 /**

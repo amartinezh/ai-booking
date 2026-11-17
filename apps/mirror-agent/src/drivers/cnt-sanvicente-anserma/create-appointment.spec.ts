@@ -46,12 +46,13 @@ function fakePool(
       hora: string;
       dura?: number | null;
       hist?: string | null;
+      conv?: number | null;
     }[];
     /**
      * La cita viva del médico a esa hora que lee la cancelación antes de borrar:
      * `null` = no hay. Por defecto, la del paciente de `evento()`.
      */
-    citaViva?: { hist: string | null } | null;
+    citaViva?: { hist: string | null; conv?: number | null } | null;
   } = {},
 ) {
   const requests: { params: Record<string, unknown>; sql: string }[] = [];
@@ -76,7 +77,7 @@ function fakePool(
           return { rowsAffected: [opts.filasAnuladas ?? 1], recordset: [] };
         }
         if (
-          /SELECT NU_HIST_PAC_CIT hist\s+FROM dbo\.CITAS_MEDICAS WITH \(UPDLOCK, ROWLOCK, HOLDLOCK\)/.test(
+          /SELECT NU_HIST_PAC_CIT hist, NU_NUME_CONV_CIT conv\s+FROM dbo\.CITAS_MEDICAS WITH \(UPDLOCK, ROWLOCK, HOLDLOCK\)/.test(
             sqlText,
           )
         ) {
@@ -901,7 +902,7 @@ describe('cancelAppointment', () => {
     const { driver, requests } = conDriver();
     await driver.cancelAppointment(eventoCancel());
     expect(requests[0].sql).toMatch(
-      /SELECT NU_HIST_PAC_CIT hist\s+FROM dbo\.CITAS_MEDICAS WITH \(UPDLOCK, ROWLOCK, HOLDLOCK\)/,
+      /SELECT NU_HIST_PAC_CIT hist, NU_NUME_CONV_CIT conv\s+FROM dbo\.CITAS_MEDICAS WITH \(UPDLOCK, ROWLOCK, HOLDLOCK\)/,
     );
     expect(requests[0].sql).toMatch(/NU_ESTA_CIT\s*=\s*0/);
   });
@@ -1131,6 +1132,70 @@ describe('rescheduleAppointment', () => {
     });
 
     expect(insertDeCita(requests)!.conv).toBe(473);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 💳 Cambiar la fecha no cambia quién paga (2026-11-17).
+  //
+  // El 3-nov una paciente de Sura subsidiado cambió por el chat la fecha de su
+  // cita del hospital. Esa cita no tiene EPS en AgenIA, así que la nueva salió
+  // de resolveConvenio como PARTICULARES (26), y no asistió.
+  // ══════════════════════════════════════════════════════════════════════
+  it('💳 cita del hospital (sin EPS en AgenIA): la nueva conserva el convenio de la que se mueve', async () => {
+    const { driver, requests } = conDriver({
+      citaViva: { hist: '1122334455', conv: 467 },
+    });
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(true);
+    expect(insertDeCita(requests)!.conv).toBe(467);
+  });
+
+  it('💳 la hora guardada de otra forma ("7:20"): también conserva su convenio', async () => {
+    const { driver, requests } = conDriver({
+      citaViva: null,
+      citasDelDia: [{ hora: '2026/09/03 7:20', hist: '1122334455', conv: 467 }],
+    });
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(true);
+    expect(insertDeCita(requests)!.conv).toBe(467);
+  });
+
+  it('💳 con EPS en AgenIA el convenio se calcula como siempre, aunque la anterior tuviera otro', async () => {
+    const { driver, requests } = conDriver({
+      citaViva: { hist: '1122334455', conv: 283 },
+    });
+    await driver.rescheduleAppointment({
+      ...eventoResched(),
+      payload: {
+        ...eventoResched().payload,
+        epsNit: '900156264',
+        patientRegime: 'CONTRIBUTIVO',
+      },
+    });
+
+    expect(insertDeCita(requests)!.conv).toBe(473);
+  });
+
+  it('💳 sin EPS y sin cita anterior en el hospital: no hay de dónde sacarlo, queda particular', async () => {
+    const { driver, requests } = conDriver({ citaViva: null });
+
+    await driver.rescheduleAppointment(eventoResched());
+
+    expect(insertDeCita(requests)!.conv).toBe(26);
+  });
+
+  it('💳 un alta suelta no se entera: sin EPS sigue siendo particular', async () => {
+    const { driver, requests } = conDriver({
+      citaViva: { hist: '1122334455', conv: 467 },
+    });
+
+    await driver.createAppointment(evento());
+
+    expect(insertDeCita(requests)!.conv).toBe(26);
   });
 
   it('🛡️ si la cita ANTERIOR en el hospital es de otro paciente, no borra ni crea nada: rechazo del HIS', async () => {

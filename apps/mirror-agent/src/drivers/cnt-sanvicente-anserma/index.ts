@@ -32,6 +32,7 @@ import {
   mapSexo,
   sexoDesdeHis,
   resolveConvenio,
+  convenioAlReagendar,
   resolveEspecialidad,
   cuposDelTurno,
   duracionDeServicio,
@@ -70,6 +71,16 @@ import type {
  * un hospital real, exactamente lo que la Fase 0 existe para evitar.
  */
 /** Una fila de la instantánea: lo mínimo para detectar qué cambió. */
+/**
+ * Lo que pasó al mover una cita viva a `CITAS_ANULADAS` (`copiarAAnuladas`).
+ * `convenio` es el `NU_NUME_CONV_CIT` de la cita anulada: al cambiar la fecha,
+ * la nueva lo conserva si AgenIA no sabe la EPS (`convenioAlReagendar`).
+ */
+type ResultadoAnulacion =
+  | { estado: 'ANULADA'; convenio: number | null }
+  | { estado: 'NO_ESTABA' }
+  | { estado: 'OTRO_PACIENTE' };
+
 /**
  * Las filas que devuelve el SQL Server del hospital, tipadas.
  *
@@ -1571,10 +1582,14 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    * Separada de `createAppointment` para que `rescheduleAppointment` pueda
    * escribirla dentro de SU transacción, junto con la anulación de la cita
    * anterior. Un alta suelta usa el pool y se comporta igual que siempre.
+   *
+   * `convenioAnterior`: solo al cambiar la fecha, el convenio de la cita que
+   * se mueve (ver `convenioAlReagendar`).
    */
   private async crearCita(
     ej: Ejecutor,
     evt: CanonicalChangeEvent,
+    opciones: { convenioAnterior?: number | null } = {},
   ): Promise<DriverResult> {
     const p = evt.payload;
 
@@ -1599,11 +1614,19 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     try {
       const feHora = formatFeHoraCit(p.startTimeIso!, this.timeZone);
       const feFecha = fechaCitaLocal(p.startTimeIso!, this.timeZone);
-      const convenio = resolveConvenio(mapping, {
+      const datosConvenio = {
         epsNit: p.epsNit,
         patientRegime: p.patientRegime,
         serviceExternalKey: p.serviceExternalKey,
-      });
+      };
+      const convenio =
+        opciones.convenioAnterior === undefined
+          ? resolveConvenio(mapping, datosConvenio)
+          : convenioAlReagendar(
+              mapping,
+              datosConvenio,
+              opciones.convenioAnterior,
+            );
 
       await this.ensurePaciente(ej, p);
 
@@ -2051,7 +2074,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           `Cancelada por el paciente vía ${nombreDelCanal(p.origin)}`,
       });
 
-      if (resultado === 'OTRO_PACIENTE') {
+      if (resultado.estado === 'OTRO_PACIENTE') {
         await tx.rollback();
         return {
           success: false,
@@ -2060,7 +2083,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
             'en el hospital, la cita de ese médico a esa hora es de otro paciente: no se canceló nada',
         };
       }
-      if (resultado === 'NO_ESTABA') {
+      if (resultado.estado === 'NO_ESTABA') {
         // No estaba: o el hospital ya la canceló por su lado, o nunca llegó a
         // escribirse. En ambos casos el resultado deseado ya se cumple, así
         // que se reporta como éxito — reintentar no cambiaría nada.
@@ -2117,7 +2140,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       // 🛡️ La cita de antes, en el hospital, es de OTRO paciente: no se borra ni se
       // crea nada. La API devuelve la cita a su hora anterior (H10) y el bot se lo
       // dice al paciente. Si NO_ESTABA, se sigue como siempre: se crea la nueva.
-      if (anterior === 'OTRO_PACIENTE') {
+      if (anterior.estado === 'OTRO_PACIENTE') {
         await tx.rollback();
         return {
           success: false,
@@ -2131,7 +2154,13 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       // —convenio, consultorio, alta de paciente, validaciones— pero sobre
       // esta transacción. Duplicarla aquí sería garantizar que las dos
       // versiones se separen con el tiempo.
-      const alta = await this.crearCita(tx, evt);
+      //
+      // 💳 Con el convenio de la cita que se mueve (2026-11-17): una cita del
+      // hospital no tiene EPS en AgenIA y la nueva salía como particular.
+      const alta = await this.crearCita(tx, evt, {
+        convenioAnterior:
+          anterior.estado === 'ANULADA' ? anterior.convenio : null,
+      });
 
       // 🛡️ Si la cita nueva no se pudo crear, la vieja NO se puede haber
       // ido. Antes esto no era así: la anulación hacía `commit` y solo
@@ -2168,7 +2197,9 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    *
    *   · NO_ESTABA     → no hay cita viva de ese médico a esa hora: nada que mover.
    *   · OTRO_PACIENTE → la hay, pero de otro documento: NO se toca.
-   *   · ANULADA       → era del paciente: copiada y borrada.
+   *   · ANULADA       → era del paciente: copiada y borrada. Lleva su convenio
+   *                     (`NU_NUME_CONV_CIT`), que la cita nueva conserva al
+   *                     cambiar la fecha (ver `convenioAlReagendar`).
    *
    * La cita viva se lee primero CON BLOQUEO (UPDLOCK, HOLDLOCK hasta el fin de la
    * transacción): entre leerla y borrarla nadie la puede cambiar. Y el borrado
@@ -2184,15 +2215,17 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       motivo: string;
       observacion: string;
     },
-  ): Promise<'ANULADA' | 'NO_ESTABA' | 'OTRO_PACIENTE'> {
+  ): Promise<ResultadoAnulacion> {
     const viva = await tx
       .request()
       .input('med', sql.VarChar(4), datos.medico)
       .input('hora', sql.VarChar(18), datos.feHora).query(`
-        SELECT NU_HIST_PAC_CIT hist
+        SELECT NU_HIST_PAC_CIT hist, NU_NUME_CONV_CIT conv
           FROM dbo.CITAS_MEDICAS WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
          WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0`);
-    let fila = (viva.recordset as { hist: string | null }[])[0];
+    let fila = (
+      viva.recordset as { hist: string | null; conv?: number | null }[]
+    )[0];
     // La hora TAL CUAL está guardada: la copia y el borrado la repiten.
     let horaGuardada = datos.feHora;
     if (!fila) {
@@ -2202,11 +2235,13 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       // Se buscan las citas vivas de ese médico ese día —con el mismo bloqueo— y
       // se toma la que tiene la misma hora al leerla; la del paciente, si hay dos.
       const otraForma = await this.citaVivaConLaMismaHora(tx, datos);
-      if (!otraForma) return 'NO_ESTABA';
-      fila = { hist: otraForma.hist };
+      if (!otraForma) return { estado: 'NO_ESTABA' };
+      fila = { hist: otraForma.hist, conv: otraForma.conv };
       horaGuardada = otraForma.hora;
     }
-    if (!mismoDocumento(fila.hist, datos.documento)) return 'OTRO_PACIENTE';
+    if (!mismoDocumento(fila.hist, datos.documento)) {
+      return { estado: 'OTRO_PACIENTE' };
+    }
     // El valor TAL CUAL está guardado (con sus espacios o ceros): el borrado lo
     // repite y así solo alcanza a la fila que se comprobó.
     const histGuardada = fila.hist as string;
@@ -2274,7 +2309,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0
           AND NU_HIST_PAC_CIT = @hist`);
 
-    if ((copia.rowsAffected[0] ?? 0) === 0) return 'NO_ESTABA';
+    if ((copia.rowsAffected[0] ?? 0) === 0) return { estado: 'NO_ESTABA' };
 
     await tx
       .request()
@@ -2285,7 +2320,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         'DELETE FROM dbo.CITAS_MEDICAS WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0 AND NU_HIST_PAC_CIT = @hist',
       );
 
-    return 'ANULADA';
+    return { estado: 'ANULADA', convenio: fila.conv ?? null };
   }
 
   /**
@@ -2297,7 +2332,11 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
   private async citaVivaConLaMismaHora(
     tx: sql.Transaction,
     datos: { medico: string; feHora: string; documento: string },
-  ): Promise<{ hora: string; hist: string | null } | null> {
+  ): Promise<{
+    hora: string;
+    hist: string | null;
+    conv?: number | null;
+  } | null> {
     const objetivo = feHoraCitAIsoOrNull(datos.feHora, this.timeZone);
     if (!objetivo) return null;
     const dia = fechaCitaLocal(objetivo, this.timeZone);
@@ -2306,13 +2345,17 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       .input('med', sql.VarChar(4), datos.medico)
       .input('desde', sql.VarChar(8), fechaLiteralSql(dia))
       .input('hasta', sql.VarChar(8), diaSiguienteLiteralSql(dia)).query(`
-        SELECT FE_HORA_CIT hora, NU_HIST_PAC_CIT hist
+        SELECT FE_HORA_CIT hora, NU_HIST_PAC_CIT hist, NU_NUME_CONV_CIT conv
           FROM dbo.CITAS_MEDICAS WITH (UPDLOCK, HOLDLOCK)
          WHERE CD_CODI_MED_CIT = @med
            AND FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta
            AND NU_ESTA_CIT = 0`);
     const misma = (
-      (delDia.recordset ?? []) as { hora: string; hist: string | null }[]
+      (delDia.recordset ?? []) as {
+        hora: string;
+        hist: string | null;
+        conv?: number | null;
+      }[]
     ).filter(
       (f) => feHoraCitAIsoOrNull(String(f.hora), this.timeZone) === objetivo,
     );

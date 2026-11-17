@@ -180,6 +180,30 @@ async function regimenDelPadron(
 }
 
 /**
+ * 🧾 El régimen que se guarda en la ficha al agendar o modificar desde el panel.
+ *
+ * Manda lo que el personal ELIGIÓ: un valor distinto del que ya tenía la ficha (el
+ * formulario de modificar trae precargado el de la ficha, así que dejarlo igual no
+ * es elegir). Si no eligió nada nuevo, manda el padrón de esa EPS cuando no deja
+ * dudas (2026-11-17: antes solo llenaba una ficha vacía, y 29 fichas tenían un
+ * régimen distinto al del padrón vigente; la cita salía con el convenio del otro
+ * régimen). Si tampoco, lo que haya. null = no se toca la ficha.
+ */
+function regimenQueSeGuarda(
+    formulario: Regimen | null,
+    ficha: string | null | undefined,
+    padron: Regimen | null,
+): Regimen | null {
+    if (formulario && formulario !== ficha) return formulario;
+    return padron ?? formulario;
+}
+
+/** ¿Hace falta leer el padrón? No, si el personal eligió un régimen distinto. */
+function eligioOtroRegimen(formulario: Regimen | null, ficha: string | null | undefined): boolean {
+    return !!formulario && formulario !== ficha;
+}
+
+/**
  * 🧾 ¿Esta cita llegaría al hospital sin el régimen con el que se elige el convenio?
  *
  * Misma regla que la reserva por WhatsApp (`faltaRegimenParaElEspejo`, gemela de
@@ -241,16 +265,17 @@ export async function createManualAppointmentAction(formData: FormData) {
         });
         if (enrollmentIssue) return { success: false, error: enrollmentIssue };
 
-        // 🧾 El régimen del formulario manda; si se dejó vacío, vale el que ya tenga la
-        // ficha, y si tampoco, el del padrón cuando no hay ninguna duda.
+        // 🧾 El régimen que eligió el personal manda; si no eligió uno distinto, el
+        // del padrón cuando no hay ninguna duda; si tampoco, el que ya tenga la ficha.
         const regimenForm = regimenDelFormulario(formData);
         const fichaPrevia = await prisma.patientProfile.findFirst({
             where: { cedula: patientCedula, organizationId },
             select: { regime: true },
         });
-        const regimenPadron =
-            regimenForm || fichaPrevia?.regime ? null : await regimenDelPadron(organizationId, patientCedula, epsId);
-        const regimenAGuardar = regimenForm ?? regimenPadron;
+        const regimenPadron = eligioOtroRegimen(regimenForm, fichaPrevia?.regime)
+            ? null
+            : await regimenDelPadron(organizationId, patientCedula, epsId);
+        const regimenAGuardar = regimenQueSeGuarda(regimenForm, fichaPrevia?.regime, regimenPadron);
         if (await faltaRegimen(organizationId, epsId, regimenAGuardar ?? fichaPrevia?.regime)) {
             return { success: false, error: MSG_FALTA_REGIMEN };
         }
@@ -436,11 +461,10 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
             const cambiarApagado = await operacionApagada(prisma, organizationId, 'MODIFICAR');
             if (cambiarApagado) return { success: false, error: cambiarApagado };
         }
-        const regimenPadron =
-            regimenForm || actual.patient.regime
-                ? null
-                : await regimenDelPadron(organizationId, actual.patient.cedula, epsId);
-        const regimenAGuardar = regimenForm ?? regimenPadron;
+        const regimenPadron = eligioOtroRegimen(regimenForm, actual.patient.regime)
+            ? null
+            : await regimenDelPadron(organizationId, actual.patient.cedula, epsId);
+        const regimenAGuardar = regimenQueSeGuarda(regimenForm, actual.patient.regime, regimenPadron);
         if (await faltaRegimen(organizationId, epsId, regimenAGuardar ?? actual.patient.regime)) {
             return { success: false, error: MSG_FALTA_REGIMEN };
         }

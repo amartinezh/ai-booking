@@ -2871,6 +2871,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_waitlist_regimen:${organizationId}:${senderId}`,
       `temp_eps_oferta_particular:${organizationId}:${senderId}`,
       this.padronRechazoKey(organizationId, senderId),
+      this.particularPorConfirmarKey(organizationId, senderId),
       `temp_lookup_cedula:${organizationId}:${senderId}`,
       `temp_lookup_hoy:${organizationId}:${senderId}`,
       `temp_lookup_opciones:${organizationId}:${senderId}`,
@@ -3050,11 +3051,18 @@ export class ChatbotService implements OnModuleInit {
     // Garantizar que "Particular" exista para esta org (idempotente).
     await this.ensureParticularEpsForOrg(organizationId);
 
-    const epsList = await this.prisma.eps.findMany({
+    const activas = await this.prisma.eps.findMany({
       where: { isActive: true, organizationId },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
     });
+    // 💳 «Particular» va de última (2026-11-17). Por orden alfabético quedaba de
+    // primera, y quien venía respondiendo «A» a todo terminaba en una cita de
+    // pago directo (una persona de Nueva EPS el 10-nov).
+    const epsList = [
+      ...activas.filter((e) => !isParticularEps(e.name)),
+      ...activas.filter((e) => isParticularEps(e.name)),
+    ];
 
     const prev = await this.redis.scanKeys(
       `temp_eps_${'*'}:${organizationId}:${senderId}`,
@@ -3488,6 +3496,14 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
   ): string {
     return `temp_eps_oferta_particular:${organizationId}:${senderId}`;
+  }
+
+  /** Eligió «Particular» y falta que confirme que la paga él (2026-11-17). */
+  private particularPorConfirmarKey(
+    organizationId: string,
+    senderId: string,
+  ): string {
+    return `temp_particular_por_confirmar:${organizationId}:${senderId}`;
   }
 
   // Despachador de la máquina de estados: ChatState → handler. Construido una
@@ -8696,6 +8712,24 @@ export class ChatbotService implements OnModuleInit {
         const respuestaOferta = ofertaPendiente
           ? this.interpretYesNo(text)
           : null;
+
+        // 💳 ¿Contesta a «la cita particular la paga usted, ¿continúa?»? SÍ (o
+        // volver a elegir Particular) → sigue como Particular; NO → su EPS, si la
+        // nombró, o el menú otra vez. Una letra o una EPS se resuelven como siempre.
+        const particularPorConfirmar =
+          currentState === ChatState.AWAITING_EPS
+            ? await this.redis.get(
+                this.particularPorConfirmarKey(organizationId, senderId),
+              )
+            : null;
+        if (particularPorConfirmar) {
+          await this.redis.del(
+            this.particularPorConfirmarKey(organizationId, senderId),
+          );
+        }
+        const respuestaParticular = particularPorConfirmar
+          ? this.interpretYesNo(text)
+          : null;
         if (respuestaOferta === 'NO') {
           const reply = MSGS.epsNoDisponibleDespedida();
           await this.smartReply(organizationId, senderId, reply);
@@ -8713,7 +8747,7 @@ export class ChatbotService implements OnModuleInit {
         }
 
         const match =
-          respuestaOferta === 'SI'
+          respuestaOferta === 'SI' || respuestaParticular === 'SI'
             ? await this.ensureParticularEpsForOrg(organizationId)
             : await this.resolveEpsFromInput(
                 organizationId,
@@ -8721,6 +8755,55 @@ export class ChatbotService implements OnModuleInit {
                 inputForEps ?? null,
                 finalEps,
               );
+
+        if (
+          respuestaParticular === 'NO' &&
+          (!match || match === 'AMBIGUA' || isParticularEps(match.name))
+        ) {
+          const { lineas } = await this.buildEpsMenu(organizationId, senderId);
+          const reply = MSGS.particularRechazada(lineas);
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(
+            organizationId,
+            senderId,
+            ChatState.AWAITING_EPS,
+          );
+          await this.auditSuccess(senderId, organizationId, {
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { step: 'PARTICULAR_RECHAZADA' },
+          });
+          return;
+        }
+
+        if (
+          match &&
+          match !== 'AMBIGUA' &&
+          isParticularEps(match.name) &&
+          respuestaOferta !== 'SI' &&
+          !particularPorConfirmar
+        ) {
+          await this.redis.set(
+            this.particularPorConfirmarKey(organizationId, senderId),
+            '1',
+            'EX',
+            SESSION_TTL,
+          );
+          const { lineas } = await this.buildEpsMenu(organizationId, senderId);
+          const reply = MSGS.confirmarParticular(lineas);
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(
+            organizationId,
+            senderId,
+            ChatState.AWAITING_EPS,
+          );
+          await this.auditSuccess(senderId, organizationId, {
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { step: 'PARTICULAR_POR_CONFIRMAR' },
+          });
+          return;
+        }
 
         if (match === 'AMBIGUA') {
           const { lineas } = await this.buildEpsMenu(organizationId, senderId);
@@ -13213,6 +13296,24 @@ export class ChatbotService implements OnModuleInit {
             where: { id: aptId },
             data: { scheduleSlotId: newSlotId },
           });
+          // 🧾 El padrón manda sobre el régimen de la ficha (2026-11-17): la
+          // cita movida viaja al hospital con el convenio que sale de la ficha.
+          // Una cita del hospital no tiene EPS en AgenIA: no se toca.
+          const movida = await tx.appointment.findUnique({
+            where: { id: aptId },
+            select: {
+              epsId: true,
+              patient: { select: { id: true, cedula: true, regime: true } },
+            },
+          });
+          if (movida?.patient) {
+            await this.appointmentsService.corregirRegimenConElPadron(
+              organizationId,
+              movida.patient,
+              movida.epsId,
+              tx,
+            );
+          }
           if (!esperaAlHospital) {
             await tx.scheduleSlot.update({
               where: { id: oldSlotId },

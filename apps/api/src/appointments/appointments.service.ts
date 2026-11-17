@@ -411,6 +411,50 @@ export class AppointmentsService {
     return regimenSeguroDelPadron(filas, epsId);
   }
 
+  /**
+   * 🧾 El padrón manda sobre el régimen de la ficha (2026-11-17).
+   *
+   * Antes el padrón solo llenaba un régimen que faltaba: si la ficha ya tenía
+   * uno, mandaba la ficha aunque el padrón vigente dijera otro. Quien pasa de
+   * subsidiado a contributivo (consiguió empleo) o al revés seguía con el viejo
+   * y la cita llegaba al hospital con el convenio equivocado: el 17-nov había 29
+   * fichas así, y una cita de Sura contributivo había salido con el 467 de Sura
+   * subsidiado, que ni estaba entre los convenios de ese paciente en el hospital.
+   *
+   * Solo cuando el padrón no deja dudas (`regimenDelPadron`: una sola EPS, la
+   * misma de la cita, y un solo régimen); si no, la ficha queda como está.
+   * Devuelve el régimen con que queda la ficha. `db` permite hacerlo dentro de
+   * la transacción de la reserva o del cambio de fecha.
+   */
+  async corregirRegimenConElPadron(
+    organizationId: string,
+    paciente: { id: string; cedula: string; regime: string | null },
+    epsId: string | null,
+    db: Pick<
+      Prisma.TransactionClient,
+      'epsEnrolledPatient' | 'patientProfile'
+    > = this.prisma,
+  ): Promise<string | null> {
+    if (!epsId) return paciente.regime;
+    const delPadron = await this.regimenDelPadron(
+      organizationId,
+      paciente.cedula,
+      epsId,
+      db,
+    );
+    if (!delPadron || delPadron === paciente.regime) return paciente.regime;
+    await db.patientProfile.update({
+      where: { id: paciente.id },
+      data: { regime: delPadron },
+    });
+    if (paciente.regime) {
+      this.logger.log(
+        `Régimen de la ficha ${paciente.id} corregido por el padrón: ${paciente.regime} → ${delPadron}`,
+      );
+    }
+    return delPadron;
+  }
+
   // 2. LÓGICA DE TRANSACCIÓN
   // `organizationId` es OBLIGATORIO: el chequeo de tenant del slot ya no es
   // condicional — sin él, un slotId de otra clínica se podía reservar.
@@ -599,11 +643,26 @@ export class AppointmentsService {
             }),
           ]);
 
+          // 🧾 El padrón manda sobre el régimen de la ficha (2026-11-17). Si el de
+          // ESA EPS lo dice sin ninguna duda, la ficha queda con ese: lo completa
+          // si faltaba (cubre todo camino que llegue aquí, lista de espera
+          // incluida, sin preguntar lo que ya se sabe) y lo corrige si era otro.
+          if (patient) {
+            patient.regime = await this.corregirRegimenConElPadron(
+              organizationId,
+              { id: patientId, cedula: patient.cedula, regime: patient.regime },
+              epsId,
+              tx,
+            );
+          }
+
           // 🧾 Sin régimen no hay convenio, y sin convenio el agente rechaza la
           // cita diez veces y se rinde: el hospital nunca la tiene mientras el
           // paciente cree tenerla (caso real del 2026-09-26, un paciente que ya
           // existía sin régimen). Se frena ANTES de reservar, con la misma regla
           // del driver, para que quien llama pida el dato en vez de confirmar.
+          // El padrón ya se consultó arriba: con cualquier duda, quien llama
+          // pregunta.
           if (
             faltaRegimenParaElEspejo({
               espejoActivo: !!mirrorConfig?.enabled,
@@ -611,25 +670,7 @@ export class AppointmentsService {
               regimen: patient?.regime,
             })
           ) {
-            // Última oportunidad antes de frenar: si el padrón de ESA EPS lo dice
-            // sin ninguna duda, se completa la ficha y la reserva sigue. Cubre todo
-            // camino que llegue aquí (lista de espera incluida) sin preguntar lo que
-            // ya se sabe. Con cualquier duda, se frena y quien llama pregunta.
-            const delPadron = patient
-              ? await this.regimenDelPadron(
-                  organizationId,
-                  patient.cedula,
-                  epsId,
-                  tx,
-                )
-              : null;
-            if (!delPadron) throw new Error('PATIENT_REGIME_MISSING');
-            await tx.patientProfile.update({
-              where: { id: patientId },
-              data: { regime: delPadron },
-            });
-            // Para el chequeo de combinaciones bloqueadas de abajo.
-            patient!.regime = delPadron;
+            throw new Error('PATIENT_REGIME_MISSING');
           }
 
           const bloqueadas =

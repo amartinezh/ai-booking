@@ -982,6 +982,18 @@ const FORMAL = {
       `Para agendar correctamente: ¿desea la cita por su EPS o como *particular* (pago directo)? Indíqueme la letra:\n\n${lineas}`,
     ]),
 
+  // 💳 Eligió «Particular» (2026-11-17). Se le dice qué es antes de seguir: de 4
+  // citas particulares del chat, una era de quien creyó que «particular» era una
+  // cita normal (tiene Sura) y otra de quien respondió «A» por costumbre (era la
+  // primera opción del menú); 3 de las 4 personas no asistieron.
+  confirmarParticular: (lineas: string) =>
+    `Le confirmo: la cita *particular* es de *pago directo*. La paga usted en el hospital; su EPS no la cubre. 💳\n\n` +
+    `¿Desea continuar como particular? Responda *SÍ*. Si tiene EPS, escriba la letra de su EPS:\n\n${lineas}`,
+
+  // Dijo que NO a la cita particular: se le vuelve a mostrar el menú de EPS.
+  particularRechazada: (lineas: string) =>
+    `Entendido, no la agendo como particular. ¿Con qué *EPS* viene? Escriba la letra:\n\n${lineas}`,
+
   epsNoDisponibleDespedida: () =>
     pick([
       `Entendido. Si más adelante desea agendar una cita particular, con gusto le ayudo. ¡Que tenga un buen día!`,
@@ -2514,6 +2526,14 @@ const INFORMAL = {
       `Me mencionas tu EPS y también cita *particular*. Para no equivocarme, ¿con cuál la agendamos? Mándame la letra:\n\n${lineas}`,
       `¿La cita va por tu EPS o como *particular* (pago directo)? Dime la letra:\n\n${lineas}`,
     ]),
+
+  // 💳 Eligió «Particular» (ver el pool formal).
+  confirmarParticular: (lineas: string) =>
+    `Ojo: la cita *particular* es de *pago directo*. La pagas tú en el hospital; tu EPS no la cubre. 💳\n\n` +
+    `¿Sigues como particular? Responde *SÍ*. Si tienes EPS, escribe la letra de tu EPS:\n\n${lineas}`,
+
+  particularRechazada: (lineas: string) =>
+    `Listo, no la agendo como particular. ¿Con qué *EPS* vienes? Escribe la letra:\n\n${lineas}`,
 
   epsNoDisponibleDespedida: () =>
     pick([

@@ -166,6 +166,14 @@ function createPrisma(db: Db) {
         if (a) Object.assign(a, data);
         return a;
       }),
+      findUnique: jest.fn(({ where }: any) => {
+        const a = db.appointments.find((x) => x.id === where.id);
+        if (!a) return null;
+        return {
+          ...a,
+          patient: db.patients.find((p) => p.id === a.patientId) ?? null,
+        };
+      }),
       create: jest.fn(({ data }: any) => {
         const a = { id: `apt-${db.appointments.length + 1}`, ...data };
         db.appointments.push(a);
@@ -401,6 +409,12 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   const state = async (): Promise<string | null> =>
     redis.store.get(`chat_state:${ORG_ID}:${SENDER}`) ?? null;
   const say = (body: string) => service.processIncomingMessage(textEvent(body));
+  // 💳 Desde el 2026-11-17 «Particular» va de última en el menú de EPS y el bot
+  // pide confirmar que es de pago directo: se elige por su nombre y se confirma.
+  const elegirParticular = async () => {
+    await say('Particular');
+    await say('Sí');
+  };
 
   beforeEach(async () => {
     redis = createFakeRedis();
@@ -450,6 +464,29 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
               .map((e) => ({ epsId: e.epsId, regime: e.regime ?? null })),
             epsId,
           ),
+      ),
+      // 🧾 Misma regla que el servicio real, sobre el padrón y las fichas del doble.
+      corregirRegimenConElPadron: jest.fn(
+        async (
+          _org: string,
+          paciente: { id: string; cedula: string; regime: string | null },
+          epsId: string | null,
+        ) => {
+          const delPadron = epsId
+            ? regimenSeguroDelPadron(
+                db.enrolled
+                  .filter((e) => e.cedula === paciente.cedula)
+                  .map((e) => ({ epsId: e.epsId, regime: e.regime ?? null })),
+                epsId,
+              )
+            : null;
+          if (!delPadron || delPadron === paciente.regime) {
+            return paciente.regime;
+          }
+          const ficha = db.patients.find((x) => x.id === paciente.id);
+          if (ficha) ficha.regime = delPadron;
+          return delPadron;
+        },
       ),
     };
     plantillas = {
@@ -590,9 +627,17 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('A');
       expect(await state()).toBe(ChatState.AWAITING_EPS);
-      expect(lastSent()).toContain('Particular');
+      // 💳 Particular va de última (2026-11-17): la «A» es una EPS.
+      expect(lastSent()).toMatch(/\*A\)\* Sura\n\*B\)\* Particular/);
 
-      await say('A'); // Particular
+      await say('B'); // Particular
+      // …y antes de seguir, el bot aclara que es de pago directo.
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+      expect(lastSent()).toMatch(/pago directo/);
+      expect(lastSent()).toMatch(/su EPS no la cubre/);
+      expect(appointments.getAvailableSlots).not.toHaveBeenCalled();
+
+      await say('Sí');
       expect(await state()).toBe(ChatState.AWAITING_DATE);
       expect(appointments.getAvailableSlots).toHaveBeenCalledWith(
         'Medicina General',
@@ -705,7 +750,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('999888');
 
@@ -717,7 +762,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('1.3 responder NO en la confirmación no agenda y cierra la sesión', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -737,7 +782,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -755,7 +800,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('1.5 letra inexistente en el menú de horarios → reintento sin perder el estado', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
 
       await say('Z');
       expect(await state()).toBe(ChatState.AWAITING_DATE);
@@ -765,7 +810,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('1.6 sesión expirada en la confirmación (Redis vacío) → aborta sin reservar', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -892,7 +937,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       it('en el horario: una letra válida tras tres fallos elige el cupo', async () => {
         await say('Hola');
         await say('A');
-        await say('A');
+        await elegirParticular();
         expect(await state()).toBe(ChatState.AWAITING_DATE);
         redis.store.set(`error_count:${ORG_ID}:${SENDER}`, '3');
         await say('B');
@@ -903,7 +948,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       it('en el horario: una letra que no existe tras tres fallos cierra, sin «esa letra no aparece»', async () => {
         await say('Hola');
         await say('A');
-        await say('A');
+        await elegirParticular();
         redis.store.set(`error_count:${ORG_ID}:${SENDER}`, '3');
         const antes = sent().length;
         await say('Z');
@@ -927,7 +972,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('1.8b respuestas sin dígitos en el paso de cédula agotan reintentos y cierran', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       expect(await state()).toBe(ChatState.AWAITING_CEDULA);
 
@@ -947,7 +992,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('1.8e una pregunta en el paso de la cédula (2026-11-06) recibe qué falta, no «número no válido»', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       expect(await state()).toBe(ChatState.AWAITING_CEDULA);
 
@@ -968,7 +1013,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('1.8c la PRIMERA petición de cédula no penaliza reintentos', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A'); // elige cupo → primera vez que se pide la cédula
 
       expect(await state()).toBe(ChatState.AWAITING_CEDULA);
@@ -980,7 +1025,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('1.8d una cédula válida tras un intento fallido limpia el contador', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('no la recuerdo');
       expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBe('1');
@@ -995,7 +1040,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('1.9 EPS con convenio: los cupos se filtran por epsId y el padrón bloquea al no afiliado', async () => {
       await say('Hola');
       await say('A');
-      await say('B'); // Sura
+      await say('Sura'); // Sura
 
       expect(appointments.getAvailableSlots).toHaveBeenCalledWith(
         'Medicina General',
@@ -1016,7 +1061,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       const hastaElDocumento = async () => {
         await say('Hola');
         await say('A');
-        await say('B'); // Sura
+        await say('Sura'); // Sura
         await say('A'); // cupo
         expect(await state()).toBe(ChatState.AWAITING_CEDULA);
       };
@@ -1137,7 +1182,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         db.enrolled.push({ cedula: '1058079833', epsId: EPS_SURA.id });
         await say('Hola');
         await say('A');
-        await say('B'); // Sura
+        await say('Sura'); // Sura
         expect(await state()).toBe(ChatState.AWAITING_DATE);
         redis.store.set(`temp_cedula:${ORG_ID}:${SENDER}`, '1054079833');
 
@@ -1159,7 +1204,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('B');
+      await say('Sura');
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -1251,7 +1296,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     const hastaLosCupos = async () => {
       await say('Hola');
       await say('A'); // Medicina General
-      await say('A'); // Particular
+      await elegirParticular(); // Particular
       expect(await state()).toBe(ChatState.AWAITING_DATE);
     };
 
@@ -1722,7 +1767,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     const agendarHastaElSi = async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -2512,6 +2557,44 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(await state()).toBe(ChatState.IDLE);
     });
 
+    // 🧾 2026-11-17: la cita movida viaja al hospital con el convenio que sale
+    // del régimen de la ficha; si el padrón vigente de su EPS dice otro, manda
+    // el padrón.
+    it('3.1c cambiar la fecha corrige el régimen de la ficha con el padrón de la EPS de la cita', async () => {
+      db.appointments[0].epsId = EPS_SURA.id;
+      db.patients[0].regime = 'SUBSIDIADO';
+      db.enrolled.push({
+        cedula: CEDULA,
+        epsId: EPS_SURA.id,
+        regime: 'CONTRIBUTIVO',
+      });
+
+      await say('reprogramar mi cita');
+      await say(CEDULA);
+      await say('A');
+      await say('Sí');
+
+      expect(db.appointments[0].scheduleSlotId).toBe('slot-new');
+      expect(db.patients[0].regime).toBe('CONTRIBUTIVO');
+    });
+
+    it('3.1e una cita del hospital (sin EPS en AgenIA) no toca el régimen de la ficha', async () => {
+      db.patients[0].regime = 'SUBSIDIADO';
+      db.enrolled.push({
+        cedula: CEDULA,
+        epsId: EPS_SURA.id,
+        regime: 'CONTRIBUTIVO',
+      });
+
+      await say('reprogramar mi cita');
+      await say(CEDULA);
+      await say('A');
+      await say('Sí');
+
+      expect(db.appointments[0].scheduleSlotId).toBe('slot-new');
+      expect(db.patients[0].regime).toBe('SUBSIDIADO');
+    });
+
     // 2026-10-28: «Nesesito otra cita para lectura de examenes», justo después
     // de agendar, movió la cita recién agendada.
     it('3.1b «Necesito otra cita para…» es una cita NUEVA aunque el extractor diga cambio', async () => {
@@ -2548,7 +2631,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       it('en el menú de horarios, la nota de voz «nos queda muy difícil la otra a las 6» no abre cambiar la fecha', async () => {
         await say('Hola');
         await say('A');
-        await say('A');
+        await elegirParticular();
         expect(await state()).toBe(ChatState.AWAITING_DATE);
 
         jest
@@ -3083,7 +3166,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
 
       await say('Sí');
@@ -3122,7 +3205,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('B'); // Sura
+      await say('Sura'); // Sura
       expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
       await say('Sí');
       expect(lastSent()).toMatch(
@@ -3149,7 +3232,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('No');
 
       expect(waitlist.joinWaitlist).not.toHaveBeenCalled();
@@ -3823,7 +3906,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('5.1 las claves temp_slot_* llevan organizationId', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
 
       const slotKeys = [...redis.store.keys()].filter((k) =>
         k.startsWith('temp_slot_'),
@@ -3836,7 +3919,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('5.2 cerrar la sesión en una clínica NO borra los cupos ofrecidos por la otra', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       expect(redis.store.has(`temp_slot_A:${ORG_ID}:${SENDER}`)).toBe(true);
 
       // El mismo paciente escribe a OTRA clínica y se despide.
@@ -3854,7 +3937,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       // Clínica A ofrece su cupo.
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       expect(redis.store.get(`temp_slot_A:${ORG_ID}:${SENDER}`)).toBe(
         'slot-orgA',
       );
@@ -3906,7 +3989,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('6.1 bandera roja clínica en la confirmación deriva a urgencias y aborta la reserva', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -3964,7 +4047,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('7.1 un paciente nuevo se persiste UNA sola vez (sin duplicar User/PatientProfile)', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -3982,7 +4065,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('7.2 con Particular ni el paciente ni la cita quedan ligados a una EPS', async () => {
       await say('Hola');
       await say('A');
-      await say('A'); // Particular
+      await elegirParticular(); // Particular
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -3999,7 +4082,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('B'); // Sura
+      await say('Sura'); // Sura
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -4126,10 +4209,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       );
     });
 
-    const hastaElNombre = async (epsLetra = 'A') => {
+    const hastaElNombre = async () => {
       await say('Hola');
       await say('A');
-      await say(epsLetra);
+      await elegirParticular();
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -4141,7 +4224,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       const hastaPedirNombre = async () => {
         await say('Hola');
         await say('A');
-        await say('A');
+        await elegirParticular();
         await say('A');
         await say('1088123456');
         expect(await state()).toBe(ChatState.AWAITING_NAME);
@@ -4322,7 +4405,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     });
 
     it('8.6 con Particular NO se pregunta el régimen: no lo necesita', async () => {
-      await hastaElNombre('A'); // Particular
+      await hastaElNombre(); // Particular
       await responderAlta(say);
 
       expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
@@ -4355,7 +4438,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       // apellido distintos.
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('99887766');
       await say('Pedro');
@@ -4389,7 +4472,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       const hastaLaCedula = async () => {
         await say('Hola');
         await say('A');
-        await say('A');
+        await elegirParticular();
         await say('A');
         await say('1088123456');
       };
@@ -4452,7 +4535,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1088123456');
 
@@ -4486,7 +4569,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         db.enrolled.push({ cedula: '1088123456', epsId: EPS_SURA.id });
         await say('Hola');
         await say('A');
-        await say('B'); // Sura
+        await say('Sura'); // Sura
         await say('A');
         await say('1088123456');
       };
@@ -4545,7 +4628,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         db.enrolled.push({ cedula: '99887766', epsId: EPS_SURA.id });
         await say('Hola');
         await say('A');
-        await say('B');
+        await say('Sura');
         await say('A');
         await say('99887766');
         await decirNombre(say);
@@ -4571,7 +4654,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         const hastaLaCedula = async () => {
           await say('Hola');
           await say('A');
-          await say('B'); // Sura
+          await say('Sura'); // Sura
           await say('A');
           await say('1088123456');
         };
@@ -4730,7 +4813,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       db.enrolled.push({ cedula: '1088123456', epsId: EPS_SURA.id });
       await hastaElMenuDeEps();
       await say('Coomeva');
-      await say('B'); // Sura
+      await say('A'); // Sura (Particular va de última)
 
       expect(await state()).toBe(ChatState.AWAITING_DATE);
       expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
@@ -4867,7 +4950,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
     it('10.1 elige Particular en el menú: agenda sin EPS y su ficha sigue siendo de Sura', async () => {
       await hastaElMenuDeEps();
-      await say('A'); // Particular
+      await say('B'); // Particular (va de última)
+      expect(lastSent()).toMatch(/pago directo/);
+      await say('Sí');
       await say('A'); // horario
       await say('1088123456');
 
@@ -4888,6 +4973,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('10.2 «la quiero particular por favor» en una frase también es Particular', async () => {
       await hastaElMenuDeEps();
       await say('la quiero particular por favor');
+      // 💳 Primero le aclara que es de pago directo.
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+      expect(lastSent()).toMatch(/pago directo/);
+      await say('Sí');
 
       expect(await state()).toBe(ChatState.AWAITING_DATE);
       expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
@@ -4906,12 +4995,14 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
         expect(await state()).toBe(ChatState.AWAITING_EPS);
         expect(lastSent()).toMatch(/particular/i);
-        expect(lastSent()).toMatch(/A\)\* Particular/);
+        expect(lastSent()).toMatch(/B\)\* Particular/);
         expect(
           redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`),
         ).toBeUndefined();
 
-        await say('A'); // Particular
+        await say('B'); // Particular
+        expect(lastSent()).toMatch(/pago directo/);
+        await say('Sí');
         expect(await state()).toBe(ChatState.AWAITING_DATE);
         expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
           'Particular',
@@ -4922,11 +5013,83 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('10.4 «tengo Coomeva pero la quiero particular»: Coomeva no está, así que es Particular', async () => {
       await hastaElMenuDeEps();
       await say('tengo coomeva pero la quiero particular');
+      expect(lastSent()).toMatch(/pago directo/);
+      await say('Sí');
 
       expect(await state()).toBe(ChatState.AWAITING_DATE);
       expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
         'Particular',
       );
+    });
+
+    // 💳 2026-11-17: de 4 citas particulares del chat, una era de quien creyó que
+    // «particular» era una cita normal (tenía Sura) y otra de quien respondió «A»
+    // por costumbre; 3 de las 4 personas no asistieron.
+    describe('10.6 Particular pide confirmar que es de pago directo', () => {
+      const hastaLaConfirmacion = async () => {
+        await hastaElMenuDeEps();
+        await say('particular');
+        expect(await state()).toBe(ChatState.AWAITING_EPS);
+        expect(lastSent()).toMatch(/pago directo/);
+        expect(lastSent()).toMatch(/\*A\)\* Sura/);
+      };
+
+      it('«No» → no la agenda particular y le vuelve a mostrar las EPS', async () => {
+        await hastaLaConfirmacion();
+        await say('No');
+
+        expect(await state()).toBe(ChatState.AWAITING_EPS);
+        expect(lastSent()).toMatch(/no la agendo como particular/);
+        expect(
+          redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+
+        await say('A');
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+        expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+          'Sura',
+        );
+      });
+
+      it('«No, tengo Sura» → sigue con Sura de una vez', async () => {
+        await hastaLaConfirmacion();
+        await say('No, tengo Sura');
+
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+        expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+          'Sura',
+        );
+      });
+
+      it('la letra de su EPS → sigue con esa EPS', async () => {
+        await hastaLaConfirmacion();
+        await say('A');
+
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+        expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+          'Sura',
+        );
+      });
+
+      it('vuelve a elegir Particular → no se lo pregunta otra vez', async () => {
+        await hastaLaConfirmacion();
+        await say('B');
+
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+        expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+          'Particular',
+        );
+      });
+
+      it('«Salir» cierra y no deja la pregunta pendiente para la próxima vez', async () => {
+        await hastaLaConfirmacion();
+        await say('Salir');
+
+        expect(await state()).toBe(ChatState.IDLE);
+        expect(
+          redis.store.get(`temp_particular_por_confirmar:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+      });
     });
 
     describe('10.5 lista de espera: la cita sale con la EPS con la que ENTRÓ, no con la de su ficha', () => {
@@ -5040,7 +5203,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A'); // Medicina General
-      await say('A'); // Particular
+      await elegirParticular(); // Particular
       await say('A'); // cupo A (FECHA_A)
       await say(CEDULA);
 
@@ -5097,7 +5260,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
 
@@ -5118,7 +5281,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
 
@@ -5134,7 +5297,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
 
@@ -5150,7 +5313,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
       expect(lastSent()).toContain('*María Ruiz* (cédula terminada en 9888)');
@@ -5164,7 +5327,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       );
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
       await say('Cancelar');
@@ -5177,7 +5340,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
       await say('Cancelar mi cita');
@@ -5187,7 +5350,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('11.5 sin límite alcanzado sigue al resumen como siempre', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
 
@@ -5201,7 +5364,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
 
@@ -5211,7 +5374,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     it('11.7 la reserva lo frena en el SÍ (le entró otra cita mientras tanto): aviso y no confirma', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say(CEDULA);
       expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
@@ -5397,7 +5560,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     const hastaElResumen = async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1002593442');
       expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
@@ -5450,7 +5613,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       const llegarAlNombre = async () => {
         await say('Hola');
         await say('A');
-        await say('A');
+        await elegirParticular();
         await say('A');
         if ((await state()) === ChatState.AWAITING_CEDULA) {
           await say('1054925390');
@@ -5489,7 +5652,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       const llegarAlNombre = async () => {
         if ((await state()) !== ChatState.AWAITING_SPECIALTY) await say('Hola');
         await say('A');
-        await say('A');
+        await elegirParticular();
         await say('A');
         if ((await state()) === ChatState.AWAITING_CEDULA) {
           await say('1054925390');
@@ -5540,7 +5703,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       });
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       expect(lastSent()).toContain(
         'Por ahora agendamos citas hasta el *sábado 24 de octubre*',
       );
@@ -5556,7 +5719,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       appointments.getAvailableSlots.mockImplementation(() => []);
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       expect(lastSent()).not.toContain('Por ahora agendamos citas hasta');
       expect(lastSent()).toContain('lista de espera');
       expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);

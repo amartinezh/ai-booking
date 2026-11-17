@@ -387,6 +387,12 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
   const state = (senderId = TG) =>
     redis.store.get(`chat_state:${ORG_ID}:${senderId}`) ?? null;
   const say = (body: string) => service.processIncomingMessage(tgEvent(body));
+  // 💳 Desde el 2026-11-17 «Particular» va de última en el menú de EPS y el bot
+  // pide confirmar que es de pago directo: se elige por su nombre y se confirma.
+  const elegirParticular = async () => {
+    await say('Particular');
+    await say('Sí');
+  };
 
   /** La garantía de todo el archivo: nada de Telegram sale por Meta. */
   const expectNothingToMeta = () => {
@@ -596,7 +602,7 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
       expect(channel.sendText.mock.calls[0][0]).toBe(ORG_ID);
 
       await say('A');
-      await say('A'); // Particular
+      await elegirParticular();
       expect(state()).toBe(ChatState.AWAITING_DATE);
       await say('A');
       await say('1088123456');
@@ -649,7 +655,7 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('999888');
       expect(state()).toBe(ChatState.AWAITING_CONFIRMATION);
@@ -669,7 +675,7 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
     it('1.3 una madre agenda para ella y para su hijo desde el MISMO Telegram: dos fichas con el mismo chat', async () => {
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A');
       await say('1088123456');
       await decirNombre(say);
@@ -678,7 +684,7 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
 
       await say('Hola');
       await say('A');
-      await say('A');
+      await elegirParticular();
       await say('A'); // el cupo que queda
       await say('1099000111');
       await say('Pedro');
@@ -891,7 +897,7 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
       );
     });
 
-    it('3.1c lo mismo en el menú de EPS («be be» → B = Sura)', async () => {
+    it('3.1c lo mismo en el menú de EPS («be be» → B = Particular, que pide confirmar)', async () => {
       await say('Hola');
       await say('A');
       expect(state()).toBe(ChatState.AWAITING_EPS);
@@ -903,7 +909,12 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
         provider.extractSchedulingIntent.mock.calls.at(-1)![0].vocabularyHints;
       expect(hints).toMatchObject({ menuAcceptsNames: true });
       expect(hints.letterOptions).toContain('B');
-      expect(state()).not.toBe(ChatState.AWAITING_EPS);
+      // La B se entendió: es Particular (va de última), y el bot pide confirmar
+      // (la respuesta sale en audio: se mira la marca de la confirmación).
+      expect(state()).toBe(ChatState.AWAITING_EPS);
+      expect(
+        redis.store.get(`temp_particular_por_confirmar:${ORG_ID}:${TG}`),
+      ).toBe('1');
     });
 
     it('3.1d en el menú, decir el NOMBRE por voz sigue funcionando', async () => {

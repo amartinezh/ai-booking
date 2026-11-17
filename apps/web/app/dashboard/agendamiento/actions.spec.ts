@@ -414,6 +414,79 @@ describe('🧾 régimen del paciente con espejo activo', () => {
             expect.objectContaining({ data: expect.objectContaining({ regime: 'SUBSIDIADO' }) }),
         );
     });
+
+    // 🧾 2026-11-17: 29 fichas tenían un régimen distinto al del padrón vigente de su
+    // EPS, y la cita salía al hospital con el convenio del otro régimen.
+    describe('el padrón manda sobre la ficha, salvo que el personal elija otro', () => {
+        const padronContributivo = () =>
+            (prisma.epsEnrolledPatient.findMany as jest.Mock).mockResolvedValue([
+                { epsId: 'eps-1', regime: 'CONTRIBUTIVO' },
+            ]);
+
+        it('crear: ficha SUBSIDIADO, formulario vacío, padrón CONTRIBUTIVO → corrige la ficha', async () => {
+            mockFicha.mockResolvedValue({ id: 'pac-1', regime: 'SUBSIDIADO' });
+            padronContributivo();
+
+            const res = await createManualAppointmentAction(form());
+
+            expect(res.success).toBe(true);
+            expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+                expect.objectContaining({ data: { regime: 'CONTRIBUTIVO' } }),
+            );
+        });
+
+        it('crear: padrón con dudas (dos regímenes) → la ficha queda como está', async () => {
+            mockFicha.mockResolvedValue({ id: 'pac-1', regime: 'SUBSIDIADO' });
+            (prisma.epsEnrolledPatient.findMany as jest.Mock).mockResolvedValue([
+                { epsId: 'eps-1', regime: 'CONTRIBUTIVO' },
+                { epsId: 'eps-1', regime: 'SUBSIDIADO' },
+            ]);
+
+            const res = await createManualAppointmentAction(form());
+
+            expect(res.success).toBe(true);
+            expect(prisma.patientProfile.update).not.toHaveBeenCalled();
+        });
+
+        it('crear: el personal eligió otro régimen → manda el personal, sin leer el padrón', async () => {
+            mockFicha.mockResolvedValue({ id: 'pac-1', regime: 'CONTRIBUTIVO' });
+            (prisma.epsEnrolledPatient.findMany as jest.Mock).mockResolvedValue([
+                { epsId: 'eps-1', regime: 'CONTRIBUTIVO' },
+            ]);
+
+            const res = await createManualAppointmentAction(form({ regime: 'SUBSIDIADO' }));
+
+            expect(res.success).toBe(true);
+            expect(prisma.epsEnrolledPatient.findMany).not.toHaveBeenCalled();
+            expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+                expect.objectContaining({ data: { regime: 'SUBSIDIADO' } }),
+            );
+        });
+
+        it('modificar: el formulario trae precargado el de la ficha → manda el padrón', async () => {
+            mockFindFirst.mockResolvedValue({ ...CITA, patient: { regime: 'SUBSIDIADO', cedula: '1053123456' } });
+            padronContributivo();
+
+            const res = await updateManualAppointmentAction('apt-1', form({ regime: 'SUBSIDIADO' }));
+
+            expect(res.success).toBe(true);
+            expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+                expect.objectContaining({ data: expect.objectContaining({ regime: 'CONTRIBUTIVO' }) }),
+            );
+        });
+
+        it('modificar: el personal cambió el régimen → manda el personal', async () => {
+            mockFindFirst.mockResolvedValue({ ...CITA, patient: { regime: 'CONTRIBUTIVO', cedula: '1053123456' } });
+            padronContributivo();
+
+            const res = await updateManualAppointmentAction('apt-1', form({ regime: 'SUBSIDIADO' }));
+
+            expect(res.success).toBe(true);
+            expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+                expect.objectContaining({ data: expect.objectContaining({ regime: 'SUBSIDIADO' }) }),
+            );
+        });
+    });
 });
 
 
