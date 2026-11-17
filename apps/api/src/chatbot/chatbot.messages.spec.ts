@@ -229,6 +229,21 @@ describe('pool de mensajes del chatbot', () => {
     );
 
     it.each(['FORMAL', 'INFORMAL'] as const)(
+      '%s: sin otro horario, las letras siguen valiendo y se puede pedir la lista (2026-11-17)',
+      (estilo) => {
+        const M = buildMessages(estilo);
+        const sinOtros = M.sinOtrosCupos();
+        expect(sinOtros).toContain('letra');
+        expect(sinOtros).toContain('*"Lista de espera"*');
+        expect(sinOtros).toContain('*"Salir"*');
+        const pedida = M.listaDeEsperaPedida();
+        expect(pedida).toContain('*lista de espera*');
+        expect(pedida).toMatch(/\*SÍ\* o \*NO\*/);
+        expect(pedida).not.toMatch(/no tengo/i);
+      },
+    );
+
+    it.each(['FORMAL', 'INFORMAL'] as const)(
       '%s: el cupo de la lista que ya no está no pide «otra letra» y dice que conserva el puesto',
       (estilo) => {
         const t = buildMessages(estilo).cupoDeListaNoDisponible();

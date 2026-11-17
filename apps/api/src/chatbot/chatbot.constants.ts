@@ -624,9 +624,16 @@ const FORMAL = {
     `Hay más de un horario que coincide con lo que me indica. ¿Me confirma la *letra* del que prefiere, por favor?`,
 
   // Pidió otro horario y no hay ninguno más: los que vio siguen en pie.
+  // Si ninguno le sirve, la lista de espera (2026-11-17: «lista de espera» aquí
+  // recibía «No logré ubicar esa opción»).
   sinOtrosCupos: () =>
     `Por ahora no tengo otros horarios disponibles por este medio. 🙏\n\n` +
-    `Los que le mostré siguen disponibles: responda con la letra, o escriba *"Salir"* si prefiere terminar.`,
+    `Los que le mostré siguen disponibles: responda con la letra. Si ninguno le sirve, escriba *"Lista de espera"* y le aviso por aquí apenas se libere un cupo, o *"Salir"* si prefiere terminar.`,
+
+  // Pidió la lista de espera desde el menú de horarios (2026-11-17).
+  listaDeEsperaPedida: () =>
+    `Con gusto. 🙏 En la *lista de espera* le aviso por aquí apenas se libere un cupo.\n\n` +
+    `¿Confirma que le anote? Responda *SÍ* o *NO*.`,
 
   // Rechazó los horarios que vio y no hay otro por este medio: la lista de espera
   // (2026-10-30: «No me da la hora» con un solo cupo terminaba en tres «no entendí»).
@@ -2214,7 +2221,11 @@ const INFORMAL = {
 
   sinOtrosCupos: () =>
     `Por ahora no tengo más horarios disponibles por aquí. 🙏\n\n` +
-    `Los que te mostré siguen disponibles: mándame la letra, o escribe *"Salir"* si prefieres terminar.`,
+    `Los que te mostré siguen disponibles: mándame la letra. Si ninguno te sirve, escribe *"Lista de espera"* y te aviso por acá apenas se libere un cupo, o *"Salir"* si prefieres terminar.`,
+
+  listaDeEsperaPedida: () =>
+    `¡Claro! 🙏 En la *lista de espera* te aviso por acá apenas se libere un cupo.\n\n` +
+    `¿Confirmas que te anote? Responde *SÍ* o *NO*.`,
 
   sinOtrosCuposListaEspera: (hasta?: string, desde?: string) =>
     (hasta && desde

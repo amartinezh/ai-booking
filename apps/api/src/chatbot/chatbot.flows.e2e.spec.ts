@@ -809,6 +809,119 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       );
     });
 
+    // 🔁 2026-11-17: tras tres intentos fallidos, el cuarto mensaje se cerraba
+    // fuera lo que fuera; en 5 de 11 cierres la persona había respondido bien
+    // («A», «D», «Sí»). Ahora ese mensaje se atiende y solo cierra si falla.
+    describe('1.8f la última oportunidad tras tres intentos fallidos', () => {
+      const CIERRE = /no está logrando interpretar/;
+      const tresFallos = async () => {
+        await say('Hola');
+        await say('Disculpa escribí mal');
+        await say('Es');
+        await say('xyzzy');
+        expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBe('3');
+        expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      };
+
+      it('una opción válida («A») sigue la conversación, sin cerrar ni encuesta', async () => {
+        await tresFallos();
+        await say('A');
+        expect(await state()).toBe(ChatState.AWAITING_EPS);
+        expect(lastSent()).not.toMatch(CIERRE);
+        expect(surveySpy).not.toHaveBeenCalledWith(
+          ORG_ID,
+          SENDER,
+          'SYSTEM_ERROR',
+          expect.anything(),
+        );
+      });
+
+      it('si tampoco se entiende, cierra en ese momento: solo sale el cierre, sin otro «no logré entender»', async () => {
+        await tresFallos();
+        const antes = sent().length;
+        await say('xyzzy otra vez');
+        const delTurno = sent().slice(antes);
+        expect(delTurno).toHaveLength(1);
+        expect(delTurno[0]).toMatch(CIERRE);
+        expect(delTurno[0]).toContain('6068538838');
+        expect(await state()).toBe(ChatState.IDLE);
+        expect(
+          redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+        expect(surveySpy).toHaveBeenCalledWith(
+          ORG_ID,
+          SENDER,
+          'SYSTEM_ERROR',
+          expect.anything(),
+        );
+        expect(interactionLog.log).toHaveBeenCalledWith(
+          expect.objectContaining({
+            failureReason: 'MAX_RETRIES',
+            metadata: expect.objectContaining({
+              previousState: ChatState.AWAITING_SPECIALTY,
+              retriesCount: 3,
+              maxRetries: 3,
+              ultimaOportunidad: true,
+            }),
+          }),
+        );
+      });
+
+      it('«Salir» se despide como siempre, sin el cierre por intentos', async () => {
+        await tresFallos();
+        await say('Salir');
+        expect(await state()).toBe(ChatState.IDLE);
+        expect(lastSent()).not.toMatch(CIERRE);
+        expect(surveySpy).not.toHaveBeenCalledWith(
+          ORG_ID,
+          SENDER,
+          'SYSTEM_ERROR',
+          expect.anything(),
+        );
+      });
+
+      it('tras responder bien en la última oportunidad, la siguiente falla cierra', async () => {
+        await tresFallos();
+        await say('A');
+        expect(await state()).toBe(ChatState.AWAITING_EPS);
+        await say('xyzzy en la EPS');
+        expect(lastSent()).toMatch(CIERRE);
+        expect(await state()).toBe(ChatState.IDLE);
+      });
+
+      it('en el horario: una letra válida tras tres fallos elige el cupo', async () => {
+        await say('Hola');
+        await say('A');
+        await say('A');
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+        redis.store.set(`error_count:${ORG_ID}:${SENDER}`, '3');
+        await say('B');
+        expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+        expect(lastSent()).not.toMatch(CIERRE);
+      });
+
+      it('en el horario: una letra que no existe tras tres fallos cierra, sin «esa letra no aparece»', async () => {
+        await say('Hola');
+        await say('A');
+        await say('A');
+        redis.store.set(`error_count:${ORG_ID}:${SENDER}`, '3');
+        const antes = sent().length;
+        await say('Z');
+        const delTurno = sent().slice(antes);
+        expect(delTurno).toHaveLength(1);
+        expect(delTurno[0]).toMatch(CIERRE);
+        expect(await state()).toBe(ChatState.IDLE);
+      });
+
+      it('más allá del tope (un corte que algo atrapó) cierra al llegar, como antes', async () => {
+        await say('Hola');
+        redis.store.set(`error_count:${ORG_ID}:${SENDER}`, '4');
+        await say('A');
+        expect(lastSent()).toMatch(CIERRE);
+        expect(await state()).toBe(ChatState.IDLE);
+      });
+    });
+
     // Regresión F6: el paso de cédula sí contabiliza reintentos, así que el
     // guard de máximo de reintentos lo alcanza en vez de reciclar sin fin.
     it('1.8b respuestas sin dígitos en el paso de cédula agotan reintentos y cierran', async () => {
@@ -1115,6 +1228,47 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(elegido()).toBe('m-0820');
     });
 
+    // 2026-11-17: tras «no tengo otros horarios», «lista de espera» recibía «No
+    // logré ubicar esa opción entre las que le envié».
+    it('1B.11e sin otro horario: ofrece escribir «Lista de espera»; al pedirla, el paso SÍ/NO de la lista', async () => {
+      db.slots = db.slots.filter((c) => c.id.startsWith('m-'));
+      await hastaLosCupos();
+      await say('otra');
+      expect(lastSent()).toMatch(/no tengo otros horarios/i);
+      expect(lastSent()).toContain('*"Lista de espera"*');
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      expect(letra('A')).toBe('m-0800');
+
+      await say('lista de espera');
+      expect(lastSent()).toContain('*lista de espera*');
+      expect(lastSent()).toMatch(/Responda \*SÍ\* o \*NO\*/);
+      expect(lastSent()).not.toMatch(/no tengo otro horario/i);
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+      expect(interactionLog.logFailure).not.toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'SLOT_NOT_UNDERSTOOD' }),
+      );
+      expect(interactionLog.logSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            step: 'WAITLIST_OPTIN_OFFERED',
+            desde: 'LISTA_PEDIDA_EN_HORARIOS',
+          }),
+        }),
+      );
+
+      await say('Sí');
+      expect(lastSent()).toMatch(/cédula/i);
+    });
+
+    it('1B.11f «Anóteme en la lista» con horarios a la vista también abre la lista; «no quiero lista de espera» no', async () => {
+      await hastaLosCupos();
+      await say('no quiero lista de espera');
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+
+      await say('Anóteme en la lista');
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+    });
+
     // 2026-10-30: con un solo horario, «No me da la hora» recibió tres «no logré
     // ubicar esa opción» y la paciente se fue.
     it('1B.11b «No me da la hora» sin otro horario: le ofrece la lista de espera', async () => {
@@ -1141,6 +1295,19 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('No');
       expect(waitlist.joinWaitlist).not.toHaveBeenCalled();
       expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    // Caso real 2026-11-04: «Si» a la lista de espera tras tres fallos cerraba el chat.
+    it('1B.11g «Sí» a la lista de espera tras tres intentos fallidos: sigue (pide la cédula)', async () => {
+      db.slots = db.slots.filter((c) => c.id.startsWith('m-'));
+      await hastaLosCupos();
+      await say('No');
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+      redis.store.set(`error_count:${ORG_ID}:${SENDER}`, '3');
+
+      await say('Si');
+      expect(lastSent()).toMatch(/cédula/i);
+      expect(lastSent()).not.toMatch(/no está logrando interpretar/);
     });
 
     it('1B.11d «No me da la hora» con otro día: le muestra ese día', async () => {
@@ -2004,6 +2171,54 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect(await state()).toBe(ChatState.AWAITING_EPS);
       },
     );
+
+    // ❌ 2026-11-17: en el menú de servicios, «Cancelar una cita» o «Es para
+    // cancelar una cita» recibían «Perfecto, con gusto le agendo su cita» (12
+    // veces, 10 personas). Ahora cuentan como «cancelar cita».
+    it.each([
+      'Es para cancelar una cita',
+      'Cancelar una cita',
+      'Cancelación de cita',
+      'Para cancelar cita',
+      'Por favor necesito cancelar esta consulta',
+    ])(
+      '2.10d «%s» en el menú de servicios → pregunta si cancela, no «le agendo»',
+      async (frase) => {
+        await say('Hola');
+        expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+
+        await say(frase);
+        expect(lastSent()).not.toMatch(/le agendo/i);
+        expect(lastSent()).toMatch(/desea cancelar una cita/i);
+        expect(await state()).toBe(ChatState.AWAITING_INTERRUPT_CONFIRMATION);
+
+        await say('Sí');
+        expect(await state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+        expect(lastSent()).toMatch(/c[ée]dula/i);
+      },
+    );
+
+    it('2.10e «Es pa cancelar» en el menú de la EPS → pregunta si cancela; con NO retoma la EPS', async () => {
+      await say('Hola');
+      await say('A');
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+
+      await say('Es pa cancelar');
+      expect(await state()).toBe(ChatState.AWAITING_INTERRUPT_CONFIRMATION);
+
+      await say('No');
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+    });
+
+    it('2.10f en el menú de servicios, «cancelar» a secas sigue siendo salir y «no quiero cancelar» no abre la cancelación', async () => {
+      await say('Hola');
+      await say('no quiero cancelar, quiero agendar');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+
+      await say('cancelar');
+      expect(await state()).toBe(ChatState.IDLE);
+      expect(lastSent()).not.toMatch(/desea cancelar una cita/i);
+    });
 
     // Regresión F3: por VOZ la interrupción amable se comporta igual que por
     // texto — pide confirmación en vez de abortar el agendamiento en curso.

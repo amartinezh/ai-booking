@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { AsyncLocalStorage } from 'async_hooks';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
@@ -52,9 +53,11 @@ import {
 import { esPreguntaEnVezDeRespuesta } from './pregunta-al-confirmar';
 import { servicioQueNoSeAgenda } from './servicio-no-agendable';
 import { dudaSobreLaCita } from './duda-cita-agendada';
+import { pideListaDeEspera } from './pide-lista-de-espera';
 import {
   esCancelarASecas,
   nombraCambioDeCita,
+  pideCancelarUnaCita,
   pideCitaNueva,
 } from './cita-nueva-o-cambio';
 import { esRechazoPorAgendaDelHis } from '../mirror/rechazo-del-his';
@@ -430,9 +433,48 @@ function yaEmpezo(cita: { scheduleSlot: { startTime: Date } }): boolean {
   return cita.scheduleSlot.startTime.getTime() <= Date.now();
 }
 
+/**
+ * 🔁 Lo que hace falta para cerrar el chat por exceso de intentos. Se arma al
+ * empezar el turno (antes de leer el mensaje) y se usa al cerrar.
+ */
+interface CierrePorIntentos {
+  organizationId: string;
+  senderId: string;
+  supportPhone: string;
+  botName: string;
+  MSGS: ReturnType<typeof buildMessages>;
+  previousState: ChatState;
+  userMessage: string;
+  retriesCount: number;
+  maxRetries: number;
+  /** Se cerró porque el mensaje de la última oportunidad tampoco se entendió. */
+  ultimaOportunidad?: boolean;
+}
+
+/**
+ * El mensaje de la última oportunidad tampoco se entendió: corta el turno antes
+ * del «no logré entender» y la puerta de entrada (`processIncomingMessage`)
+ * cierra el chat. Ver `sumarIntentoFallido`.
+ */
+class IntentosAgotados extends Error {
+  constructor(readonly cierre: CierrePorIntentos) {
+    super('Intentos agotados');
+    this.name = 'IntentosAgotados';
+  }
+}
+
 @Injectable()
 export class ChatbotService implements OnModuleInit {
   private readonly logger = new Logger(ChatbotService.name);
+
+  /**
+   * 🔁 El turno en curso de cada mensaje (uno por mensaje, aunque lleguen varios
+   * a la vez). Guarda la última oportunidad: tras el último intento fallido, el
+   * mensaje que sigue se atiende, y si tampoco se entiende se cierra el chat.
+   */
+  private readonly turnoDelChat = new AsyncLocalStorage<{
+    ultimaOportunidad: CierrePorIntentos | null;
+  }>();
 
   // Regex construidos dinámicamente desde chatbot-patterns.txt
   private escapeRegex: RegExp = /^(hola)$/i;
@@ -3446,8 +3488,21 @@ export class ChatbotService implements OnModuleInit {
     const userMessage = event.text?.body?.trim() || event.message?.text?.trim();
 
     try {
-      await this.processIncomingMessageUnsafe(event);
-    } catch (error: unknown) {
+      await this.turnoDelChat.run({ ultimaOportunidad: null }, () =>
+        this.processIncomingMessageUnsafe(event),
+      );
+    } catch (caught: unknown) {
+      let error: unknown = caught;
+      // 🔁 El mensaje de la última oportunidad tampoco se entendió: se cierra el
+      // chat en vez del «no logré entender» que iba a salir.
+      if (error instanceof IntentosAgotados) {
+        try {
+          await this.cerrarPorExcesoDeIntentos(error.cierre);
+          return;
+        } catch (alCerrar: unknown) {
+          error = alCerrar;
+        }
+      }
       const errorMessage = getErrorMessage(error);
       const errorStack = getErrorStack(error);
       this.logger.error(
@@ -3859,10 +3914,18 @@ export class ChatbotService implements OnModuleInit {
     isQuickEscape: boolean;
     isQuickModify: boolean;
   } {
+    // ❌ En los menús de servicio y de EPS el texto no pasa por la IA: «Cancelar
+    // una cita», «Cancelación de cita» o «Es para cancelar una cita» cuentan
+    // como el atajo «cancelar cita» (2026-11-17: se leían como «quiero agendar»
+    // y el asistente contestaba «con gusto le agendo su cita»).
+    const enMenuDeAgendar =
+      currentState === ChatState.AWAITING_SPECIALTY ||
+      currentState === ChatState.AWAITING_EPS;
     const isQuickCancel =
       messageType === 'text' &&
       !!text &&
-      this.cancelRegex.test(textoParaCoincidencia(text));
+      (this.cancelRegex.test(textoParaCoincidencia(text)) ||
+        (enMenuDeAgendar && pideCancelarUnaCita(text)));
 
     const isQuickEscape =
       messageType === 'text' &&
@@ -4189,12 +4252,7 @@ export class ChatbotService implements OnModuleInit {
       // SÍ/NO). Reintento acotado pidiendo la cédula por texto; al agotar
       // maxReintentos, el guard del inicio cierra con maxReintentosReset.
       const newRetries = retriesCount + 1;
-      await this.redis.set(
-        retriesKey,
-        newRetries.toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.ininteligible();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -6759,6 +6817,64 @@ export class ChatbotService implements OnModuleInit {
     });
   }
 
+  /**
+   * 🔁 Cuenta un intento fallido del paso. Si el turno era la última
+   * oportunidad (ver «MÁXIMO REINTENTOS»), corta el turno antes de la respuesta
+   * de «no logré entender» y el chat se cierra. El contador se guarda antes de
+   * cortar: si algo atrapara el corte, el siguiente mensaje cierra como antes.
+   */
+  private async sumarIntentoFallido(
+    retriesKey: string,
+    retriesCount: number,
+  ): Promise<void> {
+    await this.redis.set(
+      retriesKey,
+      (retriesCount + 1).toString(),
+      'EX',
+      SESSION_TTL,
+    );
+    const cierre = this.turnoDelChat.getStore()?.ultimaOportunidad;
+    if (cierre) {
+      throw new IntentosAgotados({ ...cierre, ultimaOportunidad: true });
+    }
+  }
+
+  /** Cierra el chat por exceso de intentos: aviso, auditoría y encuesta. */
+  private async cerrarPorExcesoDeIntentos(c: CierrePorIntentos): Promise<void> {
+    this.logger.warn(
+      `Máximo de reintentos (${c.maxRetries}) para ${enmascararIdentificadorWhatsapp(c.senderId)}`,
+    );
+    await this.cleanUpSession(c.organizationId, c.senderId);
+    const replyText = c.supportPhone
+      ? c.MSGS.guardrailOffTopic(c.supportPhone, c.botName)
+      : c.MSGS.maxReintentosReset();
+    await this.smartReply(c.organizationId, c.senderId, replyText);
+
+    // 📝 Auditoría: usuario abandonó por exceso de reintentos
+    await this.auditLog(c.senderId, c.organizationId, {
+      status: InteractionStatus.ABANDONED,
+      failureReason: FailureReason.MAX_RETRIES,
+      userMessage: c.userMessage,
+      botReply: replyText,
+      metadata: {
+        previousState: c.previousState,
+        retriesCount: c.retriesCount,
+        maxRetries: c.maxRetries,
+        ...(c.ultimaOportunidad ? { ultimaOportunidad: true } : {}),
+      },
+    });
+
+    // ⭐ CSAT: cierre por error técnico / exceso de reintentos.
+    await this.sendSurveyLink(
+      c.organizationId,
+      c.senderId,
+      ResolutionStatus.SYSTEM_ERROR,
+      {
+        chatSummary: `Sesión cerrada por exceso de reintentos (${c.maxRetries}).`,
+      },
+    );
+  }
+
   private async processIncomingMessageUnsafe(event: WhatsappInboundEvent) {
     const identity = resolveSenderIdentity(event);
     // Sin remitente no hay nada que procesar ni a quién responder — pero eso NO
@@ -6954,36 +7070,32 @@ export class ChatbotService implements OnModuleInit {
     const retriesCount = parseInt((await this.redis.get(retriesKey)) || '0');
 
     // ── MÁXIMO REINTENTOS (configurable por org) ──────────────
+    // 🔁 Tras el último intento fallido, el mensaje que sigue se atiende
+    // (2026-11-17): si responde bien («A», «Sí», «Salir») la conversación
+    // sigue; si tampoco se entiende, `sumarIntentoFallido` corta el turno y se
+    // cierra en ese momento, sin el «no logré entender» que iba a salir. Antes
+    // se cerraba fuera lo que fuera: en 5 de los 11 cierres del 15-oct al 17-nov
+    // la persona había respondido una opción válida. Más allá del tope (no
+    // debería pasar) o fuera de un turno, se cierra al llegar, como antes.
     if (retriesCount >= maxRetries) {
-      this.logger.warn(
-        `Máximo de reintentos (${maxRetries}) para ${enmascararIdentificadorWhatsapp(senderId)}`,
-      );
-      await this.cleanUpSession(organizationId, senderId);
-      const humanPhone = org?.supportPhone || '';
-      const replyText = humanPhone
-        ? MSGS.guardrailOffTopic(humanPhone, botName)
-        : MSGS.maxReintentosReset();
-      await this.smartReply(organizationId, senderId, replyText);
-
-      // 📝 Auditoría: usuario abandonó por exceso de reintentos
-      await this.auditLog(senderId, organizationId, {
-        status: InteractionStatus.ABANDONED,
-        failureReason: FailureReason.MAX_RETRIES,
-        userMessage: text || `[${messageType}]`,
-        botReply: replyText,
-        metadata: { previousState: currentState, retriesCount, maxRetries },
-      });
-
-      // ⭐ CSAT: cierre por error técnico / exceso de reintentos.
-      await this.sendSurveyLink(
+      const cierre: CierrePorIntentos = {
         organizationId,
         senderId,
-        ResolutionStatus.SYSTEM_ERROR,
-        {
-          chatSummary: `Sesión cerrada por exceso de reintentos (${maxRetries}).`,
-        },
-      );
-      return;
+        supportPhone: org?.supportPhone || '',
+        botName,
+        MSGS,
+        previousState: currentState,
+        userMessage: text || `[${messageType}]`,
+        retriesCount,
+        maxRetries,
+      };
+      const turno = this.turnoDelChat.getStore();
+      if (retriesCount === maxRetries && turno) {
+        turno.ultimaOportunidad = cierre;
+      } else {
+        await this.cerrarPorExcesoDeIntentos(cierre);
+        return;
+      }
     }
 
     // 🔒 OPERACIÓN APAGADA A MEDIAS: si la clínica apagó la operación que el
@@ -7855,12 +7967,7 @@ export class ChatbotService implements OnModuleInit {
     const menuVoiceAnswer = isMenuStep && !!text && !!text.trim();
 
     if (aiData.outOfContext && !yesNoVoiceAnswer && !menuVoiceAnswer) {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       // Con agendar apagado no se invita a agendar («¿qué servicio busca?»
       // contradecía el aviso de que por aquí no se agenda): se dice qué sí se
       // puede y con quién hacer lo demás.
@@ -7885,12 +7992,7 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (aiData.ininteligible && !yesNoVoiceAnswer && !menuVoiceAnswer) {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.ininteligible();
       await this.smartReply(organizationId, senderId, reply);
 
@@ -8180,12 +8282,7 @@ export class ChatbotService implements OnModuleInit {
         const soloNumeros = finalCedula.replace(/\D/g, '');
         // No validamos longitud: se acepta cualquier número (solo rechazo si viene vacío).
         if (!soloNumeros) {
-          await this.redis.set(
-            retriesKey,
-            (retriesCount + 1).toString(),
-            'EX',
-            SESSION_TTL,
-          );
+          await this.sumarIntentoFallido(retriesKey, retriesCount);
           await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
           const reply = MSGS.cancelarCedulaInvalida();
           await this.smartReply(organizationId, senderId, reply);
@@ -8432,12 +8529,7 @@ export class ChatbotService implements OnModuleInit {
             return;
           }
           // El usuario respondió algo que no pudimos mapear al menú → reintento
-          await this.redis.set(
-            retriesKey,
-            (retriesCount + 1).toString(),
-            'EX',
-            SESSION_TTL,
-          );
+          await this.sumarIntentoFallido(retriesKey, retriesCount);
           const { lineas, count } = await this.buildServiceMenu(
             organizationId,
             senderId,
@@ -8659,12 +8751,7 @@ export class ChatbotService implements OnModuleInit {
             return;
           }
           // El usuario respondió algo no mapeable al menú → reintento
-          await this.redis.set(
-            retriesKey,
-            (retriesCount + 1).toString(),
-            'EX',
-            SESSION_TTL,
-          );
+          await this.sumarIntentoFallido(retriesKey, retriesCount);
           const { lineas, count } = await this.buildEpsMenu(
             organizationId,
             senderId,
@@ -8978,12 +9065,7 @@ export class ChatbotService implements OnModuleInit {
         // otro estado) no penaliza: aún no ha tenido oportunidad de responder.
         const esReintentoDeCedula = currentState === ChatState.AWAITING_CEDULA;
         if (esReintentoDeCedula) {
-          await this.redis.set(
-            retriesKey,
-            (retriesCount + 1).toString(),
-            'EX',
-            SESSION_TTL,
-          );
+          await this.sumarIntentoFallido(retriesKey, retriesCount);
         }
 
         const fechaVista = await this.redis.get(
@@ -9038,12 +9120,7 @@ export class ChatbotService implements OnModuleInit {
       // (solo rechazo si viene vacío/sin dígitos).
       const soloNumerosAgendamiento = finalCedula.replace(/\D/g, '');
       if (!soloNumerosAgendamiento) {
-        await this.redis.set(
-          retriesKey,
-          (retriesCount + 1).toString(),
-          'EX',
-          SESSION_TTL,
-        );
+        await this.sumarIntentoFallido(retriesKey, retriesCount);
         await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
         const reply = MSGS.cancelarCedulaInvalida();
         await this.smartReply(organizationId, senderId, reply);
@@ -9398,6 +9475,16 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
+      // 📝 «Lista de espera» en el menú de horarios (2026-11-17): tras «Por ahora
+      // no tengo otros horarios» recibía «No logré ubicar esa opción». Se le
+      // ofrece con el mismo paso SÍ/NO que cuando no hay cupos.
+      if (
+        pideListaDeEspera(text) &&
+        (await this.ofrecerListaDeEsperaPedida(ctx))
+      ) {
+        return;
+      }
+
       // Sin letra válida: el paciente (típicamente por voz) puede referirse al
       // cupo por su día/hora ("la de mañana a las 3") en vez de la letra.
       // Intentamos casar UN único cupo de los ofrecidos; si resulta ambiguo o no
@@ -9467,12 +9554,7 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const ambiguo = !!casan && casan.length > 1;
       const reply = ambiguo ? MSGS.cupoAmbiguo() : MSGS.errorSlotInvalido();
       await this.smartReply(organizationId, senderId, reply);
@@ -10158,6 +10240,34 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
+   * 📝 Pidió la lista de espera desde el menú de horarios: el mismo paso SÍ/NO
+   * que cuando no hay cupos, con el servicio y la EPS de la sesión. `false` sin
+   * ellos en la sesión: sigue como antes (se le pide la letra).
+   */
+  private async ofrecerListaDeEsperaPedida(
+    ctx: ChatTurnContext,
+  ): Promise<boolean> {
+    const { organizationId, senderId, text } = ctx;
+    const [serviceName, epsName, epsId] = await Promise.all([
+      this.redis.get(`temp_especialidad:${organizationId}:${senderId}`),
+      this.redis.get(`temp_eps_query:${organizationId}:${senderId}`),
+      this.redis.get(`temp_eps_id:${organizationId}:${senderId}`),
+    ]);
+    if (!serviceName || !epsName) return false;
+    const epsIdForSlots =
+      epsName.toLowerCase() === PARTICULAR_EPS_NAME.toLowerCase()
+        ? null
+        : epsId || null;
+    return this.ofrecerListaDeEsperaSinOtrosCupos(ctx, {
+      serviceName,
+      epsIdForSlots,
+      userMessage: text || '[audio]',
+      pedido: { listaDeEspera: true },
+      pedida: true,
+    });
+  }
+
+  /**
    * 🔔 El paciente rechazó los horarios que vio y no hay otros: se le ofrece la
    * lista de espera con el mismo paso que cuando no hay cupos desde el principio
    * (`AWAITING_WAITLIST_OPTIN`, que lee el servicio y la EPS de la sesión). Si lo
@@ -10171,6 +10281,8 @@ export class ChatbotService implements OnModuleInit {
       epsIdForSlots: string | null;
       userMessage: string;
       pedido: Record<string, unknown>;
+      /** La pidió él («lista de espera»): no se le dice que no hay otro horario. */
+      pedida?: boolean;
     },
   ): Promise<boolean> {
     const { organizationId, senderId, MSGS } = ctx;
@@ -10195,19 +10307,24 @@ export class ChatbotService implements OnModuleInit {
       `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
     );
 
-    const masAlla = await this.cupoMasAllaDelPlazo(
-      p.serviceName,
-      p.epsIdForSlots,
-      organizationId,
-    );
-    const porReserva = masAlla
-      ? false
-      : await this.sinCuposPorLaReserva(
+    const masAlla = p.pedida
+      ? null
+      : await this.cupoMasAllaDelPlazo(
           p.serviceName,
           p.epsIdForSlots,
           organizationId,
         );
-    const reply = MSGS.sinOtrosCuposListaEspera(masAlla?.hasta, masAlla?.desde);
+    const porReserva =
+      masAlla || p.pedida
+        ? false
+        : await this.sinCuposPorLaReserva(
+            p.serviceName,
+            p.epsIdForSlots,
+            organizationId,
+          );
+    const reply = p.pedida
+      ? MSGS.listaDeEsperaPedida()
+      : MSGS.sinOtrosCuposListaEspera(masAlla?.hasta, masAlla?.desde);
     await this.smartReply(organizationId, senderId, reply);
     await this.setUserState(
       organizationId,
@@ -10219,7 +10336,7 @@ export class ChatbotService implements OnModuleInit {
       botReply: reply,
       metadata: {
         step: 'WAITLIST_OPTIN_OFFERED',
-        desde: 'OTRO_HORARIO_SIN_CUPOS',
+        desde: p.pedida ? 'LISTA_PEDIDA_EN_HORARIOS' : 'OTRO_HORARIO_SIN_CUPOS',
         pedido: p.pedido,
         ...(masAlla ? { porPlazo: true, plazoDesde: masAlla.desdeIso } : {}),
         ...(porReserva ? { porReserva: true } : {}),
@@ -11541,12 +11658,7 @@ export class ChatbotService implements OnModuleInit {
     } else if (pregunta) {
       // ❓ Preguntó: qué cita se le va a agendar, y si nombra otro servicio que
       // no se agenda por aquí («¿esto es para las ecografías?»), con quién.
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const [servicio, fecha] = await Promise.all([
         this.redis.get(`temp_especialidad:${organizationId}:${senderId}`),
         this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`),
@@ -11594,12 +11706,7 @@ export class ChatbotService implements OnModuleInit {
         },
       });
     } else {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -11766,12 +11873,7 @@ export class ChatbotService implements OnModuleInit {
         metadata: { event: 'WAITLIST_OPTIN_DECLINED' },
       });
     } else {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -11807,12 +11909,7 @@ export class ChatbotService implements OnModuleInit {
 
     // No validamos longitud: se acepta cualquier número (solo rechazo si viene vacío).
     if (!cedula) {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.cancelarCedulaInvalida();
       await this.smartReply(organizationId, senderId, reply);
 
@@ -11878,12 +11975,7 @@ export class ChatbotService implements OnModuleInit {
         metadata: { step: 'CANCEL_RETRY_CEDULA_YES' },
       });
     } else {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -11911,12 +12003,7 @@ export class ChatbotService implements OnModuleInit {
     );
 
     if (!aptId || !slotId) {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const maxLetra =
         (await this.redis.get(
           `temp_cancel_max_letra:${organizationId}:${senderId}`,
@@ -12041,12 +12128,7 @@ export class ChatbotService implements OnModuleInit {
         metadata: { event: 'CANCELLATION_ABORTED' },
       });
     } else {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -12435,12 +12517,7 @@ export class ChatbotService implements OnModuleInit {
         },
       );
     } else {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -12543,12 +12620,7 @@ export class ChatbotService implements OnModuleInit {
     } else {
       // No se entendió la respuesta: re-preguntamos SÍ/NO y penalizamos
       // reintento, igual que el resto de pasos estrictos.
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -12582,12 +12654,7 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (!cedula) {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.cancelarCedulaInvalida();
       await this.smartReply(organizationId, senderId, reply);
 
@@ -12653,12 +12720,7 @@ export class ChatbotService implements OnModuleInit {
         metadata: { step: 'MODIFY_RETRY_CEDULA_YES' },
       });
     } else {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -12685,12 +12747,7 @@ export class ChatbotService implements OnModuleInit {
     );
 
     if (!aptId || !slotId) {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const maxLetra =
         (await this.redis.get(
           `temp_modify_max_letra:${organizationId}:${senderId}`,
@@ -12803,12 +12860,7 @@ export class ChatbotService implements OnModuleInit {
           return;
         }
 
-        await this.redis.set(
-          retriesKey,
-          (retriesCount + 1).toString(),
-          'EX',
-          SESSION_TTL,
-        );
+        await this.sumarIntentoFallido(retriesKey, retriesCount);
         const maxLetra =
           (await this.redis.get(
             `temp_modify_newslot_max_letra:${organizationId}:${senderId}`,
@@ -13278,12 +13330,7 @@ export class ChatbotService implements OnModuleInit {
         metadata: { event: 'MODIFY_ABORTED' },
       });
     } else {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -13347,12 +13394,7 @@ export class ChatbotService implements OnModuleInit {
         metadata: { event: 'MODIFY_NO_SLOTS_KEEP_APPOINTMENT' },
       });
     } else {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -15095,12 +15137,7 @@ export class ChatbotService implements OnModuleInit {
     } = ctx;
     const cedula = (aiData.cedula || text || '').replace(/\D/g, '');
     if (!cedula) {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
-      );
+      await this.sumarIntentoFallido(retriesKey, retriesCount);
       const reply = MSGS.cancelarCedulaInvalida();
       await this.smartReply(organizationId, senderId, reply);
       await this.auditFailure(senderId, organizationId, {
@@ -15274,12 +15311,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    await this.redis.set(
-      retriesKey,
-      (retriesCount + 1).toString(),
-      'EX',
-      SESSION_TTL,
-    );
+    await this.sumarIntentoFallido(retriesKey, retriesCount);
     const reply = MSGS.consultaOpcionInvalidaDe(
       letrasOpcionesConsulta(opciones),
       lineasOpcionesConsulta(opciones),

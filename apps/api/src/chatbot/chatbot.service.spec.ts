@@ -1764,6 +1764,33 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // No es la re-presentación cálida de agendamiento.
       expect(sentMessages()[0]).not.toContain('🗓️');
     });
+
+    it('🔁 la última oportunidad es de cada conversación: dos mensajes a la vez no se mezclan', async () => {
+      const OTRO = '573009998877';
+      redis.store.set(
+        `chat_state:${ORG_ID}:${OTRO}`,
+        ChatState.AWAITING_SPECIALTY,
+      );
+      redis.store.set(`error_count:${ORG_ID}:${SENDER}`, '3');
+
+      await Promise.all([
+        service.processIncomingMessage(makeTextEvent('xyz qwerty zzz')),
+        service.processIncomingMessage({
+          ...makeTextEvent('xyz qwerty zzz'),
+          from: OTRO,
+        }),
+      ]);
+
+      // El de la última oportunidad se cierra…
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.IDLE,
+      );
+      // …y al otro solo se le cuenta su primer intento, sin cerrarle nada.
+      expect(redis.store.get(`error_count:${ORG_ID}:${OTRO}`)).toBe('1');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${OTRO}`)).toBe(
+        ChatState.AWAITING_SPECIALTY,
+      );
+    });
   });
 
   // ════════════════════════════════════════════════════════════

@@ -64,3 +64,35 @@ export function esCancelarASecas(texto: string | null | undefined): boolean {
     normalizar(texto),
   );
 }
+
+/**
+ * ❌ ¿Pide anular una cita con palabras que el atajo de `[cancel]` no reconoce?
+ * El atajo solo toma frases que EMPIEZAN con «cancelar cita», «quiero
+ * cancelar»…; en el menú de servicios (donde el texto no pasa por la IA)
+ * «Cancelar una cita», «Cancelación de cita» o «Es para cancelar una cita» se
+ * leían como «quiero agendar» y el asistente contestaba «Perfecto, con gusto le
+ * agendo su cita» (12 veces, 10 personas, del 28-oct al 14-nov de 2026).
+ *
+ * Sí: nombra la cita o la consulta junto a «cancelar» / «anular», o lo pide
+ * («para cancelar», «necesito cancelar», «me ayuda a cancelar»).
+ * No: «Cancelar» a secas (es abandonar, ver `esCancelarASecas`), una negación
+ * («no quiero cancelar»), los recordatorios («cancelar los recordatorios») ni
+ * lo que ya pasó («me cancelaron la cita», «mi cita fue cancelada»).
+ */
+const PALABRA_CANCELAR = /\b(cancel\w*|cansel\w*|anul\w*)\b/;
+const NIEGA_CANCELAR =
+  /\bno\s+(quiero\s+|deseo\s+|voy\s+a\s+|necesito\s+|es\s+para\s+|era\s+para\s+)?(la\s+|lo\s+|me\s+la\s+|mi\s+cita\s+)?(cancel\w*|cansel\w*|anul\w*)/;
+const YA_CANCELADA =
+  /\b(cancelaron|canselaron|anularon)\b|\b(fue|esta|estaba|quedo|salio|aparece)\s+(cancelad\w*|canselad\w*|anulad\w*)/;
+const DE_RECORDATORIOS = /\b(recordatorios?|mensajes?|notificaciones?)\b/;
+const NOMBRA_LA_CITA = /\b(cita|citas|consulta|consultas|control|turno)\b/;
+const LO_PIDE =
+  /\b(para|pa|quiero|quisiera|necesito|deseo|ayud\w*|favor|podria\w*|puede\w*|como)\b/;
+
+export function pideCancelarUnaCita(texto: string | null | undefined): boolean {
+  const t = normalizar(texto);
+  if (!PALABRA_CANCELAR.test(t) || esCancelarASecas(texto)) return false;
+  if (NIEGA_CANCELAR.test(t) || YA_CANCELADA.test(t)) return false;
+  if (DE_RECORDATORIOS.test(t)) return false;
+  return NOMBRA_LA_CITA.test(t) || LO_PIDE.test(t) || /^cancelacion\b/.test(t);
+}

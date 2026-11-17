@@ -1,6 +1,7 @@
 import {
   esCancelarASecas,
   nombraCambioDeCita,
+  pideCancelarUnaCita,
   pideCitaNueva,
 } from './cita-nueva-o-cambio';
 
@@ -74,5 +75,48 @@ describe('nombraCambioDeCita', () => {
     '',
   ])('«%s» no lo nombra', (texto) => {
     expect(nombraCambioDeCita(texto)).toBe(false);
+  });
+});
+
+describe('pideCancelarUnaCita — anular una cita, dicho como lo dice la gente', () => {
+  // Casos reales del 28-oct al 14-nov de 2026 en el menú de servicios.
+  it.each([
+    'Buenos días para cancelar está cita',
+    'Para cancelar está cita de mañana 29 ya me dieron una para hoy muchas gracias',
+    'Me podrían ayudar a cancelar cita de control trimestral',
+    'Por favor necesito cancelar esta consulta',
+    'Cancelar una cita',
+    'Para cancelar',
+    'Para cancelar cita',
+    'Cancelación de cita',
+    'Para cancelar una cita por favor',
+    'Es para cancelar una cita',
+    'Es pa cancelar',
+    // Variantes
+    'Anular la cita del jueves',
+    'quisiera cancelar',
+    'Canselar una cita',
+    'cancelación',
+  ])('«%s» → sí', (frase) => {
+    expect(pideCancelarUnaCita(frase)).toBe(true);
+  });
+
+  it.each([
+    'cancelar', // a secas: abandonar lo que está haciendo
+    'Cancelar todo',
+    'cancelo',
+    'no quiero cancelar, quiero agendar',
+    'No es para cancelar la cita',
+    'me cancelaron la cita y necesito otra',
+    'mi cita fue cancelada',
+    'cancelar los recordatorios',
+    'quiero agendar una cita',
+    'Consulta ambulatoria de medicina general',
+    'Control prenatal',
+    'Hola buenos días',
+    '',
+    null,
+  ])('«%s» → no', (frase) => {
+    expect(pideCancelarUnaCita(frase)).toBe(false);
   });
 });

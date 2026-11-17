@@ -1495,6 +1495,18 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(db.appointments[0].status).toBe('SCHEDULED');
     });
 
+    it('cancelar apagado: «Es para cancelar una cita» en el menú de servicios recibe el aviso, no «le agendo»', async () => {
+      cancelEnabled = false;
+      await say('Hola');
+      expect(state()).toBe(ChatState.AWAITING_SPECIALTY);
+
+      await say('Es para cancelar una cita');
+      const r = lastSent();
+      expect(r).toContain('no es posible *cancelar citas*');
+      expect(r).not.toMatch(/le agendo/i);
+      expect(state()).not.toBe(ChatState.AWAITING_INTERRUPT_CONFIRMATION);
+    });
+
     it('cambiar apagado: «cambiar cita» recibe su aviso, cancelar se sigue ofreciendo', async () => {
       rescheduleEnabled = false;
       seedPaciente();
