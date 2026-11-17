@@ -31,7 +31,7 @@
 | 13 | **64 paquetes del sistema por actualizar**, entre ellos el kernel (6.8.0-149) y Docker (29.9.3). `unattended-upgrades` solo instala los de seguridad de Ubuntu; Docker viene de otro repositorio y el kernel exige reinicio. | Medio | **Pendiente en el servidor** (§3.1). |
 | 14 | **SSH**: `X11Forwarding yes`, `MaxAuthTries 6`, `LoginGraceTime 120`, sin `ClientAliveInterval`. El resto (solo llaves, sin contraseña, root solo con llave) está bien. | Bajo | **Pendiente en el servidor** (§3.2). |
 | 15 | **Postgres**: la aplicación se conecta como el único rol, que es superusuario. | Bajo-medio | **Pendiente** (§3.4): un rol sin superusuario para la aplicación. |
-| 16 | **Respaldos solo en el mismo disco** (`/var/backups/agenia`, 14 días, 17 archivos, 254 MB). Si el servidor se pierde, se pierden. | Medio | **Pendiente** (§3.5): copia cifrada fuera del servidor. |
+| 16 | **Respaldos solo en el mismo disco** (`/var/backups/agenia`, 14 días, 17 archivos, 254 MB). Si el servidor se pierde, se pierden. | Medio | **Parcial** (§3.5): desde el 2026-11-17, copia manual al computador del equipo con `./respaldo.sh` (huellas, prueba de restauración, `--cifrar`); falta la automática a un almacenamiento externo. |
 | 17 | `fail2ban` tiene en `ignoreip` solo una de las dos IP desde las que entra el administrador (`186.87.28.46`; también entra desde `181.79.57.172`). | Bajo | **Pendiente** (§3.2). |
 | 18 | El filtro global de errores de la API devuelve el `message` del error al cliente también en los 500. | Bajo | **Aceptado**: solo lo reciben clientes autenticados (panel, agente) o Meta, que no lo lee; las rutas públicas están en lista blanca. Se cambiará si la API se publica más. |
 | 19 | Next.js avisa que la convención `middleware.ts` pasará a `proxy.ts`. | Informativo | Pendiente (sin efecto hoy). |
@@ -100,6 +100,8 @@ Hace falta el `docker-compose.deploy.yml` de este commit ya desplegado (lee `RED
 Crear `agenia_app` con `LOGIN` y los permisos sobre el esquema `public` (`GRANT ALL ON ALL TABLES/SEQUENCES` y `ALTER DEFAULT PRIVILEGES`), cambiar `DATABASE_URL` en `.env.production` y dejar el rol actual solo para migraciones (`migrator`). Exige probar las migraciones con el rol nuevo antes (los disparadores de `non-prisma-ddl.sql` necesitan que el dueño de las tablas sea coherente).
 
 ### 3.5 Respaldo fuera del servidor
+
+**Hecho en parte (2026-11-17):** `./respaldo.sh`, desde el computador del equipo, trae la base, Redis, los secretos y la configuración del servidor a `respaldos/<fecha>` con huellas comprobadas y prueba de restauración (`--cifrar` para sacarla de ese computador). Restaurar en otro VPS: `docs/emergencia/RESCATE_VPS.md`. Depende de que alguien lo corra; lo de abajo es la versión automática que sigue pendiente.
 
 Con `rclone` a un almacenamiento cifrado (Backblaze B2, S3 o similar): un cron después del respaldo (`3:45`) que copie `/var/backups/agenia/agenia-*.sql.gz` con `rclone copy --max-age 2d`, y una prueba de restauración trimestral en el Postgres de pruebas. Sin esto, perder el disco del VPS es perder la historia.
 

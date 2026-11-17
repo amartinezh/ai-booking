@@ -49,3 +49,7 @@ deploy/secrets/
 
 # Estado local de scripts/whatsapp-tunnel.sh (verify token, logs de ngrok)
 .local/
+
+# Copias de seguridad del servidor que trae ./respaldo.sh: datos de pacientes y
+# TODOS los secretos (.env.production con la ENCRYPTION_KEY). Nunca a git.
+/respaldos/

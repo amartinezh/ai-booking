@@ -408,8 +408,10 @@ rsync -az --delete \
   -e "ssh ${SSH_OPTS[*]} -p $SSH_PORT -i $SSH_KEY" \
   --exclude 'node_modules' --exclude '.next' --exclude 'dist' --exclude '.turbo' \
   --exclude 'coverage' --exclude '*.log' --exclude '.DS_Store' --exclude '.git' \
-  --exclude '.env' --exclude '.env.production' \
+  --include '.env.example' --exclude '.env' --exclude '.env.*' \
   --exclude 'deploy/secrets' --exclude 'deploy/install.conf' --exclude 'deploy/Caddyfile' \
+  --exclude '.claude' --exclude 'reports' --exclude 'research_notes' --exclude '/homologar-plan-*.txt' --exclude 'tunnel.sh' \
+  --exclude '/respaldos' --exclude '/respaldo.sh' \
   "$SRC_DIR/" "root@$VPS_IP:$REMOTE_DIR/"
 ok "Código sincronizado ($(du -sh "$SRC_DIR" 2>/dev/null | cut -f1) en origen)"
 

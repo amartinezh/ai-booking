@@ -119,6 +119,9 @@ RSYNC_ARGS=(-az --delete
   --include '.env.example' --exclude '.env' --exclude '.env.*'
   --exclude 'deploy/secrets' --exclude 'deploy/install.conf' --exclude 'deploy/Caddyfile'
   --exclude '.claude' --exclude 'reports' --exclude 'research_notes' --exclude '/homologar-plan-*.txt' --exclude 'tunnel.sh'
+  # Las copias de seguridad locales (./respaldo.sh) llevan datos de pacientes y
+  # todos los secretos: nunca viajan de vuelta al servidor.
+  --exclude '/respaldos' --exclude '/respaldo.sh'
 )
 [[ $DRY_RUN -eq 1 ]] && RSYNC_ARGS+=(--dry-run -v)
 rsync "${RSYNC_ARGS[@]}" \

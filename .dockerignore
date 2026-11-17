@@ -46,6 +46,10 @@ reports
 research_notes
 /homologar-plan-*.txt
 tunnel.sh
+# Copias de seguridad locales (./respaldo.sh): datos de pacientes y secretos. Ni
+# la carpeta ni el script entran a la imagen.
+respaldos
+respaldo.sh
 # Ningún .env entra a la imagen (en el servidor quedó uno viejo en apps/web, 2026-11-08); los ejemplos sí.
 **/.env
 **/.env.*

@@ -677,6 +677,16 @@ ${SINGLE_DOMAIN} {
 		reverse_proxy api:3000
 	}
 
+	# ── Rutas de API que viven en el panel Next.js, no en NestJS ────────────
+	# apps/web/app/api/padron/* son Route Handlers (la carga del padrón de las
+	# EPS: un CSV/Excel de varios MB no cabe en un Server Action). SIN
+	# strip_prefix: la ruta del Route Handler ya incluye /api. Debe ir antes del
+	# 404 de abajo. Sin este bloque la carga del padrón falla con 404 (faltaba en
+	# este instalador: el servidor del hospital lo tenía agregado a mano).
+	handle /api/padron/* {
+		reverse_proxy web:3000
+	}
+
 	# Cualquier otra ruta bajo /api no existe de cara a internet. Se responde
 	# 404 (no 403) para no confirmar qué endpoints hay detrás.
 	handle /api/* {
@@ -730,6 +740,11 @@ elif [[ "$DOMAIN_MODE" == "http" ]]; then
 	handle /api/mirror* {
 		uri strip_prefix /api
 		reverse_proxy api:3000
+	}
+
+	# Carga del padrón (Route Handlers del panel, ver el modo con dominio).
+	handle /api/padron/* {
+		reverse_proxy web:3000
 	}
 
 	handle /api/* {

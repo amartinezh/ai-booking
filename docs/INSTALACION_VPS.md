@@ -424,6 +424,9 @@ EOF
 |---|---|---|
 | `/` y todo el panel | ✅ | Navegadores del personal |
 | `/api/chatbot/webhook` | ✅ | Meta (WhatsApp Cloud API) |
+| `/api/telegram/webhook/*` · `/api/support-bot/webhook/*` | ✅ | Telegram (pacientes y asistente de soporte del personal) |
+| `/api/mirror*` | ✅ | El agente del hospital (con su token) |
+| `/api/padron/*` | ✅ → `web:3000`, sin `strip_prefix` | La carga del padrón (Route Handlers del panel). El instalador lo agrega desde el 2026-11-17 |
 | El resto de `/api/*` | ❌ 404 | El panel, por `http://api:3000` (red interna) |
 | PostgreSQL, Redis | ❌ | Solo red interna |
 
@@ -694,7 +697,11 @@ printf '30 3 * * * root /usr/local/bin/agenia backup >> /var/log/agenia-backup.l
   > /etc/cron.d/agenia-backup
 ```
 
-Retiene 14 días en `/var/backups/agenia`. **Cópialos fuera del servidor**: un
+Retiene 14 días en `/var/backups/agenia`. Para tenerlo también fuera del
+servidor: `./respaldo.sh` desde tu computador (base, Redis, secretos,
+configuración y certificados, con huellas y prueba de restauración); para
+levantar todo con esos datos en otro VPS: `docs/emergencia/RESCATE_VPS.md`.
+**Cópialos fuera del servidor**: un
 backup que vive en la misma máquina que la base no es un backup.
 
 **Administrar la base desde tu equipo** (sin exponer el puerto):
