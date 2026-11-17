@@ -2668,7 +2668,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
       const all = sentMessages().join('\n');
       // La cédula corta NO se rechaza por tamaño.
-      expect(all).not.toContain('cédula válida');
+      expect(all).not.toContain('documento válido');
       expect(all).not.toContain('no logré identificar');
       // Avanza pidiendo el nombre del paciente nuevo (cédula aceptada).
       expect(all).toContain('nombre completo');
@@ -3332,9 +3332,13 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       await service.processIncomingMessage(makeTextEvent('SI'));
 
       const all = sentMessages().join('\n');
-      // Mensaje amable con el enlace al formulario público de revisión.
+      // Mensaje amable con el número que leyó y el enlace al formulario
+      // público de revisión. Al confirmar no hay corrección: cierra.
       expect(all).toContain('dado de alta');
+      expect(all).toContain('*1088123456*');
       expect(all).toContain(`/solicitud-alta/${ORG_ID}`);
+      // 2026-11-17: ya no ofrece agendar como particular.
+      expect(all).not.toMatch(/particular/i);
       // No se reservó nada y la sesión quedó cerrada.
       expect(
         (service as any).appointmentsService.bookAppointment,
@@ -3396,6 +3400,28 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(
         (service as any).appointmentsService.bookAppointment,
       ).toHaveBeenCalled();
+    });
+
+    // 🪪 2026-11-17: corrigió el número y pasó. Si en la misma conversación agenda
+    // para otra persona y el padrón no la tiene, también puede corregir.
+    it('con alta, borra la marca del rechazo anterior de la conversación', async () => {
+      const marca = `temp_padron_rechazado:${ORG_ID}:${SENDER}`;
+      redis.store.set(marca, '1054079833');
+      prisma.eps.findFirst.mockResolvedValue({ id: 'eps-sura', name: 'Sura' });
+      prisma.epsEnrolledPatient.findFirst.mockResolvedValue({ id: 'padron-1' });
+
+      const blocked = await (service as any).rejectIfNotEnrolledInEps({
+        organizationId: ORG_ID,
+        senderId: SENDER,
+        cedula: '1058079833',
+        epsId: 'eps-sura',
+        MSGS,
+        userMessage: '1058079833',
+        permitirCorregir: true,
+      });
+
+      expect(blocked).toBe(false);
+      expect(redis.store.has(marca)).toBe(false);
     });
 
     it('sin EPS en sesión (epsId null) → el gate no aplica', async () => {

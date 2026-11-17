@@ -954,7 +954,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say(
         'Si de pronto cancelan alguna cita y tienen el espacio antes me avisan?',
       );
-      expect(lastSent()).toMatch(/cédula (del paciente|de quien va a la cita)/);
+      expect(lastSent()).toMatch(
+        /número de documento (del paciente|de quien va a la cita)/,
+      );
       expect(lastSent()).not.toMatch(
         /no corresponde a una cédula válida|identificar el número/,
       );
@@ -1005,8 +1007,151 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('1088123456'); // no está en el padrón
 
       expect(lastSent()).toMatch(/solicitud-alta|dado de alta/i);
-      expect(await state()).toBe(ChatState.IDLE);
       expect(appointments.bookAppointment).not.toHaveBeenCalled();
+    });
+
+    // 🪪 2026-11-17: escribió 1054079833 en vez de 1058079833, leyó «su documento
+    // aún no figura» sin ver el error, y tuvo que empezar de nuevo.
+    describe('1.9b el padrón no lo encuentra: puede corregir el número', () => {
+      const hastaElDocumento = async () => {
+        await say('Hola');
+        await say('A');
+        await say('B'); // Sura
+        await say('A'); // cupo
+        expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+      };
+
+      it('la primera vez le muestra el número y sigue en el paso del documento, con el cupo apartado', async () => {
+        await hastaElDocumento();
+        const cupo = redis.store.get(
+          `temp_selected_slot_id:${ORG_ID}:${SENDER}`,
+        );
+
+        await say('1054079833');
+
+        expect(lastSent()).toContain('*1054079833*');
+        expect(lastSent()).toMatch(/¿Lo escribió bien\?/);
+        expect(lastSent()).toContain(`/solicitud-alta/${ORG_ID}`);
+        expect(lastSent()).not.toMatch(/particular/i);
+        expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+        expect(
+          redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
+        ).toBe(cupo);
+        expect(
+          redis.store.get(`temp_cedula:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+        expect(interactionLog.logFailure).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reason: 'EPS_NOT_ENROLLED',
+            metadata: expect.objectContaining({
+              stage: 'EPS_ENROLLMENT_CORREGIR',
+              cedula: '1054079833',
+            }),
+          }),
+        );
+        // No es un intento fallido: el número era un número.
+        expect(
+          redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+      });
+
+      it('con el número corregido sigue y agenda con ese documento', async () => {
+        db.enrolled.push({ cedula: '1058079833', epsId: EPS_SURA.id });
+        await hastaElDocumento();
+
+        await say('1054079833');
+        await say('1058079833');
+
+        expect(await state()).toBe(ChatState.AWAITING_NAME);
+        await decirNombre(say);
+        await responderAlta(say, { conEps: true });
+        await say('Sí');
+
+        expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+        expect(db.patients.map((p) => p.cedula)).toEqual(['1058079833']);
+      });
+
+      it('si el segundo tampoco está, cierra con el teléfono del hospital y sin ofrecer la particular', async () => {
+        prisma.organization.findUnique.mockResolvedValue({
+          id: ORG_ID,
+          name: ORG_NAME,
+          supportPhone: '6068538838',
+        });
+        await hastaElDocumento();
+
+        await say('1054079833');
+        await say('1058079833');
+
+        expect(lastSent()).toContain('*1058079833*');
+        expect(lastSent()).toContain('*6068538838*');
+        expect(lastSent()).toContain(`/solicitud-alta/${ORG_ID}`);
+        expect(lastSent()).not.toMatch(/particular/i);
+        expect(await state()).toBe(ChatState.IDLE);
+        expect(
+          redis.store.get(`temp_padron_rechazado:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+        expect(interactionLog.logFailure).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            reason: 'EPS_NOT_ENROLLED',
+            metadata: expect.objectContaining({
+              stage: 'EPS_ENROLLMENT_BLOCKED',
+              cedula: '1058079833',
+              documentoAnterior: '1054079833',
+            }),
+          }),
+        );
+        expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      });
+
+      it('el mismo número otra vez («está bien escrito») también cierra', async () => {
+        await hastaElDocumento();
+
+        await say('1054079833');
+        await say('1054079833');
+
+        expect(lastSent()).toMatch(/^Lo sentimos: el documento \*1054079833\*/);
+        expect(await state()).toBe(ChatState.IDLE);
+      });
+
+      it('si el número rechazado era de una ficha, el nombre de esa ficha no se queda en la sesión', async () => {
+        db.patients.push({
+          id: 'pat-mama',
+          cedula: '24390294',
+          fullName: 'Luz Ramírez',
+          organizationId: ORG_ID,
+          epsId: EPS_SURA.id,
+          eps: EPS_SURA,
+        });
+        await hastaElDocumento();
+        redis.store.set(`temp_nombre:${ORG_ID}:${SENDER}`, 'Luz Ramírez');
+
+        await say('24390294');
+
+        expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+        expect(
+          redis.store.get(`temp_nombre:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+      });
+
+      it('con el documento dado antes en la conversación: al elegir el cupo también puede corregirlo', async () => {
+        db.enrolled.push({ cedula: '1058079833', epsId: EPS_SURA.id });
+        await say('Hola');
+        await say('A');
+        await say('B'); // Sura
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+        redis.store.set(`temp_cedula:${ORG_ID}:${SENDER}`, '1054079833');
+
+        await say('A');
+
+        expect(lastSent()).toContain('*1054079833*');
+        expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+        expect(
+          redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
+        ).toBeDefined();
+
+        await say('1058079833');
+        expect(await state()).toBe(ChatState.AWAITING_NAME);
+      });
     });
 
     it('1.10 EPS con convenio y paciente EN el padrón: llega a confirmación y reserva', async () => {
@@ -2968,6 +3113,35 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect.anything(),
       );
       expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    // 🪪 2026-11-17: el caso real fue en la lista de espera.
+    it('4.1b por EPS, un número que el padrón no tiene: lo corrige y entra a la cola con el bueno', async () => {
+      db.enrolled.push({ cedula: '1058079833', epsId: EPS_SURA.id });
+      appointments.getAvailableSlots.mockResolvedValue([]);
+
+      await say('Hola');
+      await say('A');
+      await say('B'); // Sura
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+      await say('Sí');
+      expect(lastSent()).toMatch(
+        /número de documento\* del paciente \(cédula, tarjeta de identidad o registro civil\)/,
+      );
+
+      await say('1054079833');
+      expect(lastSent()).toContain('*1054079833*');
+      expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+      expect(redis.store.get(`temp_waitlist_pending:${ORG_ID}:${SENDER}`)).toBe(
+        '1',
+      );
+      expect(waitlist.joinWaitlist).not.toHaveBeenCalled();
+
+      await say('1058079833');
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      await say('Juan Pérez');
+      expect(waitlist.joinWaitlist).toHaveBeenCalledTimes(1);
+      expect(db.patients.map((p) => p.cedula)).toEqual(['1058079833']);
     });
 
     it('4.2 declinar el opt-in cierra el flujo sin encolar', async () => {

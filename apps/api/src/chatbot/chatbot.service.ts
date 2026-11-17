@@ -20,6 +20,7 @@ import {
   PARTICULAR_EPS_NAME,
   DEFAULT_MAX_RETRIES,
   SEMANTIC_MAP_TIMEOUT_MS,
+  TIPOS_DE_DOCUMENTO,
   OPCIONES_CONSULTA,
   TEXTO_OPERACION,
   lineasOpcionesConsulta,
@@ -2338,9 +2339,20 @@ export class ChatbotService implements OnModuleInit {
   // en el padrón de la clínica (EpsEnrolledPatient, cargado por CSV).
   // "Particular" (pago directo) NO pasa por el padrón.
   //
-  // Si el paciente NO está de alta: mensaje amable + enlace al formulario
-  // público de solicitud de revisión, auditoría y cierre de la sesión.
-  // Devuelve true si el flujo debe DETENERSE (paciente bloqueado).
+  // Si el paciente NO está de alta: le dice el número que leyó, con el enlace
+  // al formulario público de solicitud de revisión, y lo audita.
+  //
+  // 🪪 Corregir el número (2026-11-17). Con `permitirCorregir` (el paciente
+  // acaba de escribir el documento, o lo dio antes en la conversación), la
+  // PRIMERA vez no cierra: vuelve al paso del documento con el cupo, la EPS y
+  // la lista de espera intactos. El 17-nov alguien escribió 1054… en vez de
+  // 1058…, leyó «su documento aún no figura» sin ver su error y tuvo que
+  // empezar de nuevo. La segunda vez en la conversación (o sin
+  // `permitirCorregir`, al confirmar) cierra la sesión como siempre, con el
+  // teléfono del hospital en vez de la oferta de agendar como particular.
+  //
+  // Devuelve true si el flujo debe DETENERSE (paciente bloqueado o a la espera
+  // del número corregido).
   // ══════════════════════════════════════════════════════════════
   private async rejectIfNotEnrolledInEps(params: {
     organizationId: string;
@@ -2349,6 +2361,7 @@ export class ChatbotService implements OnModuleInit {
     epsId: string | null;
     MSGS: ReturnType<typeof buildMessages>;
     userMessage?: string | null;
+    permitirCorregir?: boolean;
   }): Promise<boolean> {
     const { organizationId, senderId, epsId, MSGS, userMessage } = params;
     if (!epsId) return false; // sin EPS asociada (flujo Particular) → no aplica
@@ -2385,18 +2398,59 @@ export class ChatbotService implements OnModuleInit {
       },
       select: { id: true },
     });
-    if (enrolled) return false;
+    const rechazoKey = this.padronRechazoKey(organizationId, senderId);
+    if (enrolled) {
+      // Corrigió y pasó: un rechazo posterior en la misma conversación (otra
+      // cita, otra persona) vuelve a tener su oportunidad de corregir.
+      await this.redis.del(rechazoKey);
+      return false;
+    }
 
     const baseUrl = (
       this.configService.get<string>('PUBLIC_WEB_URL') ||
       'https://agendamiento-ia.com'
     ).replace(/\/+$/, '');
+    const enlace = `${baseUrl}/solicitud-alta/${organizationId}`;
+    const rechazoAnterior = await this.redis.get(rechazoKey);
+
+    if (params.permitirCorregir && !rechazoAnterior) {
+      await this.redis.set(rechazoKey, cedula, 'EX', SESSION_TTL);
+      // El número rechazado no se queda en la sesión, ni el nombre que se tomó de
+      // su ficha: si el bueno es de otra persona (la mamá dio su cédula y luego
+      // la del niño), la cita no puede salir a nombre de la primera.
+      await this.redis.del(
+        `temp_cedula:${organizationId}:${senderId}`,
+        `temp_nombre:${organizationId}:${senderId}`,
+      );
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CEDULA,
+      );
+      const reply = MSGS.epsNoAfiliadoCorregir(eps.name, cedula, enlace);
+      // Texto directo (no smartReply): el mensaje contiene un enlace que no debe
+      // sintetizarse a voz — mismo criterio que el enlace de la encuesta CSAT.
+      await this.sendWhatsAppMessage(senderId, reply);
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.EPS_NOT_ENROLLED,
+        userMessage: userMessage || '[audio]',
+        botReply: reply,
+        metadata: {
+          stage: 'EPS_ENROLLMENT_CORREGIR',
+          cedula,
+          epsId: eps.id,
+          epsName: eps.name,
+        },
+      });
+      return true;
+    }
+
     const reply = MSGS.epsNoAfiliado(
       eps.name,
-      `${baseUrl}/solicitud-alta/${organizationId}`,
+      cedula,
+      enlace,
+      this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
     );
-    // Texto directo (no smartReply): el mensaje contiene un enlace que no debe
-    // sintetizarse a voz — mismo criterio que el enlace de la encuesta CSAT.
     await this.sendWhatsAppMessage(senderId, reply);
 
     await this.auditFailure(senderId, organizationId, {
@@ -2408,10 +2462,16 @@ export class ChatbotService implements OnModuleInit {
         cedula,
         epsId: eps.id,
         epsName: eps.name,
+        ...(rechazoAnterior ? { documentoAnterior: rechazoAnterior } : {}),
       },
     });
     await this.cleanUpSession(organizationId, senderId);
     return true;
+  }
+
+  /** Documento que el padrón ya rechazó en esta conversación (ver arriba). */
+  private padronRechazoKey(organizationId: string, senderId: string): string {
+    return `temp_padron_rechazado:${organizationId}:${senderId}`;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -2810,6 +2870,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_waitlist_pending:${organizationId}:${senderId}`,
       `temp_waitlist_regimen:${organizationId}:${senderId}`,
       `temp_eps_oferta_particular:${organizationId}:${senderId}`,
+      this.padronRechazoKey(organizationId, senderId),
       `temp_lookup_cedula:${organizationId}:${senderId}`,
       `temp_lookup_hoy:${organizationId}:${senderId}`,
       `temp_lookup_opciones:${organizationId}:${senderId}`,
@@ -8333,6 +8394,8 @@ export class ChatbotService implements OnModuleInit {
             epsId: epsIdForWl,
             MSGS,
             userMessage: text,
+            // Sigue en el paso del documento, con la lista de espera pendiente.
+            permitirCorregir: true,
           })
         ) {
           return;
@@ -9143,6 +9206,8 @@ export class ChatbotService implements OnModuleInit {
           epsId: epsIdForPatient,
           MSGS,
           userMessage: text,
+          // Sigue en el paso del documento, con el cupo apartado.
+          permitirCorregir: true,
         })
       ) {
         return;
@@ -10456,6 +10521,9 @@ export class ChatbotService implements OnModuleInit {
           epsId: epsIdPrevio,
           MSGS,
           userMessage,
+          // El documento lo dio antes en la conversación: pasa al paso del
+          // documento con el cupo recién apartado, como si no lo hubiera dado.
+          permitirCorregir: true,
         })
       ) {
         return;
@@ -11779,7 +11847,7 @@ export class ChatbotService implements OnModuleInit {
 
       // Si todavía no tenemos cédula, la pedimos ahora (necesaria para la cola).
       if (!cedulaPrevia) {
-        const reply = `Para unirle a la lista de espera, ¿me comparte su *número de cédula*?`;
+        const reply = `Para unirle a la lista de espera, ¿me comparte el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`;
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(
           organizationId,

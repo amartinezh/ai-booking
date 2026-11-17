@@ -105,6 +105,13 @@ export const SERVICE_WINDOW_TTL = 24 * 60 * 60;
 // Longitud mínima de dígitos para considerar una cédula válida.
 export const MIN_CEDULA_LENGTH = 4;
 
+// 🪪 Qué documento se pide (2026-11-17). Decía «cédula» y nada más: quien agenda
+// para un niño no sabía si escribir la tarjeta de identidad o el registro civil
+// (una encuesta lo pidió: «ponerle la opción si es C.C., T.I.»). Cualquiera de
+// esos números sirve: el bot solo guarda los dígitos.
+export const TIPOS_DE_DOCUMENTO =
+  'cédula, tarjeta de identidad o registro civil';
+
 // Timeout para el mapeo semántico de catálogo (servicio/EPS) vía LLM.
 // Si la API tarda más, caemos al menú determinista (no degrada la UX de voz).
 export const SEMANTIC_MAP_TIMEOUT_MS = 2500;
@@ -458,23 +465,36 @@ const FORMAL = {
         `Si lo prefiere, podemos agendarle como *Particular*, o indíqueme si cuenta con otra EPS.`,
     ]),
 
-  // La cédula no está en el padrón de pacientes dados de alta para esa EPS.
-  // Mensaje amable + enlace al formulario público de solicitud de revisión.
-  epsNoAfiliado: (epsName: string, enlace: string) =>
-    pick([
-      `Lo sentimos: verifiqué en nuestro sistema y su documento aún no figura *dado de alta* ` +
-        `para agendar por *${epsName}* en esta institución. 🙏\n\n` +
-        `Si considera que debería estar habilitado(a), con gusto puede radicar una *solicitud de revisión* ` +
-        `en este enlace seguro y nuestro equipo estudiará su caso:\n${enlace}\n\n` +
-        `_Cuando su alta sea aprobada, podrá agendar por su EPS. Si lo prefiere, también puede ` +
-        `escribirme *"Hola"* y agendar como *Particular* (pago directo)._ 💙`,
-      `Disculpe: revisé el listado de pacientes habilitados y su documento todavía no está ` +
-        `*dado de alta* para *${epsName}* en esta institución. 🙏\n\n` +
-        `Puede solicitar la revisión de su caso en este enlace seguro — allí nos cuenta por qué ` +
-        `debería estar habilitado(a):\n${enlace}\n\n` +
-        `_Apenas la institución apruebe su alta, podrá agendar por su EPS. Mientras tanto, si desea, ` +
-        `escríbame *"Hola"* para agendar como *Particular*._ 💙`,
-    ]),
+  // 🪪 El documento no está en el padrón de esa EPS (2026-11-17). Dice el número que
+  // leyó: el 17-nov alguien escribió 1054… en vez de 1058…, recibió «su documento
+  // aún no figura» sin ver el error y tuvo que empezar de nuevo.
+  //
+  // La PRIMERA vez, en el paso del documento, puede corregirlo ahí mismo
+  // (`epsNoAfiliadoCorregir`). Si vuelve a pasar, o si el rechazo llega al
+  // confirmar, se cierra con el enlace de revisión y el teléfono del hospital.
+  // Ya no ofrece la cita particular: quien tiene derechos y el padrón está
+  // atrasado llegaba a recepción con una cita de pago directo que había que
+  // pasar a su EPS (lo mismo que se quitó para Nueva EPS el 21-oct).
+  epsNoAfiliadoCorregir: (epsName: string, documento: string, enlace: string) =>
+    `El documento *${documento}* no figura *dado de alta* para agendar por *${epsName}* ` +
+    `en esta institución. 🙏\n\n` +
+    `¿Lo escribió bien? Si hubo un error, escríbame de nuevo el *número de documento del ` +
+    `paciente* (la persona que va a la cita).\n\n` +
+    `Si el número está bien, puede radicar una *solicitud de revisión* en este enlace seguro ` +
+    `y nuestro equipo estudiará su caso:\n${enlace}\n\n` +
+    `_Si prefiere no seguir, escriba *"Salir"*._`,
+
+  epsNoAfiliado: (
+    epsName: string,
+    documento: string,
+    enlace: string,
+    contacto: string,
+  ) =>
+    `Lo sentimos: el documento *${documento}* no figura *dado de alta* para agendar por ` +
+    `*${epsName}* en esta institución. 🙏\n\n` +
+    `Si considera que debería estar habilitado(a), puede radicar una *solicitud de revisión* ` +
+    `en este enlace seguro y nuestro equipo estudiará su caso:\n${enlace}\n\n` +
+    `_Si necesita la cita antes, comuníquese con ${contacto}._ 💙`,
 
   // ── LÍMITE DE CITAS POR PACIENTE ──────────────────────────────────────
   // `maximo` y `citas` salen de `unaOVariasCitas`; `dia`/`mes`, de
@@ -699,18 +719,18 @@ const FORMAL = {
   pedirCedulaPostSlot: (fechaFormateada: string) =>
     pick([
       `Excelente elección. Le aparté ese horario:\n📅 *${fechaFormateada}*\n\n` +
-        `Para terminar de agendarle, ¿me indica la *cédula del paciente* (la persona que va a la cita), por favor?`,
+        `Para terminar de agendarle, ¿me indica el *número de documento del paciente* (la persona que va a la cita)? Puede ser ${TIPOS_DE_DOCUMENTO}.`,
       `Perfecto, ya casi terminamos. Le reservé tentativamente:\n📅 *${fechaFormateada}*\n\n` +
-        `Solo me falta confirmar un dato: ¿me comparte la *cédula de quien va a la cita*?`,
+        `Solo me falta confirmar un dato: ¿me comparte el *número de documento de quien va a la cita*? Puede ser ${TIPOS_DE_DOCUMENTO}.`,
       `Listo. Tengo ese espacio reservado para usted:\n📅 *${fechaFormateada}*\n\n` +
-        `Para finalizar, ¿me indica la *cédula del paciente*? Solo el número, sin puntos.`,
+        `Para finalizar, ¿me indica el *número de documento del paciente* (${TIPOS_DE_DOCUMENTO})? Solo el número, sin puntos.`,
     ]),
 
   especialidadConfirmada: (especialidad: string) =>
-    `Perfecto, anotado: *${especialidad}*. 🩺\n\nPara revisar la agenda, ¿me indica su *número de cédula*?`,
+    `Perfecto, anotado: *${especialidad}*. 🩺\n\nPara revisar la agenda, ¿me indica el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
 
   pedirCedula: (especialidad: string) =>
-    `Anotado, busca cita para *${especialidad}*. 🩺\n\n¿Me comparte su *número de cédula*? Solo el número, sin puntos ni guiones.`,
+    `Anotado, busca cita para *${especialidad}*. 🩺\n\n¿Me comparte el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})? Solo el número, sin puntos ni guiones.`,
 
   // 🪪 El nombre va en DOS pasos y se dice sin rodeos (2026-10-22: con «sus nombres
   // (solo los nombres…)» un paciente escribió el nombre completo y quedó con los
@@ -1483,13 +1503,13 @@ const FORMAL = {
 
   cancelarPedirCedula: () =>
     pick([
-      `Con gusto le ayudo con la cancelación de su cita. 📋\n\nPara ubicarla en el sistema, ¿me indica el *número de cédula* del paciente, por favor?`,
-      `Con gusto le colaboro con eso.\n\nPara buscar la cita, ¿me comparte la *cédula* del paciente?`,
+      `Con gusto le ayudo con la cancelación de su cita. 📋\n\nPara ubicarla en el sistema, ¿me indica el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO}), por favor?`,
+      `Con gusto le colaboro con eso.\n\nPara buscar la cita, ¿me comparte el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
     ]),
 
   cancelarCedulaInvalida: () =>
     pick([
-      `Ese número no corresponde a una cédula válida.\n\n¿Me la confirma, por favor? Solo el número, sin puntos ni espacios.\n_(Ej: 18531928)_`,
+      `Ese número no corresponde a un documento válido.\n\n¿Me lo confirma, por favor? Solo el número, sin puntos ni espacios.\n_(Ej: 18531928)_`,
       `Disculpe, no fue posible identificar el número correctamente.\n\nEscríbame solo los dígitos, sin separadores. _(Ej: 1088123456)_`,
     ]),
 
@@ -1498,8 +1518,8 @@ const FORMAL = {
   // corresponde a una cédula válida»).
   cedulaSinNumero: (fechaFormateada: string) =>
     pick([
-      `Para seguir necesito la *cédula del paciente*${fechaFormateada ? ` del horario que le aparté:\n📅 *${fechaFormateada}*` : '.'}\n\nEscríbala solo con números, sin puntos. Si tiene otra pregunta, escríbala cuando terminemos, o escriba *"Salir"* si prefiere no agendar.`,
-      `Antes de seguir me falta la *cédula de quien va a la cita*, solo el número${fechaFormateada ? `, para el horario del 📅 *${fechaFormateada}*` : ''}.\n\nSi necesita otra cosa, escríbala después de agendar, o escriba *"Salir"* si prefiere no agendar.`,
+      `Para seguir necesito el *número de documento del paciente*${fechaFormateada ? ` del horario que le aparté:\n📅 *${fechaFormateada}*` : '.'}\n\nEscríbalo solo con números, sin puntos. Si tiene otra pregunta, escríbala cuando terminemos, o escriba *"Salir"* si prefiere no agendar.`,
+      `Antes de seguir me falta el *número de documento de quien va a la cita*, solo el número${fechaFormateada ? `, para el horario del 📅 *${fechaFormateada}*` : ''}.\n\nSi necesita otra cosa, escríbala después de agendar, o escriba *"Salir"* si prefiere no agendar.`,
     ]),
 
   cancelarPacienteNoExiste: (cedula: string) =>
@@ -1619,8 +1639,8 @@ const FORMAL = {
   // ── CONSULTA DE CITAS ("¿qué citas tengo?") ──────────────────
   consultaPedirCedula: () =>
     pick([
-      `Con gusto le consulto sus citas. 🔍\n\n¿Me indica el *número de cédula* del paciente, por favor?`,
-      `Claro, reviso sus citas. 🔍\n\nPara ubicarlas, ¿me comparte la *cédula* del paciente?`,
+      `Con gusto le consulto sus citas. 🔍\n\n¿Me indica el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO}), por favor?`,
+      `Claro, reviso sus citas. 🔍\n\nPara ubicarlas, ¿me comparte el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
     ]),
 
   // `cuerpo` ya trae las citas (ver armarCuerpoConsulta en el servicio).
@@ -1823,8 +1843,8 @@ const FORMAL = {
   // ── MODIFICACIÓN / REPROGRAMACIÓN DE CITA ──────────────────────
   modificarPedirCedula: () =>
     pick([
-      `Con gusto le ayudo a *modificar la fecha* de su cita. 🗓️\n\nPara ubicarla en el sistema, ¿me indica el *número de cédula* del paciente, por favor?`,
-      `Claro, le ayudo a *reprogramar* su cita.\n\nPara buscarla, ¿me comparte la *cédula* del paciente?`,
+      `Con gusto le ayudo a *modificar la fecha* de su cita. 🗓️\n\nPara ubicarla en el sistema, ¿me indica el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO}), por favor?`,
+      `Claro, le ayudo a *reprogramar* su cita.\n\nPara buscarla, ¿me comparte el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
     ]),
 
   modificarPacienteNoExiste: (cedula: string) =>
@@ -2067,23 +2087,26 @@ const INFORMAL = {
       `En este momento no estamos atendiendo *${epsName}*. Si gustas te agendo como *Particular*, o si tienes otra EPS, dímelo.`,
     ]),
 
-  // La cédula no está en el padrón de pacientes dados de alta para esa EPS.
-  // Mensaje amable + enlace al formulario público de solicitud de revisión.
-  epsNoAfiliado: (epsName: string, enlace: string) =>
-    pick([
-      `Qué pena contigo: revisé el sistema y tu documento aún no aparece *dado de alta* ` +
-        `para agendar por *${epsName}* aquí. 🙏\n\n` +
-        `Si crees que deberías estar habilitado(a), radica una *solicitud de revisión* en este ` +
-        `enlace seguro y el equipo estudiará tu caso:\n${enlace}\n\n` +
-        `_Cuando aprueben tu alta podrás agendar por tu EPS. Si prefieres, también puedes ` +
-        `escribirme *"Hola"* y agendar como *Particular* (pago directo)._ 💙`,
-      `Lo siento: miré el listado de pacientes habilitados y tu documento todavía no está ` +
-        `*dado de alta* para *${epsName}*. 🙏\n\n` +
-        `Cuéntanos tu caso en este enlace seguro para que lo revisen — ahí explicas por qué ` +
-        `deberías estar habilitado(a):\n${enlace}\n\n` +
-        `_Apenas aprueben tu alta podrás agendar por tu EPS. Mientras tanto, si quieres, ` +
-        `escríbeme *"Hola"* y te agendo como *Particular*._ 💙`,
-    ]),
+  // El documento no está en el padrón de esa EPS (ver el pool formal).
+  epsNoAfiliadoCorregir: (epsName: string, documento: string, enlace: string) =>
+    `El documento *${documento}* no aparece *dado de alta* para agendar por *${epsName}* aquí. 🙏\n\n` +
+    `¿Lo escribiste bien? Si hubo un error, mándame otra vez el *número de documento del ` +
+    `paciente* (quien va a la cita).\n\n` +
+    `Si el número está bien, radica una *solicitud de revisión* en este enlace seguro y el ` +
+    `equipo estudiará tu caso:\n${enlace}\n\n` +
+    `_Si prefieres no seguir, escribe *"Salir"*._`,
+
+  epsNoAfiliado: (
+    epsName: string,
+    documento: string,
+    enlace: string,
+    contacto: string,
+  ) =>
+    `Qué pena contigo: el documento *${documento}* no aparece *dado de alta* para agendar por ` +
+    `*${epsName}* aquí. 🙏\n\n` +
+    `Si crees que deberías estar habilitado(a), radica una *solicitud de revisión* en este ` +
+    `enlace seguro y el equipo estudiará tu caso:\n${enlace}\n\n` +
+    `_Si necesitas la cita antes, comunícate con ${contacto}._ 💙`,
 
   // ── LÍMITE DE CITAS POR PACIENTE (ver el pool formal) ─────────────────
   limiteCitasDia: (
@@ -2270,16 +2293,16 @@ const INFORMAL = {
 
   pedirCedulaPostSlot: (fechaFormateada: string) =>
     pick([
-      `¡Genial! 🌟 Te aparté ese horario:\n📅 *${fechaFormateada}*\n\nPara terminar de agendar, ¿me regalas la *cédula del paciente* (quien va a la cita)?`,
-      `¡Perfecto, ya casi! 😊 Te reservé tentativamente:\n📅 *${fechaFormateada}*\n\nMe falta solo un dato: ¿me compartes la *cédula de quien va a la cita*?`,
-      `¡Listo! 🎯 Tengo ese espacio apartado para ti:\n📅 *${fechaFormateada}*\n\nPara cerrar, ¿me mandas la *cédula del paciente*? Solo el número, sin puntos.`,
+      `¡Genial! 🌟 Te aparté ese horario:\n📅 *${fechaFormateada}*\n\nPara terminar de agendar, ¿me regalas el *número de documento del paciente* (quien va a la cita)? Puede ser ${TIPOS_DE_DOCUMENTO}.`,
+      `¡Perfecto, ya casi! 😊 Te reservé tentativamente:\n📅 *${fechaFormateada}*\n\nMe falta solo un dato: ¿me compartes el *número de documento de quien va a la cita*? Puede ser ${TIPOS_DE_DOCUMENTO}.`,
+      `¡Listo! 🎯 Tengo ese espacio apartado para ti:\n📅 *${fechaFormateada}*\n\nPara cerrar, ¿me mandas el *número de documento del paciente* (${TIPOS_DE_DOCUMENTO})? Solo el número, sin puntos.`,
     ]),
 
   especialidadConfirmada: (especialidad: string) =>
-    `¡Listo, *${especialidad}*! 🩺 Para revisarte la agenda, ¿me pasas tu *cédula*?`,
+    `¡Listo, *${especialidad}*! 🩺 Para revisarte la agenda, ¿me pasas el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
 
   pedirCedula: (especialidad: string) =>
-    `Anotado, vas por *${especialidad}*. 🩺 ¿Me compartes tu *cédula*? Solo el número.`,
+    `Anotado, vas por *${especialidad}*. 🩺 ¿Me compartes el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})? Solo el número.`,
 
   primeraVez: () =>
     pick([
@@ -2366,8 +2389,8 @@ const INFORMAL = {
 
   citaConfirmada: (clinicaName: string, fecha: string) =>
     pick([
-      `¡Listo, todo confirmado! 🎉 Tu cita ya quedó en *${clinicaName}*:\n📅 _${fecha}_\n\nLlega, por favor, *15 minutos antes* y trae tu *cédula*. 🪪 Cualquier cosa, acá estoy. ¡Que estés muy bien! 😊`,
-      `¡Hecho! 🌟 Tu cita en *${clinicaName}* quedó agendada:\n📅 _${fecha}_\n\nRecuerda llegar *15 min antes* con tu *cédula*. 🪪 ¡Gracias por confiar en nosotros! 💚`,
+      `¡Listo, todo confirmado! 🎉 Tu cita ya quedó en *${clinicaName}*:\n📅 _${fecha}_\n\nLlega, por favor, *15 minutos antes* y trae tu *documento de identidad*. 🪪 Cualquier cosa, acá estoy. ¡Que estés muy bien! 😊`,
+      `¡Hecho! 🌟 Tu cita en *${clinicaName}* quedó agendada:\n📅 _${fecha}_\n\nRecuerda llegar *15 min antes* con tu *documento de identidad*. 🪪 ¡Gracias por confiar en nosotros! 💚`,
       `¡Quedó lista! 🎊 Tienes cita confirmada en *${clinicaName}*:\n📅 _${fecha}_\n\nPor favor, sé puntual: llega *15 minutos antes* y trae tu *documento*. 🪪 ¡Hasta pronto! 👋`,
     ]),
 
@@ -2931,21 +2954,21 @@ const INFORMAL = {
 
   cancelarPedirCedula: () =>
     pick([
-      `Claro que sí, te ayudo a cancelar tu cita. 📋 Para buscarla, ¿me pasas la *cédula* del paciente?`,
-      `Con gusto te ayudo con eso. 😊 ¿Me compartes la *cédula* del paciente para buscar la cita?`,
+      `Claro que sí, te ayudo a cancelar tu cita. 📋 Para buscarla, ¿me pasas el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
+      `Con gusto te ayudo con eso. 😊 ¿Me compartes el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO}) para buscar la cita?`,
     ]),
 
   cancelarCedulaInvalida: () =>
     pick([
-      `Mmm, ese número no me parece una cédula válida. 🙏 ¿Me la confirmas? Solo el número, sin puntos ni espacios. _(Ej: 18531928)_`,
+      `Mmm, ese número no me parece un documento válido. 🙏 ¿Me lo confirmas? Solo el número, sin puntos ni espacios. _(Ej: 18531928)_`,
       `Parece que no logré identificar el número. 😊 Mándame solo los dígitos, sin separadores. _(Ej: 1088123456)_`,
     ]),
 
   // 🪪 En el paso de la cédula escribió una frase sin números (2026-11-06).
   cedulaSinNumero: (fechaFormateada: string) =>
     pick([
-      `Para seguir necesito la *cédula del paciente*${fechaFormateada ? ` del horario que te aparté:\n📅 *${fechaFormateada}*` : '.'}\n\nEscríbela solo con números, sin puntos. Si tienes otra pregunta, escríbela cuando terminemos, o escribe *"Salir"* si prefieres no agendar.`,
-      `Antes de seguir me falta la *cédula de quien va a la cita*, solo el número${fechaFormateada ? `, para el horario del 📅 *${fechaFormateada}*` : ''}. 🙏\n\nSi necesitas otra cosa, escríbela después de agendar, o escribe *"Salir"* si prefieres no agendar.`,
+      `Para seguir necesito el *número de documento del paciente*${fechaFormateada ? ` del horario que te aparté:\n📅 *${fechaFormateada}*` : '.'}\n\nEscríbelo solo con números, sin puntos. Si tienes otra pregunta, escríbela cuando terminemos, o escribe *"Salir"* si prefieres no agendar.`,
+      `Antes de seguir me falta el *número de documento de quien va a la cita*, solo el número${fechaFormateada ? `, para el horario del 📅 *${fechaFormateada}*` : ''}. 🙏\n\nSi necesitas otra cosa, escríbela después de agendar, o escribe *"Salir"* si prefieres no agendar.`,
     ]),
 
   cancelarPacienteNoExiste: (cedula: string) =>
@@ -3056,8 +3079,8 @@ const INFORMAL = {
   // ── CONSULTA DE CITAS ("¿qué citas tengo?") ──────────────────
   consultaPedirCedula: () =>
     pick([
-      `¡Claro! Te reviso tus citas. 🔍 ¿Me pasas la *cédula* del paciente?`,
-      `Con gusto miro tus citas. 😊 ¿Me compartes la *cédula* del paciente?`,
+      `¡Claro! Te reviso tus citas. 🔍 ¿Me pasas el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
+      `Con gusto miro tus citas. 😊 ¿Me compartes el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
     ]),
 
   consultaDetalle: (nombre: string, cuerpo: string) =>
@@ -3223,8 +3246,8 @@ const INFORMAL = {
   // ── MODIFICACIÓN / REPROGRAMACIÓN DE CITA ──────────────────────
   modificarPedirCedula: () =>
     pick([
-      `¡Claro que sí! Te ayudo a *cambiar la fecha* de tu cita. 🗓️ Para buscarla, ¿me pasas la *cédula* del paciente?`,
-      `De una, te ayudo a *reprogramar* tu cita. 😊 ¿Me compartes la *cédula* del paciente para ubicarla?`,
+      `¡Claro que sí! Te ayudo a *cambiar la fecha* de tu cita. 🗓️ Para buscarla, ¿me pasas el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
+      `De una, te ayudo a *reprogramar* tu cita. 😊 ¿Me compartes el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO}) para ubicarla?`,
     ]),
 
   modificarPacienteNoExiste: (cedula: string) =>
