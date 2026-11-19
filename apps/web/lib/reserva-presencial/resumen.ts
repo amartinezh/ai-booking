@@ -72,6 +72,13 @@ export interface ResumenDeLaReserva {
     ultimoCambio: { detalle: string; en: string } | null;
 }
 
+/**
+ * Un instante como valor de columna `timestamp` (UTC sin zona). Un `Date` suelto
+ * viaja como `timestamptz` y Postgres lo pasa a la hora de la sesión (en
+ * producción, America/Bogota): quedaba 5 horas corrido. Ver `estadisticas/consultas.ts`.
+ */
+const comoColumna = (instante: Date) => Prisma.sql`(${instante.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+
 function inicioDelDia(dia: string, timeZone: string): Date {
     const [y, m, d] = partesDeFecha(dia)!;
     return horaLocalAUtc(y, m, d, 0, timeZone);
@@ -105,8 +112,8 @@ export async function contarMedicoDiasDelPanel(
           ) v ON true
          WHERE s."organizationId" = ${organizationId}
            AND d."whatsappBookingEnabled"
-           AND s."startTime" >= ${inicio}
-           AND s."startTime" < ${fin}
+           AND s."startTime" >= ${comoColumna(inicio)}
+           AND s."startTime" < ${comoColumna(fin)}
          GROUP BY 1, 2
     `);
     return filas.map((f) => ({

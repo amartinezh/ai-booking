@@ -91,6 +91,17 @@ export async function parteDelChatDeLaClinica(
   };
 }
 
+/**
+ * Un instante como valor de columna `timestamp` (UTC sin zona, como guarda
+ * Prisma). Un `Date` suelto en SQL crudo viaja como `timestamptz` y Postgres lo
+ * pasa a la hora de la SESIÓN: en producción la base corre con
+ * `TimeZone = America/Bogota` y quedaba (o se comparaba) 5 horas corrido
+ * (2026-11-19: la lista rural se guardó con 15:07 en vez de 20:07 y el cierre
+ * del envío no la encontró). Mismo criterio que `comoColumna` en la web.
+ */
+const comoColumna = (instante: Date) =>
+  Prisma.sql`(${instante.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+
 /** La medianoche (UTC) con que empieza ese día ('YYYY-MM-DD') en la clínica. */
 function inicioDelDia(dia: string, timeZone: string): Date {
   const [y, m, d] = partesDeFecha(dia)!;
@@ -153,8 +164,8 @@ export async function contarMedicoDias(
          LIMIT 1
       ) v ON true
      WHERE s."organizationId" = ${p.organizationId}
-       AND s."startTime" >= ${inicio}
-       AND s."startTime" < ${fin}
+       AND s."startTime" >= ${comoColumna(inicio)}
+       AND s."startTime" < ${comoColumna(fin)}
        AND (${p.doctorId ?? null}::text IS NULL OR s."doctorId" = ${p.doctorId ?? null}::text)
      GROUP BY 1, 2
   `);

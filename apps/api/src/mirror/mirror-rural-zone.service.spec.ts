@@ -70,7 +70,10 @@ describe('MirrorRuralZoneService — la lista de pacientes de zona rural', () =>
         values: unknown[];
       };
       expect(sql.values).toContainEqual(['1001', '12345678', '75036620']);
-      expect(sql.values).toContainEqual(INICIO);
+      // El inicio viaja como texto UTC y se convierte en SQL: un Date suelto se
+      // corría 5 horas con la base en la hora de Bogotá (2026-11-19).
+      expect(sql.values).toContainEqual(INICIO.toISOString());
+      expect(sql.values).not.toContainEqual(INICIO);
       // Un lote que no es el último no borra nada.
       expect(prisma.ruralPatient.deleteMany).not.toHaveBeenCalled();
     });

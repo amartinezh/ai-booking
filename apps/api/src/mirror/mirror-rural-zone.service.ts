@@ -11,6 +11,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { documentoParaLaListaRural } from '../appointments/sabado-rural';
 
 /**
+ * Un instante como valor de columna `timestamp` (UTC sin zona, como guarda
+ * Prisma). Un `Date` suelto en SQL crudo viaja como `timestamptz` y Postgres lo
+ * pasa a la hora de la SESIÓN: en producción la base corre con
+ * `TimeZone = America/Bogota` y quedaba (o se comparaba) 5 horas corrido
+ * (2026-11-19: la lista rural se guardó con 15:07 en vez de 20:07 y el cierre
+ * del envío no la encontró). Mismo criterio que `comoColumna` en la web.
+ */
+const comoColumna = (instante: Date) =>
+  Prisma.sql`(${instante.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+
+/**
  * 🌾 La lista de pacientes de zona rural que manda el agente (sábados solo para
  * la zona rural, 2026-11-19).
  *
@@ -75,7 +86,7 @@ export class MirrorRuralZoneService {
       // en este envío (sin retroceder si llega tarde un lote de un envío viejo).
       await this.prisma.$executeRaw(Prisma.sql`
         INSERT INTO "RuralPatient" ("id", "organizationId", "document", "seenAt")
-        SELECT gen_random_uuid()::text, ${organizationId}, d, ${inicio}
+        SELECT gen_random_uuid()::text, ${organizationId}, d, ${comoColumna(inicio)}
           FROM unnest(${documentos}::text[]) AS d
         ON CONFLICT ("organizationId", "document")
         DO UPDATE SET "seenAt" = GREATEST("RuralPatient"."seenAt", EXCLUDED."seenAt")
