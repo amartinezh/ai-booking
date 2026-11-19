@@ -182,3 +182,42 @@ Diferencias con el diseño de §4:
 - **La tabla del panel** es por día (suma de los médicos), con cuántos médicos están en su tope; no por médico.
 
 Verificado contra Postgres 15 real (desechable): la migración no deja deriva con el schema; el cupo de las 23:30 cuenta en su día de Bogotá; los cupos cerrados sin cita no cuentan; las citas del hospital y del panel no cuentan como del chat; de dos reservas simultáneas del último cupo del chat pasa una sola; el cambio de fecha dentro del mismo médico y día no cuenta doble; sin porcentaje, todo queda como antes.
+
+## 10. Sábados solo para la zona rural (2026-11-19)
+
+**Pedido.** El hospital dedica los sábados a las personas del campo y los tenía cerrados para el asistente («Días sin citas», regla semanal del 22-oct). Se pidió abrirlos al asistente con el 50 % de la agenda de ese día, solo para personas del campo, reconocidas por el campo «Zona» de la ficha del paciente en el HIS.
+
+**Medición (ESEHSVP, 19-nov; `docs/drivers/cnt-sanvicente-anserma/sql/ZONA_RURAL_DESCUBRIMIENTO_SOLO_LECTURA.sql`).** La zona es `PACIENTES.CD_CODI_ZORE_PAC` (catálogo `ZONARESIDENCIA`, U/R): llena en el 99,9 % de los 79.250 pacientes y en el 100 % de los activos; coincide con la zona del barrio en el 97,1 %; recepción la llena en todas las historias nuevas; el 76,6 % de las citas del sábado (6 meses) son de pacientes rurales, contra 37,2 % entre semana. Solo el 24 % de quienes han agendado por el chat son rurales. En producción, el 91 % de los cupos se eligen antes de dar el documento (415 de 455 en 30 días), y en 30 días 7 personas pidieron cita para sábado y 11 mencionaron vereda, finca o el campo.
+
+**Decisiones aprobadas (Z1 a Z8, 19-nov):**
+
+| # | Decisión |
+|---|---|
+| Z1 | El agente manda cada día la lista de documentos con zona rural (solo el documento); el ajuste no abre los sábados hasta que llegue la primera lista. Requiere actualizar el agente. |
+| Z2 | Zona urbana, vacía o paciente que el hospital no tiene: no toma sábado por el chat. |
+| Z3 | El menú normal no muestra sábados; «Vivo en zona rural: ver citas del sábado» o escribir «sábado» los muestra. |
+| Z4 | Tope del chat por médico, solo el sábado (50 % de fábrica al encender); los demás días no cambian. |
+| Z5 | Ajuste en Configuración, «Sábados por el asistente»: sin regla especial (de fábrica) o solo zona rural con su porcentaje. |
+| Z6 | Primero se enciende la regla y después el hospital quita su bloqueo de los sábados; el panel avisa mientras siga. |
+| Z7 | Se revisa al dar el documento, al confirmar, al cambiar la fecha y en la lista de espera; el panel y el hospital, sin restricción. |
+| Z8 | Un cambio de zona en el hospital se ve al día siguiente, con la lista nueva. |
+
+**Lo que se construyó.**
+
+- **Base:** migración `20261120120000_sabado_rural`: `OrganizationSettings.saturdayRuralSharePercent` (10 a 100, vacío = sin regla), tabla `RuralPatient` (organización + documento, `seenAt`), `HospitalMirrorConfig.ruralListSyncedAt` y `ruralListCount`.
+- **Regla pura:** `packages/shared/src/sabado-rural.ts` (qué es sábado en la zona de la clínica, los tramos de sábado para la consulta, el tope del día con `porcentajeDelDia`).
+- **API:** `apps/api/src/appointments/sabado-rural.ts`; `getAvailableSlots` con `sabados: 'SOLO' | 'INCLUIR'` (sin la opción y con la regla, los sábados salen de la consulta); `bookAppointment` con el motivo `SOLO_ZONA_RURAL`; el tope del sábado entra por `reserva-presencial.ts`; la lista de espera solo ofrece sábados a rurales; `MirrorRuralZoneService` con `GET /mirror/rural-zone/state` y `POST /mirror/rural-zone` (lotes con el mismo inicio, el último reemplaza la lista, un envío vacío no la borra, con la regla apagada no se guarda nada).
+- **Chat:** la opción del menú, el menú del sábado (con «para el sábado», en el primer mensaje y tras el «no hay cupos»), la revisión al dar el documento (`rejectIfSabadoSoloRural`), el rechazo al confirmar y en el cambio de fecha, y los textos en los dos tonos.
+- **Agente:** capacidad opcional `fetchRuralPatientDocuments` en el driver de cnt-sanvicente-anserma (`CD_CODI_ZORE_PAC = 'R'`), `MirrorEngine.syncRuralZone` y un ciclo que pregunta cada hora (`MIRROR_RURAL_ZONE_INTERVAL_MS`) y manda la lista como mucho una vez al día en lotes de 5.000.
+- **Panel:** «Sábados por el asistente» en Configuración › Asistente Virtual, con el estado de la lista, el aviso del bloqueo de los sábados y el último cambio (`SATURDAY_RURAL_CHANGE`); la tabla de la reserva marca el sábado y su tope.
+- **Conocimiento:** `docs/conocimiento/AGENIA.md` (paso a paso y preguntas en Configuración, §3.3, §3.5, la cadencia del agente, la tabla de valores y la bitácora).
+
+**Diferencias con lo aprobado.**
+
+- **Z3, el orden:** el documento se pide una sola vez, después de elegir el horario del sábado, no antes de mostrar los sábados. El menú del sábado avisa que es solo para la zona rural, y quien no lo es recibe la explicación y los otros días antes de dar nombre o nacimiento. Así el documento no se pide dos veces.
+- **Z5, «Cerrado»:** el ajuste no tiene una opción «Cerrado»; cerrar los sábados sigue siendo «Días sin citas», como hoy. «Sin regla especial» deja el sábado como un día más. Así no hay dos interruptores que hagan lo mismo.
+- **Cambio de fecha:** a una persona rural se le incluyen los sábados en el menú de cambiar la fecha; a las demás no se les muestran.
+
+**Verificado:** pruebas de la regla, la API, la lista de espera, el agente, el panel y conversaciones completas (persona del campo que agenda, persona urbana que recibe los otros días, «para el sábado», el «no hay cupos»); y contra un Postgres 15 real y desechable, la migración sin deriva, la carga de la lista en dos lotes con reemplazo, el envío vacío que no borra, la búsqueda sin sábados y con solo sábados, la reserva rural y urbana (también con ceros a la izquierda) y el tope del sábado con dos reservas simultáneas. **No verificado:** el agente contra el HIS real ni una conversación real de WhatsApp.
+
+**Para encender (en orden):** desplegar con `./update.sh`; actualizar el agente del hospital; en Configuración, «Sábados por el asistente» → «Solo zona rural, hasta el 50 %»; esperar a que el recuadro diga que llegó la lista (menos de una hora); y el hospital quita su bloqueo de los sábados en «Días sin citas».

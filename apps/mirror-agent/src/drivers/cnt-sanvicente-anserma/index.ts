@@ -1459,6 +1459,28 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    *   servicios y nada en el HIS dice de cuál es un cupo, AgenIA ofrece de cada
    *   médico UN servicio, y ese se elige por volumen en vez de a dedo.
    */
+  /**
+   * 🌾 Sábados solo para la zona rural (2026-11-19): los documentos de los
+   * pacientes con zona de residencia rural. Es el campo «Zona» de la pestaña
+   * «Datos Complementarios» de la ficha (`CD_CODI_ZORE_PAC`, catálogo
+   * `ZONARESIDENCIA`: U urbana, R rural). Medido en ESEHSVP el 2026-11-19: 99,9 %
+   * de los pacientes lo tienen lleno, coincide con la zona del barrio en el 97 %
+   * y el 77 % de las citas del sábado son de pacientes R
+   * (sql/ZONA_RURAL_DESCUBRIMIENTO_SOLO_LECTURA.sql). La historia ES el
+   * documento (100 % de los pacientes). Solo el documento: ni nombre, ni
+   * dirección, ni barrio.
+   */
+  async fetchRuralPatientDocuments(): Promise<string[]> {
+    const pool = this.requirePool();
+    const r = await pool.request().query<{ documento: string | null }>(`
+      SELECT LTRIM(RTRIM(NU_HIST_PAC)) AS documento
+        FROM dbo.PACIENTES
+       WHERE UPPER(LTRIM(RTRIM(CD_CODI_ZORE_PAC))) = 'R'`);
+    return r.recordset
+      .map((f) => String(f.documento ?? '').trim())
+      .filter((d) => d.length > 0);
+  }
+
   async fetchCatalog(kind: 'DOCTOR' | 'SERVICE'): Promise<HisCatalogEntry[]> {
     const pool = this.requirePool();
     const ahoraMs = Date.now();

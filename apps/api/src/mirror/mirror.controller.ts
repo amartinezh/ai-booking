@@ -19,6 +19,7 @@ import { MirrorCatalogService } from './mirror-catalog.service';
 import { MirrorNoticeService } from './mirror-notice.service';
 import { MirrorLookupService } from './mirror-lookup.service';
 import { MirrorAttentionSummaryService } from './mirror-attention-summary.service';
+import { MirrorRuralZoneService } from './mirror-rural-zone.service';
 import type {
   EstadoResumenesAgente,
   ResumenesAtencionInput,
@@ -43,6 +44,9 @@ import type {
   HisLookupRequestDto,
   HisLookupResultInput,
   HisLookupResultOutput,
+  ZonaRuralEstado,
+  ZonaRuralLoteInput,
+  ZonaRuralLoteResult,
 } from './dto/mirror.types';
 
 type AgentRequest = Request & MirrorAgentRequest;
@@ -64,6 +68,7 @@ export class MirrorController {
     private readonly notice: MirrorNoticeService,
     private readonly lookup: MirrorLookupService,
     private readonly resumenes: MirrorAttentionSummaryService,
+    private readonly zonaRural: MirrorRuralZoneService,
   ) {}
 
   @Post('handshake')
@@ -184,6 +189,28 @@ export class MirrorController {
       throw new BadRequestException('entries debe ser un arreglo.');
     }
     return this.catalog.upload(req.mirrorConfig.organizationId, body);
+  }
+
+  /**
+   * GET /mirror/rural-zone/state — 🌾 sábados solo para la zona rural: ¿la
+   * clínica quiere la lista de pacientes rurales, y cuándo llegó la última?
+   */
+  @Get('rural-zone/state')
+  ruralZoneState(@Req() req: AgentRequest): Promise<ZonaRuralEstado> {
+    return this.zonaRural.estado(req.mirrorConfig.organizationId);
+  }
+
+  /**
+   * POST /mirror/rural-zone — un lote de la lista de documentos de pacientes
+   * con zona de residencia rural. El último lote del envío reemplaza la lista
+   * (ver MirrorRuralZoneService).
+   */
+  @Post('rural-zone')
+  ruralZoneUpload(
+    @Req() req: AgentRequest,
+    @Body() body: ZonaRuralLoteInput,
+  ): Promise<ZonaRuralLoteResult> {
+    return this.zonaRural.recibirLote(req.mirrorConfig.organizationId, body);
   }
 
   /**

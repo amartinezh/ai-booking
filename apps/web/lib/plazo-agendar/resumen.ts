@@ -39,7 +39,7 @@ export async function cargarResumenDelPlazo(organizationId: string, ahora = new 
     const [settings, org, espejo, reglas, ultimo] = await Promise.all([
         prisma.organizationSettings.findUnique({
             where: { organizationId },
-            select: { bookingMaxDaysAhead: true, botAgendaSharePercent: true },
+            select: { bookingMaxDaysAhead: true, botAgendaSharePercent: true, saturdayRuralSharePercent: true },
         }),
         prisma.organization.findUnique({ where: { id: organizationId }, select: { timezone: true } }),
         prisma.hospitalMirrorConfig.findUnique({ where: { organizationId }, select: { enabled: true } }),
@@ -90,6 +90,7 @@ export async function cargarResumenDelPlazo(organizationId: string, ahora = new 
                   cupos[0].startTime,
                   cupos[cupos.length - 1].startTime,
                   timeZone || 'America/Bogota',
+                  settings?.saturdayRuralSharePercent ?? null,
               ).catch(() => new Set<string>())
             : new Set<string>();
     const ofrecibles =

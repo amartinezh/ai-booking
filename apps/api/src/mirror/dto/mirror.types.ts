@@ -30,4 +30,7 @@ export type {
   HisLookupRequestDto,
   HisLookupResultInput,
   HisLookupResultOutput,
+  ZonaRuralEstado,
+  ZonaRuralLoteInput,
+  ZonaRuralLoteResult,
 } from '@agenia/shared';

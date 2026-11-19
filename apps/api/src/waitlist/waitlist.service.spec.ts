@@ -292,6 +292,107 @@ describe('WaitlistService', () => {
       expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
     });
 
+    describe('🌾 sábados solo para la zona rural (2026-11-19)', () => {
+      // params.slotDate (1-jun-2030, 9:00 a. m. en Bogotá) es sábado.
+      const conRegla = (opts: { lista?: number; rurales?: string[] }) => {
+        prisma.organizationSettings.findUnique.mockResolvedValue({
+          saturdayRuralSharePercent: 100,
+        });
+        (prisma as any).hospitalMirrorConfig = {
+          findUnique: jest.fn(async () => ({
+            ruralListCount: opts.lista ?? 27000,
+          })),
+        };
+        (prisma as any).ruralPatient = {
+          findUnique: jest.fn(
+            async (q: {
+              where: { organizationId_document: { document: string } };
+            }) =>
+              (opts.rurales ?? []).includes(
+                q.where.organizationId_document.document,
+              )
+                ? { id: 'r' }
+                : null,
+          ),
+        };
+        prisma.scheduleSlot.findFirst.mockResolvedValue({
+          isAvailable: true,
+          doctorId: 'doc-1',
+          startTime: params.slotDate,
+          doctor: { whatsappBookingEnabled: true },
+        });
+      };
+      const delPueblo = entrada({
+        id: 'w1',
+        whatsappId: '573000000001',
+        patient: { fullName: 'Ana', cedula: '11111111' },
+      });
+      const delCampo = entrada({
+        id: 'w2',
+        whatsappId: '573000000002',
+        patient: { fullName: 'Rosa', cedula: '0022222222' },
+      });
+
+      it('un cupo de sábado se le ofrece al primero de zona rural; quien no lo es sigue esperando en su puesto', async () => {
+        conRegla({ rurales: ['22222222'] });
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(delPueblo)
+          .mockResolvedValueOnce(delCampo);
+
+        await service.notifyWaitlist(params);
+
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({ whatsappId: '573000000002' }),
+        );
+        expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalledWith(
+          expect.objectContaining({ whatsappId: '573000000001' }),
+        );
+        expect(prisma.waitlistEntry.update).not.toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 'w1' } }),
+        );
+      });
+
+      it('sin la lista de pacientes rurales, un cupo de sábado no se le ofrece a nadie', async () => {
+        conRegla({ lista: 0, rurales: ['22222222'] });
+        prisma.waitlistEntry.findFirst.mockResolvedValue(delCampo);
+
+        expect(await service.notifyWaitlist(params)).toBe(false);
+        expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
+        expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+      });
+
+      it('entre semana la regla no aplica: se le ofrece al primero, sea de donde sea', async () => {
+        conRegla({ rurales: [] });
+        prisma.waitlistEntry.findFirst.mockResolvedValue(delPueblo);
+        const lunes = new Date('2030-06-03T14:00:00Z');
+        prisma.scheduleSlot.findFirst.mockResolvedValue({
+          isAvailable: true,
+          doctorId: 'doc-1',
+          startTime: lunes,
+          doctor: { whatsappBookingEnabled: true },
+        });
+
+        await service.notifyWaitlist({ ...params, slotDate: lunes });
+
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({ whatsappId: '573000000001' }),
+        );
+        expect((prisma as any).ruralPatient.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('sin la regla, un sábado es como cualquier día (sin buscar la lista)', async () => {
+        (prisma as any).ruralPatient = { findUnique: jest.fn() };
+        prisma.waitlistEntry.findFirst.mockResolvedValue(delPueblo);
+
+        await service.notifyWaitlist(params);
+
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({ whatsappId: '573000000001' }),
+        );
+        expect((prisma as any).ruralPatient.findUnique).not.toHaveBeenCalled();
+      });
+    });
+
     describe('🏥 reserva para la atención presencial (2026-11-13)', () => {
       const conReserva = (fila: unknown[] | Error) => {
         prisma.organizationSettings.findUnique.mockResolvedValue({

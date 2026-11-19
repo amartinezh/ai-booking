@@ -18,8 +18,11 @@ import {
     chatEnElTope,
     diaLocal,
     horaLocalAUtc,
+    esDiaSabado,
     normalizarParteDelChat,
+    normalizarSabadoRural,
     partesDeFecha,
+    porcentajeDelDia,
     sumarDiasAFecha,
     topeDelChat,
 } from '@agenia/shared';
@@ -52,11 +55,17 @@ export interface DiaDeLaReserva {
     libres: number;
     /** Médicos donde el asistente ya llegó a su tope ese día. */
     medicosEnElTope: number;
+    /** Ese día tiene tope (con «sin reserva», solo el sábado de la zona rural). */
+    conTope?: boolean;
+    /** 🌾 Sábado con «Sábados: solo zona rural» encendida. */
+    soloRural?: boolean;
 }
 
 export interface ResumenDeLaReserva {
     /** El porcentaje guardado; null sin reserva. */
     porcentaje: number | null;
+    /** 🌾 El tope del sábado con «Sábados: solo zona rural» (100 = sin tope); null apagada. */
+    sabadoRural?: number | null;
     hoy: string;
     dias: DiaDeLaReserva[];
     /** El último cambio: quién y cómo (texto de la auditoría) y cuándo (ISO). */
@@ -110,12 +119,20 @@ export async function contarMedicoDiasDelPanel(
     }));
 }
 
-/** Suma los médicos de cada día. Puro. */
-export function resumirPorDia(filas: readonly MedicoDiaDelPanel[], porcentaje: number | null): DiaDeLaReserva[] {
-    const pct = normalizarParteDelChat(porcentaje);
+/**
+ * Suma los médicos de cada día. Puro. Con «Sábados: solo zona rural», el sábado
+ * lleva su propio tope (`sabadoRural`).
+ */
+export function resumirPorDia(
+    filas: readonly MedicoDiaDelPanel[],
+    porcentaje: number | null,
+    sabadoRural: number | null = null,
+): DiaDeLaReserva[] {
+    const rural = normalizarSabadoRural(sabadoRural);
     const porDia = new Map<string, DiaDeLaReserva>();
     for (const f of filas) {
         if (f.capacidad <= 0) continue;
+        const pct = porcentajeDelDia(f.dia, { porcentaje, sabadoRural: rural });
         const d = porDia.get(f.dia) ?? {
             dia: f.dia,
             medicos: 0,
@@ -125,6 +142,8 @@ export function resumirPorDia(filas: readonly MedicoDiaDelPanel[], porcentaje: n
             otras: 0,
             libres: 0,
             medicosEnElTope: 0,
+            conTope: pct !== null,
+            soloRural: rural !== null && esDiaSabado(f.dia),
         };
         d.medicos += 1;
         d.capacidad += f.capacidad;
@@ -145,7 +164,7 @@ export async function cargarResumenDeLaReserva(
     const [settings, org, ultimo] = await Promise.all([
         prisma.organizationSettings.findUnique({
             where: { organizationId },
-            select: { botAgendaSharePercent: true },
+            select: { botAgendaSharePercent: true, saturdayRuralSharePercent: true },
         }),
         prisma.organization.findUnique({ where: { id: organizationId }, select: { timezone: true } }),
         prisma.syncAudit.findFirst({
@@ -156,6 +175,7 @@ export async function cargarResumenDeLaReserva(
     ]);
     const timeZone = org?.timezone || DEFAULT_TIMEZONE;
     const porcentaje = normalizarParteDelChat(settings?.botAgendaSharePercent);
+    const sabadoRural = normalizarSabadoRural(settings?.saturdayRuralSharePercent);
     const hoy = diaLocal(ahora, timeZone);
     const filas = await contarMedicoDiasDelPanel(
         organizationId,
@@ -165,8 +185,9 @@ export async function cargarResumenDeLaReserva(
     );
     return {
         porcentaje,
+        sabadoRural,
         hoy,
-        dias: resumirPorDia(filas, porcentaje),
+        dias: resumirPorDia(filas, porcentaje, sabadoRural),
         ultimoCambio: ultimo ? { detalle: ultimo.detail ?? '', en: ultimo.createdAt.toISOString() } : null,
     };
 }
@@ -182,14 +203,27 @@ export async function medicoDiasEnElTopeDelPanel(
     desde: Date,
     hasta: Date,
     timeZone: string,
+    sabadoRural: number | null = null,
 ): Promise<Set<string>> {
-    const pct = normalizarParteDelChat(porcentaje);
-    if (pct === null) return new Set();
+    const p = {
+        porcentaje: normalizarParteDelChat(porcentaje),
+        sabadoRural: normalizarSabadoRural(sabadoRural),
+    };
+    // Ningún día con tope: ni el de semana ni el del sábado.
+    if (p.porcentaje === null && normalizarParteDelChat(p.sabadoRural) === null) return new Set();
     const filas = await contarMedicoDiasDelPanel(
         organizationId,
         diaLocal(desde, timeZone),
         diaLocal(hasta, timeZone),
         timeZone,
     );
-    return new Set(filas.filter((f) => f.capacidad > 0 && chatEnElTope(f, pct)).map((f) => `${f.doctorId}|${f.dia}`));
+    return new Set(
+        filas
+            .filter((f) => {
+                if (f.capacidad <= 0) return false;
+                const pct = porcentajeDelDia(f.dia, p);
+                return pct !== null && chatEnElTope(f, pct);
+            })
+            .map((f) => `${f.doctorId}|${f.dia}`),
+    );
 }

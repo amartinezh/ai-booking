@@ -215,7 +215,11 @@ export type {
   HisLookupResultInput,
   HisLookupResultOutput,
   AgentVersionInfo,
+  ZonaRuralEstado,
+  ZonaRuralLoteInput,
+  ZonaRuralLoteResult,
 } from './src/mirror-protocol';
+export { LIMITES_ZONA_RURAL } from './src/mirror-protocol';
 
 // 🏷️ Versión del agente del hospital: la reporta en cada latido y el Espejo la muestra.
 export {
@@ -767,6 +771,17 @@ export {
   validarParteDelChat,
 } from './src/reserva-presencial';
 export type { MedicoDia } from './src/reserva-presencial';
+// 🌾 Sábados solo para la zona rural (tope del sábado y quién puede tomarlo).
+export {
+  SABADO_RURAL,
+  esDiaSabado,
+  esSabado,
+  normalizarSabadoRural,
+  porcentajeDelDia,
+  textoSabadoRural,
+  tramosDeSabado,
+  validarSabadoRural,
+} from './src/sabado-rural';
 // 🇨🇴 Festivos de Colombia, calculados (no cuentan para el plazo para agendar).
 export {
   domingoDePascua,

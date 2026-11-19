@@ -45,6 +45,17 @@ export interface AgentConfig {
   /** Espera antes de la primera subida, tras arrancar. */
   catalogDelayMs: number;
 
+  // ── 🌾 Sábados solo para la zona rural ────────────────────────────────
+  /**
+   * Cada cuánto se pregunta si hay que mandar la lista de pacientes rurales.
+   * La lista misma se manda como mucho una vez al día (lo decide el servidor
+   * con la fecha del último envío); preguntar cada hora hace que, al encender
+   * la regla en el panel, la lista llegue en menos de una hora.
+   */
+  ruralZoneIntervalMs: number;
+  /** Espera antes de la primera pregunta, tras arrancar. */
+  ruralZoneDelayMs: number;
+
   // ── Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
   // cnt-sanvicente-anserma. Ver PLAN_AVISOS_MASIVOS.md §5. ──────────────
   /**
@@ -99,6 +110,8 @@ const DEFAULTS = {
   // 25 al día siguiente— así que tampoco vale hacerlo solo al arrancar.
   catalogIntervalMs: 24 * 60 * 60_000,
   catalogDelayMs: 15_000,
+  ruralZoneIntervalMs: 60 * 60_000,
+  ruralZoneDelayMs: 60_000,
   // 30 s: rápido para que un aviso pedido desde la pantalla no se sienta
   // colgado, pero sin martillar la API — este driver es el único que
   // implementa avisos hoy, así que en cualquier otro tenant esta llamada
@@ -156,6 +169,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
       Number(env.MIRROR_CATALOG_INTERVAL_MS) || DEFAULTS.catalogIntervalMs,
     catalogDelayMs:
       Number(env.MIRROR_CATALOG_DELAY_MS) || DEFAULTS.catalogDelayMs,
+    ruralZoneIntervalMs:
+      Number(env.MIRROR_RURAL_ZONE_INTERVAL_MS) || DEFAULTS.ruralZoneIntervalMs,
+    ruralZoneDelayMs:
+      Number(env.MIRROR_RURAL_ZONE_DELAY_MS) || DEFAULTS.ruralZoneDelayMs,
     noticeIntervalMs:
       Number(env.MIRROR_NOTICE_INTERVAL_MS) || DEFAULTS.noticeIntervalMs,
     lookupIntervalMs:

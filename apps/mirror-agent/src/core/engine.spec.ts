@@ -92,6 +92,8 @@ describe('MirrorEngine', () => {
       pushLookupResult: jest.fn(),
       getAttentionSummaryState: jest.fn(),
       pushAttentionSummaries: jest.fn(),
+      getRuralZoneState: jest.fn(),
+      pushRuralZoneBatch: jest.fn(),
     };
     driver = {
       key: 'test-driver',
@@ -1261,6 +1263,8 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       pushLookupResult: jest.fn(),
       getAttentionSummaryState: jest.fn(),
       pushAttentionSummaries: jest.fn(),
+      getRuralZoneState: jest.fn(),
+      pushRuralZoneBatch: jest.fn(),
     };
     driver = {
       key: 'test-driver',

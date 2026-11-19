@@ -20,9 +20,10 @@ import {
   chatEnElTope,
   diaLocal,
   horaLocalAUtc,
-  medicoDiasEnElTope,
   normalizarParteDelChat,
+  normalizarSabadoRural,
   partesDeFecha,
+  porcentajeDelDia,
   sumarDiasAFecha,
   type MedicoDia,
 } from '@agenia/shared';
@@ -42,11 +43,22 @@ type Tx = Pick<
   'organizationSettings' | 'organization' | '$queryRaw' | '$executeRaw'
 >;
 
-/** La parte de la agenda del asistente (%) y la zona de la clínica; null sin reserva. */
+/**
+ * La parte de la agenda del asistente y la zona de la clínica; null si ningún
+ * día tiene tope. `porcentaje` es el de los días de semana (null = sin reserva);
+ * con «Sábados: solo zona rural» encendida, el sábado lleva el suyo
+ * (`sabadoRural`, 100 = sin tope). `delDia` dice el tope de un día
+ * ('YYYY-MM-DD'), null = sin tope ese día.
+ */
 export async function parteDelChatDeLaClinica(
   db: Pick<Db, 'organizationSettings' | 'organization'>,
   organizationId: string,
-): Promise<{ porcentaje: number; timeZone: string } | null> {
+): Promise<{
+  porcentaje: number | null;
+  sabadoRural: number | null;
+  timeZone: string;
+  delDia: (dia: string) => number | null;
+} | null> {
   // Los dobles de prueba que no traen la tabla: sin ella, sin reserva (en
   // producción siempre existe).
   const tabla = (db as { organizationSettings?: { findUnique?: unknown } })
@@ -55,16 +67,28 @@ export async function parteDelChatDeLaClinica(
 
   const settings = await db.organizationSettings.findUnique({
     where: { organizationId },
-    select: { botAgendaSharePercent: true },
+    select: { botAgendaSharePercent: true, saturdayRuralSharePercent: true },
   });
   const porcentaje = normalizarParteDelChat(settings?.botAgendaSharePercent);
-  if (porcentaje === null) return null;
+  const sabadoRural = normalizarSabadoRural(
+    settings?.saturdayRuralSharePercent,
+  );
+  // Sin reserva entre semana y sin tope el sábado (regla apagada, o en 100 %):
+  // ningún día tiene tope y no se cuenta nada.
+  if (porcentaje === null && normalizarParteDelChat(sabadoRural) === null) {
+    return null;
+  }
 
   const org = await db.organization.findUnique({
     where: { id: organizationId },
     select: { timezone: true },
   });
-  return { porcentaje, timeZone: org?.timezone || DEFAULT_TIMEZONE };
+  return {
+    porcentaje,
+    sabadoRural,
+    timeZone: org?.timezone || DEFAULT_TIMEZONE,
+    delDia: (dia) => porcentajeDelDia(dia, { porcentaje, sabadoRural }),
+  };
 }
 
 /** La medianoche (UTC) con que empieza ese día ('YYYY-MM-DD') en la clínica. */
@@ -190,14 +214,17 @@ export async function tramosReservadosParaElHospital(
     timeZone: parte.timeZone,
     apartados: [...(opts.apartados ?? []), ...ofrecidos],
   });
-  return medicoDiasEnElTope(
-    filas.filter((f) => f.capacidad > 0),
-    parte.porcentaje,
-  ).map((f) => ({
-    doctorId: f.doctorId,
-    gte: inicioDelDia(f.dia, parte.timeZone),
-    lt: inicioDelDia(sumarDiasAFecha(f.dia, 1), parte.timeZone),
-  }));
+  return filas
+    .filter((f) => {
+      if (f.capacidad <= 0) return false;
+      const pct = parte.delDia(f.dia);
+      return pct !== null && chatEnElTope(f, pct);
+    })
+    .map((f) => ({
+      doctorId: f.doctorId,
+      gte: inicioDelDia(f.dia, parte.timeZone),
+      lt: inicioDelDia(sumarDiasAFecha(f.dia, 1), parte.timeZone),
+    }));
 }
 
 /**
@@ -223,7 +250,9 @@ export async function cupoReservadoParaElHospital(
     doctorId: cupo.doctorId,
     apartados: ofrecidos,
   });
-  return fila ? chatEnElTope(fila, parte.porcentaje) : false;
+  if (!fila) return false;
+  const pct = parte.delDia(fila.dia);
+  return pct !== null && chatEnElTope(fila, pct);
 }
 
 /**
@@ -243,6 +272,10 @@ export async function chatEnElTopeAlReservar(
   const parte = await parteDelChatDeLaClinica(tx, organizationId);
   if (!parte) return false;
   const dia = diaLocal(cupo.startTime, parte.timeZone);
+  // Ese día no tiene tope (p. ej. un lunes con la reserva solo en el sábado):
+  // ni candado ni conteo.
+  const pct = parte.delDia(dia);
+  if (pct === null) return false;
   const llave = `reserva-presencial:${organizationId}:${cupo.doctorId}:${dia}`;
   await tx.$executeRaw(
     Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${llave}, 0))`,
@@ -256,8 +289,5 @@ export async function chatEnElTopeAlReservar(
     excluirCitaId: opts.excluirCitaId,
   });
   if (!fila) return false;
-  return chatEnElTope(
-    { capacidad: fila.capacidad, chat: fila.chat },
-    parte.porcentaje,
-  );
+  return chatEnElTope({ capacidad: fila.capacidad, chat: fila.chat }, pct);
 }

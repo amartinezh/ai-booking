@@ -311,3 +311,30 @@ export function isAttentionSummaryCapable(
     typeof d.fetchAttentionSummaries === 'function'
   );
 }
+
+/**
+ * 🌾 Sábados solo para la zona rural (2026-11-19) — capacidad OPT-IN.
+ *
+ * El asistente agenda los sábados solo a pacientes que el hospital tiene con
+ * zona de residencia rural. Para saberlo, el agente manda una vez al día (y solo
+ * si la clínica encendió la regla) los documentos de esos pacientes. Igual que
+ * los avisos masivos, NO es parte de `HisDriver`: un hospital que no lo use no
+ * tiene que implementarlo, y el motor lo omite.
+ */
+export interface RuralZoneCapableDriver {
+  /**
+   * Los documentos de los pacientes con zona de residencia rural. Solo lectura;
+   * solo el documento: ni nombre, ni dirección, ni barrio.
+   */
+  fetchRuralPatientDocuments(): Promise<string[]>;
+}
+
+/** Guarda de tipo estructural: ¿el driver activo sabe leer la zona rural? */
+export function isRuralZoneCapable(
+  driver: HisDriver,
+): driver is HisDriver & RuralZoneCapableDriver {
+  return (
+    typeof (driver as Partial<RuralZoneCapableDriver>)
+      .fetchRuralPatientDocuments === 'function'
+  );
+}

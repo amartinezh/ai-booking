@@ -154,7 +154,9 @@ function ProximosDias({ resumen }: { resumen: ResumenDeLaReserva }) {
             </p>
         );
     }
-    const conReserva = resumen.porcentaje !== null;
+    // 🌾 Con «Sábados: solo zona rural», el sábado tiene tope aunque no haya reserva.
+    const conReserva = resumen.porcentaje !== null || resumen.dias.some((d) => d.conTope === true);
+    const conTopeEseDia = (d: (typeof resumen.dias)[number]) => d.conTope ?? resumen.porcentaje !== null;
     return (
         <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -178,16 +180,19 @@ function ProximosDias({ resumen }: { resumen: ResumenDeLaReserva }) {
                         <tr key={d.dia} className="border-t border-zinc-100 dark:border-zinc-800">
                             <th scope="row" className="py-1.5 pr-3 font-medium text-left whitespace-nowrap">
                                 {etiquetaDia(d.dia, resumen.hoy)}
+                                {d.soloRural && <span className="ml-1 text-xs font-normal">🌾 solo zona rural</span>}
                             </th>
                             <td className="py-1.5 pr-3 text-right tabular-nums">{d.capacidad}</td>
                             <td className="py-1.5 pr-3 text-right tabular-nums">
-                                {conReserva ? `${d.chat} / ${d.tope}` : d.chat}
+                                {conTopeEseDia(d) ? `${d.chat} / ${d.tope}` : d.chat}
                             </td>
                             <td className="py-1.5 pr-3 text-right tabular-nums">{d.otras}</td>
                             <td className="py-1.5 pr-3 text-right tabular-nums">{d.libres}</td>
                             {conReserva && (
                                 <td className="py-1.5 text-xs">
-                                    {d.medicosEnElTope === 0
+                                    {!conTopeEseDia(d)
+                                        ? 'Sin tope'
+                                        : d.medicosEnElTope === 0
                                         ? 'El asistente puede agendar'
                                         : d.medicosEnElTope === d.medicos
                                           ? 'El asistente ya tomó su parte'

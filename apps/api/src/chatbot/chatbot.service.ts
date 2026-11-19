@@ -68,6 +68,11 @@ import {
   plazoDeLaClinica,
 } from 'src/appointments/plazo-agendar';
 import { chatEnElTopeAlReservar } from 'src/appointments/reserva-presencial';
+import {
+  esPacienteRural,
+  sabadoRuralDeLaClinica,
+  sabadoSoloRuralLoImpide,
+} from 'src/appointments/sabado-rural';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
   OrganizationSettingsService,
@@ -167,6 +172,7 @@ import {
   isWhatsappPhoneId,
   severidadPorCercania,
   TITULO_EXCEPCION,
+  esSabado,
 } from '@agenia/shared';
 import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
@@ -9003,10 +9009,39 @@ export class ChatbotService implements OnModuleInit {
         );
         const ventana = parseFechaPreferida(fechaPrefRaw);
 
-        let slots: AvailableSlot[];
+        let slots: AvailableSlot[] = [];
         let slotsMode: 'normal' | 'fecha' | 'fallback' = 'normal';
-        // Sin los que otro paciente del chat tiene apartados (2026-10-28).
+        // 🌾 Pidió un sábado con la regla de zona rural encendida (2026-11-19):
+        // las citas del sábado, que el menú normal no trae. Sin la regla, o sin
+        // ellas, se busca como siempre.
+        let menuSabadoRural = false;
         if (ventana) {
+          const tzVentana =
+            (await this.zonaHorariaDe(organizationId)) ?? undefined;
+          if (
+            diaLocal(ventana.desde, tzVentana) ===
+              diaLocal(ventana.hasta, tzVentana) &&
+            esSabado(ventana.desde, tzVentana)
+          ) {
+            const sabado = await this.cuposParaElMenu(
+              organizationId,
+              senderId,
+              resolvedServiceName as string,
+              epsIdForSlots,
+              { desde: ventana.desde, hasta: ventana.hasta },
+              { sabados: 'SOLO' },
+            );
+            if (sabado.length > 0) {
+              slots = sabado;
+              slotsMode = 'fecha';
+              menuSabadoRural = true;
+            }
+          }
+        }
+        // Sin los que otro paciente del chat tiene apartados (2026-10-28).
+        if (menuSabadoRural) {
+          // Ya están los del sábado.
+        } else if (ventana) {
           slots = await this.cuposParaElMenu(
             organizationId,
             senderId,
@@ -9087,7 +9122,7 @@ export class ChatbotService implements OnModuleInit {
                 epsIdForSlots,
                 organizationId,
               );
-          const reply = masAlla
+          const replySinCupos = masAlla
             ? MSGS.sinCuposEnElPlazo(
                 resolvedServiceName as string,
                 resolvedEpsName,
@@ -9103,6 +9138,16 @@ export class ChatbotService implements OnModuleInit {
                   resolvedServiceName as string,
                   resolvedEpsName,
                 );
+          // 🌾 Hay citas del sábado para la zona rural: se le dice cómo verlas
+          // (escribiendo «sábado» en este paso, 2026-11-19).
+          const conSabadoRural = await this.hayCitasDeSabadoRural(
+            organizationId,
+            resolvedServiceName as string,
+            epsIdForSlots,
+          );
+          const reply = conSabadoRural
+            ? replySinCupos + MSGS.lineaSabadoRural()
+            : replySinCupos;
           await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(
             organizationId,
@@ -9119,6 +9164,7 @@ export class ChatbotService implements OnModuleInit {
               eps: resolvedEpsName,
               ...(masAlla ? { porPlazo: true, desde: masAlla.desdeIso } : {}),
               ...(porReserva ? { porReserva: true } : {}),
+              ...(conSabadoRural ? { sabadoRural: true } : {}),
             },
           });
           return;
@@ -9179,15 +9225,17 @@ export class ChatbotService implements OnModuleInit {
           serviceName: resolvedServiceName as string,
           epsIdForSlots,
           armarRespuesta: (lineas) =>
-            slotsMode === 'fecha'
-              ? MSGS.cuposParaFecha(resolvedEpsName, fechaLabel, lineas)
-              : slotsMode === 'fallback'
-                ? MSGS.sinCuposEsaFechaProximos(
-                    fechaLabel,
-                    resolvedEpsName,
-                    lineas,
-                  )
-                : MSGS.cuposDisponibles('', resolvedEpsName, lineas),
+            menuSabadoRural
+              ? MSGS.cuposSabadoRural(resolvedEpsName, lineas)
+              : slotsMode === 'fecha'
+                ? MSGS.cuposParaFecha(resolvedEpsName, fechaLabel, lineas)
+                : slotsMode === 'fallback'
+                  ? MSGS.sinCuposEsaFechaProximos(
+                      fechaLabel,
+                      resolvedEpsName,
+                      lineas,
+                    )
+                  : MSGS.cuposDisponibles('', resolvedEpsName, lineas),
           userMessage: text || '[audio]',
           step: 'SLOTS_OFFERED',
           metadata: {
@@ -9195,6 +9243,7 @@ export class ChatbotService implements OnModuleInit {
             specialty: resolvedServiceName,
             fechaPref: fechaLabel || undefined,
             slotsMode,
+            ...(menuSabadoRural ? { sabadoRural: true } : {}),
           },
         });
         return;
@@ -9291,6 +9340,21 @@ export class ChatbotService implements OnModuleInit {
           userMessage: text,
           // Sigue en el paso del documento, con el cupo apartado.
           permitirCorregir: true,
+        })
+      ) {
+        return;
+      }
+
+      // 🌾 SÁBADO SOLO PARA LA ZONA RURAL: con el documento ya se sabe si puede
+      // tomar el sábado que eligió. Va antes de pedirle nombre, nacimiento o
+      // régimen, para no hacerlo contestar en vano.
+      if (
+        await this.rejectIfSabadoSoloRural({
+          organizationId,
+          senderId,
+          cedula: soloNumerosAgendamiento,
+          MSGS,
+          userMessage: text,
         })
       ) {
         return;
@@ -9608,6 +9672,17 @@ export class ChatbotService implements OnModuleInit {
         });
         return;
       }
+      // 🌾 La letra de «Vivo en zona rural: ver citas del sábado» (2026-11-19).
+      const letraSabado = await this.redis.get(
+        this.sabadoRuralKey(organizationId, senderId),
+      );
+      if (
+        letraElegida &&
+        letraElegida === letraSabado &&
+        (await this.mostrarCuposDeSabadoRural(ctx, { desdeElMenu: true }))
+      ) {
+        return;
+      }
 
       // 👥 «A y B», «2 citas medicas» (2026-11-06): agenda para varias personas a
       // la vez. Se agendan una por una; se le dice así en vez de «no logré ubicar
@@ -9740,6 +9815,10 @@ export class ChatbotService implements OnModuleInit {
   /** La letra de la opción «Otro día» del menú que se le mostró. */
   private otroDiaKey(organizationId: string, senderId: string): string {
     return `temp_slot_otro_dia:${organizationId}:${senderId}`;
+  }
+  /** La letra de la opción «Vivo en zona rural: ver citas del sábado». */
+  private sabadoRuralKey(organizationId: string, senderId: string): string {
+    return `temp_slot_sabado_rural:${organizationId}:${senderId}`;
   }
   /** Los cupos que ya vio en esta conversación, separados por coma. */
   private cuposVistosKey(organizationId: string, senderId: string): string {
@@ -9947,6 +10026,11 @@ export class ChatbotService implements OnModuleInit {
      * `medicoNoDisponible` («dejó de estar disponible por este medio»).
      */
     reservaPresencial?: boolean;
+    /**
+     * 🌾 Era un sábado y su registro en el hospital no dice zona rural
+     * (2026-11-19): se le dice eso y se le muestran los otros días.
+     */
+    soloZonaRural?: boolean;
   }): Promise<string> {
     const { organizationId, senderId, MSGS } = p;
     await this.soltarCupoApartado(organizationId, senderId, p.slotIdTomado);
@@ -9997,9 +10081,11 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         await this.organizacionDe(organizationId),
       );
-      const reply = p.agendaDelHospital
-        ? MSGS.agendaCambioSinOtros(contacto)
-        : MSGS.cupoTomadoSinOtros(contacto);
+      const reply = p.soloZonaRural
+        ? MSGS.sabadoSoloRuralSinOtros(contacto)
+        : p.agendaDelHospital
+          ? MSGS.agendaCambioSinOtros(contacto)
+          : MSGS.cupoTomadoSinOtros(contacto);
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
       return reply;
@@ -10016,11 +10102,13 @@ export class ChatbotService implements OnModuleInit {
       serviceName,
       epsIdForSlots,
       armarRespuesta: (lineas) =>
-        p.agendaDelHospital
-          ? MSGS.agendaCambioOtrasOpciones(epsName, lineas)
-          : p.medicoNoDisponible
-            ? MSGS.medicoNoDisponibleOtrasOpciones(epsName, lineas)
-            : MSGS.cupoTomadoOtrasOpciones(epsName, lineas),
+        p.soloZonaRural
+          ? MSGS.sabadoSoloRuralOtrasOpciones(epsName, lineas)
+          : p.agendaDelHospital
+            ? MSGS.agendaCambioOtrasOpciones(epsName, lineas)
+            : p.medicoNoDisponible
+              ? MSGS.medicoNoDisponibleOtrasOpciones(epsName, lineas)
+              : MSGS.cupoTomadoOtrasOpciones(epsName, lineas),
       userMessage: p.userMessage || '[audio]',
       step: 'SLOTS_REOFFERED',
       metadata: {
@@ -10028,11 +10116,13 @@ export class ChatbotService implements OnModuleInit {
         specialty: serviceName,
         motivo: p.agendaDelHospital
           ? 'AGENDA_DEL_HOSPITAL'
-          : p.reservaPresencial
-            ? 'RESERVA_PRESENCIAL'
-            : p.medicoNoDisponible
-              ? 'MEDICO_NO_DISPONIBLE'
-              : 'CUPO_TOMADO',
+          : p.soloZonaRural
+            ? 'SOLO_ZONA_RURAL'
+            : p.reservaPresencial
+              ? 'RESERVA_PRESENCIAL'
+              : p.medicoNoDisponible
+                ? 'MEDICO_NO_DISPONIBLE'
+                : 'CUPO_TOMADO',
       },
     });
     return (
@@ -10132,6 +10222,27 @@ export class ChatbotService implements OnModuleInit {
       lineasFechas += MSGS.opcionOtroDia(letraOtroDia);
     }
 
+    // 🌾 «Vivo en zona rural: ver citas del sábado» (2026-11-19): con la regla
+    // de zona rural encendida, el menú normal no trae sábados; esta opción los
+    // muestra. Solo si hay citas del sábado y este menú no es ya el del sábado.
+    const letraSabado = (await this.hayOpcionSabadoRural(
+      organizationId,
+      p.serviceName,
+      p.epsIdForSlots,
+      slots,
+    ))
+      ? String.fromCharCode(65 + slots.length + (letraOtroDia ? 1 : 0))
+      : null;
+    if (letraSabado) {
+      await this.redis.set(
+        this.sabadoRuralKey(organizationId, senderId),
+        letraSabado,
+        'EX',
+        SESSION_TTL,
+      );
+      lineasFechas += MSGS.opcionSabadoRural(letraSabado);
+    }
+
     const vistos = new Set(await this.cuposVistos(organizationId, senderId));
     for (const c of slots) vistos.add(c.slotId);
     await this.redis.set(vistosKey, [...vistos].join(','), 'EX', SESSION_TTL);
@@ -10158,6 +10269,7 @@ export class ChatbotService implements OnModuleInit {
         slotsCount: slots.length,
         slots: slotsMetadata,
         ...(letraOtroDia ? { otroDia: letraOtroDia } : {}),
+        ...(letraSabado ? { opcionSabadoRural: letraSabado } : {}),
         ...p.metadata,
       },
     });
@@ -10189,6 +10301,222 @@ export class ChatbotService implements OnModuleInit {
       this.logger.warn(
         `No se pudo revisar si hay cupos otro día (org ${organizationId}): ${getErrorMessage(error)}`,
       );
+      return false;
+    }
+  }
+
+  /**
+   * 🌾 ¿Se muestra la opción «Vivo en zona rural: ver citas del sábado»? Con la
+   * regla encendida y la lista de pacientes rurales ya recibida, si hay citas de
+   * sábado y el menú no trae ya sábados. Falla blanda: si la consulta falla, el
+   * menú sale igual, sin la opción.
+   */
+  private async hayOpcionSabadoRural(
+    organizationId: string,
+    serviceName: string,
+    epsIdForSlots: string | null,
+    slots: AvailableSlot[],
+  ): Promise<boolean> {
+    try {
+      const regla = await sabadoRuralDeLaClinica(this.prisma, organizationId);
+      if (!regla?.abierto) return false;
+      if (slots.some((c) => esSabado(c.fecha, regla.timeZone))) return false;
+      return await this.appointmentsService.hayCuposDeSabadoRural(
+        serviceName,
+        epsIdForSlots,
+        organizationId,
+      );
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo revisar si hay citas del sábado para la zona rural (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * 🌾 Las citas del sábado para la zona rural (2026-11-19): eligió «Vivo en
+   * zona rural: ver citas del sábado», escribió «sábado» tras el «no hay
+   * cupos», o pidió un sábado. Se le muestran con el aviso de que son solo para
+   * personas de zona rural; el documento se revisa cuando lo da, después de
+   * elegir (`rejectIfSabadoSoloRural`).
+   *
+   * false si no hay nada que hacer (sin la regla, sin la lista de pacientes
+   * rurales, o sin servicio o EPS en la sesión): quien llama sigue como siempre.
+   * Sin citas del sábado: con `siNoHay: 'SEGUIR'` también false; si no, se le
+   * dice que ya no quedan y true.
+   */
+  private async mostrarCuposDeSabadoRural(
+    ctx: ChatTurnContext,
+    opts: { desdeElMenu: boolean; siNoHay?: 'AVISAR' | 'SEGUIR' },
+  ): Promise<boolean> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    let regla: Awaited<ReturnType<typeof sabadoRuralDeLaClinica>> = null;
+    try {
+      regla = await sabadoRuralDeLaClinica(this.prisma, organizationId);
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo leer la regla de sábados para la zona rural (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+    }
+    if (!regla?.abierto) return false;
+    const [serviceName, epsName, epsId] = await Promise.all([
+      this.redis.get(`temp_especialidad:${organizationId}:${senderId}`),
+      this.redis.get(`temp_eps_query:${organizationId}:${senderId}`),
+      this.redis.get(`temp_eps_id:${organizationId}:${senderId}`),
+    ]);
+    if (!serviceName || !epsName) return false;
+    const epsIdForSlots =
+      epsName.toLowerCase() === PARTICULAR_EPS_NAME.toLowerCase()
+        ? null
+        : epsId || null;
+
+    let slots: AvailableSlot[] = [];
+    try {
+      slots = await this.cuposParaElMenu(
+        organizationId,
+        senderId,
+        serviceName,
+        epsIdForSlots,
+        null,
+        { sabados: 'SOLO' },
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `[Tenant: ${organizationId}] No se pudieron buscar las citas del sábado para ${senderId}: ${getErrorMessage(error)}`,
+      );
+    }
+    if (slots.length === 0) {
+      if (opts.siNoHay === 'SEGUIR') return false;
+      const reply = opts.desdeElMenu
+        ? MSGS.sinCuposSabadoRuralMenu()
+        : MSGS.sinCuposSabadoRuralLista();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { step: 'SABADO_RURAL_SIN_CUPOS' },
+      });
+      return true;
+    }
+
+    await this.redis.del(ctx.retriesKey);
+    await this.mostrarMenuCupos({
+      organizationId,
+      senderId,
+      slots,
+      MSGS,
+      isVoiceTurn:
+        (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
+        'true',
+      epsName,
+      serviceName,
+      epsIdForSlots,
+      armarRespuesta: (lineas) => MSGS.cuposSabadoRural(epsName, lineas),
+      userMessage: text || '[audio]',
+      step: 'SLOTS_OFFERED',
+      metadata: { eps: epsName, specialty: serviceName, sabadoRural: true },
+    });
+    return true;
+  }
+
+  /**
+   * 🌾 Eligió un horario del sábado y su documento no está en la lista de zona
+   * rural (o la regla ya no deja dárselo): se le dice y se le muestran los
+   * horarios de los otros días, antes de pedirle nada más. Sin la regla, o si la
+   * cita no es de sábado, false sin consultar nada más. Si la revisión falla,
+   * false: la reserva lo vuelve a revisar al confirmar.
+   */
+  private async rejectIfSabadoSoloRural(p: {
+    organizationId: string;
+    senderId: string;
+    cedula: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    userMessage?: string | null;
+  }): Promise<boolean> {
+    const { organizationId, senderId, MSGS } = p;
+    const [slotId, fecha] = await Promise.all([
+      this.redis.get(`temp_selected_slot_id:${organizationId}:${senderId}`),
+      this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`),
+    ]);
+    if (!slotId || !fecha) return false;
+    let impide = false;
+    try {
+      impide = await sabadoSoloRuralLoImpide(
+        this.prisma,
+        organizationId,
+        new Date(fecha),
+        p.cedula,
+      );
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo revisar la zona rural de ${senderId} (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+    if (!impide) return false;
+    const reply = await this.reofrecerTrasCupoTomado({
+      organizationId,
+      senderId,
+      MSGS,
+      userMessage: p.userMessage ?? undefined,
+      slotIdTomado: slotId,
+      soloZonaRural: true,
+    });
+    await this.auditFailure(senderId, organizationId, {
+      reason: FailureReason.SLOT_TAKEN,
+      userMessage: p.userMessage || '[audio]',
+      botReply: reply,
+      metadata: {
+        stage: 'SABADO_SOLO_RURAL',
+        motivo: 'SOLO_ZONA_RURAL',
+        slotId,
+      },
+    });
+    return true;
+  }
+
+  /**
+   * 🌾 ¿El paciente de esta cita es de zona rural, con la regla encendida? Para
+   * ofrecerle también sábados al cambiar la fecha. Ante la duda, no.
+   */
+  private async esPacienteRuralDeLaCita(
+    organizationId: string,
+    patientId: string,
+  ): Promise<boolean> {
+    try {
+      const regla = await sabadoRuralDeLaClinica(this.prisma, organizationId);
+      if (!regla?.abierto) return false;
+      const paciente = await this.prisma.patientProfile.findUnique({
+        where: { id: patientId },
+        select: { cedula: true },
+      });
+      return await esPacienteRural(
+        this.prisma,
+        organizationId,
+        paciente?.cedula,
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 🌾 ¿Hay citas del sábado para la zona rural? Para decirlo al final del «no
+   * hay cupos». Falla blanda: ante la duda, no.
+   */
+  private async hayCitasDeSabadoRural(
+    organizationId: string,
+    serviceName: string,
+    epsIdForSlots: string | null,
+  ): Promise<boolean> {
+    try {
+      return await this.appointmentsService.hayCuposDeSabadoRural(
+        serviceName,
+        epsIdForSlots,
+        organizationId,
+      );
+    } catch {
       return false;
     }
   }
@@ -10268,6 +10596,20 @@ export class ChatbotService implements OnModuleInit {
         });
         return true;
       }
+    }
+
+    // 🌾 Pidió un sábado con la regla de zona rural encendida: las citas del
+    // sábado, que el menú normal no trae. Sin ellas, sigue como siempre.
+    if (
+      pedido.fecha &&
+      pedido.fecha.precision === 'dia' &&
+      esSabado(pedido.fecha.desde, timeZone) &&
+      (await this.mostrarCuposDeSabadoRural(ctx, {
+        desdeElMenu: true,
+        siNoHay: 'SEGUIR',
+      }))
+    ) {
+      return true;
     }
 
     const epsIdForSlots =
@@ -10470,9 +10812,18 @@ export class ChatbotService implements OnModuleInit {
             p.epsIdForSlots,
             organizationId,
           );
+    // 🌾 Hay citas del sábado para la zona rural: se le dice cómo verlas.
+    const conSabadoRural = p.pedida
+      ? false
+      : await this.hayCitasDeSabadoRural(
+          organizationId,
+          p.serviceName,
+          p.epsIdForSlots,
+        );
     const reply = p.pedida
       ? MSGS.listaDeEsperaPedida()
-      : MSGS.sinOtrosCuposListaEspera(masAlla?.hasta, masAlla?.desde);
+      : MSGS.sinOtrosCuposListaEspera(masAlla?.hasta, masAlla?.desde) +
+        (conSabadoRural ? MSGS.lineaSabadoRural() : '');
     await this.smartReply(organizationId, senderId, reply);
     await this.setUserState(
       organizationId,
@@ -10488,6 +10839,7 @@ export class ChatbotService implements OnModuleInit {
         pedido: p.pedido,
         ...(masAlla ? { porPlazo: true, plazoDesde: masAlla.desdeIso } : {}),
         ...(porReserva ? { porReserva: true } : {}),
+        ...(conSabadoRural ? { sabadoRural: true } : {}),
       },
     });
     return true;
@@ -10607,6 +10959,19 @@ export class ChatbotService implements OnModuleInit {
           // El documento lo dio antes en la conversación: pasa al paso del
           // documento con el cupo recién apartado, como si no lo hubiera dado.
           permitirCorregir: true,
+        })
+      ) {
+        return;
+      }
+
+      // 🌾 SÁBADO SOLO PARA LA ZONA RURAL: mismo motivo que la verificación de arriba.
+      if (
+        await this.rejectIfSabadoSoloRural({
+          organizationId,
+          senderId,
+          cedula: cedulaPrevia,
+          MSGS,
+          userMessage,
         })
       ) {
         return;
@@ -11763,6 +12128,7 @@ export class ChatbotService implements OnModuleInit {
             bookingResult.reason === 'DOCTOR_NOT_BOOKABLE' ||
             bookingResult.reason === 'RESERVA_PRESENCIAL',
           reservaPresencial: bookingResult.reason === 'RESERVA_PRESENCIAL',
+          soloZonaRural: bookingResult.reason === 'SOLO_ZONA_RURAL',
         });
 
         await this.auditFailure(senderId, organizationId, {
@@ -11772,8 +12138,9 @@ export class ChatbotService implements OnModuleInit {
           metadata: {
             slotId: slotIdFinal,
             cedula: cedulaFinal,
-            ...(bookingResult.reason === 'RESERVA_PRESENCIAL'
-              ? { motivo: 'RESERVA_PRESENCIAL' }
+            ...(bookingResult.reason === 'RESERVA_PRESENCIAL' ||
+            bookingResult.reason === 'SOLO_ZONA_RURAL'
+              ? { motivo: bookingResult.reason }
               : {}),
           },
         });
@@ -11889,6 +12256,17 @@ export class ChatbotService implements OnModuleInit {
     const respuesta = text?.toUpperCase().trim() || '';
     // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
     const decision = this.interpretYesNo(text);
+
+    // 🌾 «Sábado» tras «… si vive en zona rural, hay citas el sábado: escriba
+    // sábado» (2026-11-19): las citas del sábado. Sin la regla, sigue como siempre.
+    if (
+      decision !== 'SI' &&
+      decision !== 'NO' &&
+      /\bs[aá]bado/i.test(text || '') &&
+      (await this.mostrarCuposDeSabadoRural(ctx, { desdeElMenu: false }))
+    ) {
+      return;
+    }
 
     if (decision === 'SI') {
       // El usuario acepta entrar a la cola de espera.
@@ -13292,6 +13670,24 @@ export class ChatbotService implements OnModuleInit {
           ) {
             throw new Error('NEW_SLOT_RESERVA_PRESENCIAL');
           }
+          // 🌾 Ni a un sábado si el paciente de la cita no es de zona rural (con
+          // la regla encendida; sin ella no consulta nada más).
+          if (
+            await sabadoSoloRuralLoImpide(
+              tx,
+              organizationId,
+              newSlot.startTime,
+              async () =>
+                (
+                  await tx.appointment.findUnique({
+                    where: { id: aptId },
+                    select: { patient: { select: { cedula: true } } },
+                  })
+                )?.patient?.cedula,
+            )
+          ) {
+            throw new Error('NEW_SLOT_SOLO_ZONA_RURAL');
+          }
           await tx.appointment.update({
             where: { id: aptId },
             data: { scheduleSlotId: newSlotId },
@@ -13448,14 +13844,16 @@ export class ChatbotService implements OnModuleInit {
         if (
           mensaje === 'NEW_SLOT_TAKEN' ||
           mensaje === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE' ||
-          mensaje === 'NEW_SLOT_RESERVA_PRESENCIAL'
+          mensaje === 'NEW_SLOT_RESERVA_PRESENCIAL' ||
+          mensaje === 'NEW_SLOT_SOLO_ZONA_RURAL'
         ) {
           // Dos motivos distintos con el mismo desenlace (volver a ofrecer),
           // pero mensajes distintos: decir "lo tomó otro paciente" cuando el
           // cupo sigue libre le hace perder el tiempo a quien luego llama.
           const reply =
             mensaje === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE' ||
-            mensaje === 'NEW_SLOT_RESERVA_PRESENCIAL'
+            mensaje === 'NEW_SLOT_RESERVA_PRESENCIAL' ||
+            mensaje === 'NEW_SLOT_SOLO_ZONA_RURAL'
               ? MSGS.medicoNoDisponiblePorWhatsapp()
               : MSGS.slotTomado();
           await this.smartReply(organizationId, senderId, reply);
@@ -13469,7 +13867,9 @@ export class ChatbotService implements OnModuleInit {
               newSlotId,
               ...(mensaje === 'NEW_SLOT_RESERVA_PRESENCIAL'
                 ? { motivo: 'RESERVA_PRESENCIAL' }
-                : {}),
+                : mensaje === 'NEW_SLOT_SOLO_ZONA_RURAL'
+                  ? { motivo: 'SOLO_ZONA_RURAL' }
+                  : {}),
             },
           });
           // Reofrecemos cupos frescos para el mismo appointment.
@@ -16084,11 +16484,19 @@ export class ChatbotService implements OnModuleInit {
     const fechaActual = formatAppointmentLong(apt.scheduleSlot.startTime);
 
     // Sin los que otro paciente del chat tiene apartados (2026-10-28).
+    // 🌾 Con la regla de zona rural encendida, también sábados si el paciente de
+    // la cita es de zona rural (2026-11-19); si no, el menú no los trae.
+    const incluirSabados = await this.esPacienteRuralDeLaCita(
+      organizationId,
+      apt.patientId,
+    );
     const slots = await this.cuposParaElMenu(
       organizationId,
       senderId,
       serviceName,
       apt.epsId,
+      null,
+      incluirSabados ? { sabados: 'INCLUIR' } : undefined,
     );
     // Excluimos el cupo que el paciente ya tiene (no tiene sentido "moverla" al mismo).
     const candidateSlots = slots.filter((s) => s.slotId !== apt.scheduleSlotId);

@@ -22,6 +22,9 @@ import type {
   EstadoResumenesAgente,
   ResumenesAtencionInput,
   ResumenesAtencionResult,
+  ZonaRuralEstado,
+  ZonaRuralLoteInput,
+  ZonaRuralLoteResult,
 } from '@agenia/shared';
 
 /**
@@ -61,6 +64,12 @@ export interface MirrorApiClient {
   pushAttentionSummaries(
     input: ResumenesAtencionInput,
   ): Promise<ResumenesAtencionResult>;
+  /**
+   * 🌾 Sábados solo para la zona rural. Con la regla apagada —el estado al
+   * desplegar— `pedir` es false y el agente no lee nada.
+   */
+  getRuralZoneState(): Promise<ZonaRuralEstado>;
+  pushRuralZoneBatch(input: ZonaRuralLoteInput): Promise<ZonaRuralLoteResult>;
 }
 
 /**
@@ -257,6 +266,14 @@ export class HttpMirrorApiClient implements MirrorApiClient {
 
   getAttentionSummaryState(): Promise<EstadoResumenesAgente> {
     return this.request('GET', '/mirror/attention-summaries/state');
+  }
+
+  getRuralZoneState(): Promise<ZonaRuralEstado> {
+    return this.request('GET', '/mirror/rural-zone/state');
+  }
+
+  pushRuralZoneBatch(input: ZonaRuralLoteInput): Promise<ZonaRuralLoteResult> {
+    return this.request('POST', '/mirror/rural-zone', input);
   }
 
   pushAttentionSummaries(

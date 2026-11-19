@@ -16,11 +16,16 @@ import {
   minutoLocal,
   puedeAvisarAhora,
   type HorarioAvisos,
+  esSabado,
 } from '@agenia/shared';
 import { Prisma } from '@agenia/database';
 import { cupoBloqueadoParaElAsistente } from '../appointments/bloqueos-agenda';
 import { fueraDelPlazoParaElAsistente } from '../appointments/plazo-agendar';
 import { cupoReservadoParaElHospital } from '../appointments/reserva-presencial';
+import {
+  esPacienteRural,
+  sabadoRuralDeLaClinica,
+} from '../appointments/sabado-rural';
 import { ConfigService } from '@nestjs/config';
 import { ChatbotService } from '../chatbot/chatbot.service';
 import { cupoApartadoKey } from '../chatbot/chatbot.constants';
@@ -374,6 +379,22 @@ export class WaitlistService {
       return false;
     }
 
+    // 🌾 Sábados solo para la zona rural: con la regla encendida, un cupo de
+    // sábado se le ofrece solo a quien el hospital tiene con zona rural (al «SÍ»
+    // la reserva lo exigiría igual). Sin la lista, a nadie. Sin la regla, nada
+    // cambia.
+    const reglaSabado = await sabadoRuralDeLaClinica(
+      this.prisma,
+      organizationId,
+    );
+    const soloRural = !!reglaSabado && esSabado(slotDate, reglaSabado.timeZone);
+    if (soloRural && !reglaSabado.abierto) {
+      this.logger.log(
+        `El cupo ${slotId} es de sábado y todavía no hay lista de pacientes de zona rural: no se ofrece a la lista de espera`,
+      );
+      return false;
+    }
+
     // El primero de la cola (FIFO) que puede tomar el cupo y a quien se le puede
     // escribir ahora: con texto si escribió en las últimas 24 h (o usa Telegram),
     // con la plantilla «Oferta de cupo» si no. Al que no se le puede escribir no
@@ -407,6 +428,19 @@ export class WaitlistService {
       }
       // 📅 Ya consiguió cita por otro camino (el chat, el hospital): sale de la lista.
       if (await this.cerrarSiYaTieneCita(candidate)) {
+        saltados.push(candidate.id);
+        continue;
+      }
+      // 🌾 Sábado solo para la zona rural: quien no lo es sigue esperando en su
+      // puesto, para otro día.
+      if (
+        soloRural &&
+        !(await esPacienteRural(
+          this.prisma,
+          organizationId,
+          candidate.patient?.cedula,
+        ))
+      ) {
         saltados.push(candidate.id);
         continue;
       }

@@ -80,6 +80,7 @@ model Organization {
   supportBotChats       SupportBotConversation[]
   chatSurveys           ChatSurvey[]
   epsEnrolledPatients   EpsEnrolledPatient[]
+  ruralPatients         RuralPatient[]
   epsEnrollmentRequests EpsEnrollmentRequest[]
   padronImports         PadronImport[]
 
@@ -205,6 +206,17 @@ model OrganizationSettings {
   // ORG_ADMIN en /dashboard/configuracion; la regla vive en @agenia/shared
   // (reserva-presencial.ts). Rango 10-100 (CHECK en la migración).
   botAgendaSharePercent Int?
+
+  // 🌾 SÁBADOS SOLO PARA LA ZONA RURAL (2026-11-19): el asistente (WhatsApp y
+  // Telegram) agenda los sábados solo a pacientes cuya ficha en el hospital dice
+  // zona rural (lista `RuralPatient`, la manda el agente), y como mucho este
+  // porcentaje de la agenda de cada médico ese día (100 = sin tope). Los demás
+  // días no cambian. null = sin regla especial (lo de siempre: el sábado es un
+  // día más, y lo que diga «Días sin citas» sigue mandando). Aplica al agendar,
+  // al cambiar la fecha y a la lista de espera; el panel y el hospital agendan
+  // como siempre. Lo edita el ORG_ADMIN en /dashboard/configuracion; la regla
+  // vive en @agenia/shared (sabado-rural.ts). Rango 10-100 (CHECK en la migración).
+  saturdayRuralSharePercent Int?
 
   // 🚦 LÍMITE DE CITAS POR PACIENTE (por el bot) — /dashboard/limites-citas,
   // lo editan ORG_ADMIN y BOOKING_AGENT. Cuántas citas vigentes puede tener un
@@ -2221,6 +2233,25 @@ enum ResolutionStatus {
 // Un re-import del CSV hace upsert por (organizationId, cedula), de modo que
 // un cambio de EPS del paciente se refleja re-importando el padrón.
 // -----------------------------------------------------------------------------
+// 🌾 PACIENTES DE ZONA RURAL (2026-11-19): los documentos de los pacientes que
+// el HIS tiene con zona de residencia rural (`PACIENTES.CD_CODI_ZORE_PAC = 'R'`
+// en cnt-sanvicente-anserma). Solo el documento: ni nombre, ni dirección, ni
+// barrio. Lo manda el agente una vez al día, y solo si la clínica encendió
+// «Sábados: solo zona rural»; cada envío completo reemplaza el anterior
+// (`seenAt` = inicio del envío; al terminar se borra lo que no vino). Sirve para
+// que el asistente agende los sábados solo a personas del campo.
+model RuralPatient {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Solo dígitos (`normalizeDocumento`), como `PatientProfile.cedula`.
+  document String   @db.VarChar(20)
+  seenAt   DateTime
+
+  @@unique([organizationId, document])
+}
+
 model EpsEnrolledPatient {
   id String @id @default(uuid())
 
@@ -2860,6 +2891,13 @@ model HospitalMirrorConfig {
   // (2026-11-19); null = su última vuelta salió bien o el agente no lo informa.
   // Lo lee la alerta «la lectura se detuvo» para decir por qué.
   resumenAtencionError    String?
+
+  // 🌾 Lista de pacientes de zona rural (sábados solo para el campo,
+  // 2026-11-19): cuándo terminó el agente de mandarla por última vez y cuántos
+  // documentos quedaron. Sin lista, nadie es rural y el asistente no ofrece
+  // sábados con la regla encendida.
+  ruralListSyncedAt DateTime?
+  ruralListCount    Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

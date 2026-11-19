@@ -8,7 +8,11 @@ import type {
   ResumenAtencionHis,
   ResumenesAtencionResult,
 } from '@agenia/shared';
-import { LIMITES_RESUMEN_ATENCION, validarConsultaHis } from '@agenia/shared';
+import {
+  LIMITES_RESUMEN_ATENCION,
+  LIMITES_ZONA_RURAL,
+  validarConsultaHis,
+} from '@agenia/shared';
 import type { MirrorApiClient } from './mirror-api-client';
 import type { DriverResult, HisDriver } from './driver.interface';
 import {
@@ -16,6 +20,7 @@ import {
   isAttentionSummaryCapable,
   isNoticeRosterCapable,
   isPatientLookupCapable,
+  isRuralZoneCapable,
 } from './driver.interface';
 import type { AgentStateStore } from './agent-state-store';
 
@@ -174,6 +179,66 @@ export class MirrorEngine {
       });
     }
     return resultados;
+  }
+
+  /**
+   * 🌾 Sábados solo para la zona rural (2026-11-19): manda la lista de
+   * documentos de pacientes con zona de residencia rural.
+   *
+   * Pregunta primero: si la clínica no encendió la regla, no lee el HIS ni
+   * manda nada (`apagado`); si la última lista completa llegó hace menos de
+   * `LIMITES_ZONA_RURAL.CADA_MS`, tampoco (`reciente`). Si no, la lee una vez y
+   * la manda en lotes con el mismo inicio; el último lote le dice al servidor
+   * que reemplace la lista. Un fallo a la mitad deja la lista anterior en pie.
+   */
+  async syncRuralZone(ahora: Date = new Date()): Promise<{
+    skipped: boolean;
+    apagado?: boolean;
+    reciente?: boolean;
+    enviados?: number;
+    total?: number;
+    conservada?: boolean;
+  }> {
+    if (!isRuralZoneCapable(this.driver)) return { skipped: true };
+    const estado = await this.api.getRuralZoneState();
+    if (!estado.pedir) return { skipped: false, apagado: true };
+    if (
+      estado.ultimaIso &&
+      ahora.getTime() - new Date(estado.ultimaIso).getTime() <
+        LIMITES_ZONA_RURAL.CADA_MS
+    ) {
+      return { skipped: false, reciente: true };
+    }
+
+    const documentos = await this.driver.fetchRuralPatientDocuments();
+    const inicioIso = ahora.toISOString();
+    const lotes: string[][] = [];
+    for (let i = 0; i < documentos.length; i += LIMITES_ZONA_RURAL.LOTE) {
+      lotes.push(documentos.slice(i, i + LIMITES_ZONA_RURAL.LOTE));
+    }
+    // Aun sin documentos se manda un lote final vacío: el servidor decide (y
+    // conserva la lista anterior, porque eso huele a una lectura rota).
+    if (lotes.length === 0) lotes.push([]);
+
+    let enviados = 0;
+    let ultimo: Awaited<ReturnType<MirrorApiClient['pushRuralZoneBatch']>> = {
+      aceptados: 0,
+    };
+    for (let i = 0; i < lotes.length; i++) {
+      ultimo = await this.api.pushRuralZoneBatch({
+        inicioIso,
+        documentos: lotes[i],
+        ultimo: i === lotes.length - 1,
+      });
+      if (ultimo.ignorado) return { skipped: false, apagado: true };
+      enviados += lotes[i].length;
+    }
+    return {
+      skipped: false,
+      enviados,
+      total: ultimo.total,
+      ...(ultimo.conservada ? { conservada: true } : {}),
+    };
   }
 
   /**

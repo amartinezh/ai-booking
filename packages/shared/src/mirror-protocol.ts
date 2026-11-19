@@ -403,6 +403,55 @@ export interface ReconcileResult {
   toImport?: HisAppointmentKey[];
 }
 
+// ── GET /mirror/rural-zone/state · POST /mirror/rural-zone ─────────────────
+//
+// 🌾 Sábados solo para la zona rural (2026-11-19). El agente manda, una vez al
+// día y solo si la clínica encendió la regla, los documentos de los pacientes
+// que el HIS tiene con zona de residencia rural. Solo el documento: ni nombre,
+// ni dirección, ni barrio. Va en lotes (la API admite 1 MB por petición); todos
+// los lotes de un envío llevan el mismo `inicioIso` y el último dice `ultimo:
+// true`: entonces el servidor borra lo que no vino. Si el envío se corta a la
+// mitad, la lista anterior sigue en pie hasta el siguiente envío completo.
+
+/** Qué le dice el servidor al agente antes de leer el HIS. */
+export interface ZonaRuralEstado {
+  /** true si la clínica encendió «Sábados: solo zona rural». */
+  pedir: boolean;
+  /** Cuándo terminó el último envío completo (ISO), o null. */
+  ultimaIso: string | null;
+}
+
+export interface ZonaRuralLoteInput {
+  /** El mismo para todos los lotes de un envío: cuando empezó (ISO). */
+  inicioIso: string;
+  /** Documentos de pacientes con zona rural, tal como los tiene el HIS. */
+  documentos: string[];
+  /** true en el último lote del envío. */
+  ultimo: boolean;
+}
+
+export interface ZonaRuralLoteResult {
+  /** Documentos válidos de este lote que quedaron en la lista. */
+  aceptados: number;
+  /** La clínica no tiene la regla encendida: no se guardó nada. */
+  ignorado?: boolean;
+  /** Solo en el último lote: cuántos documentos tiene la lista ahora. */
+  total?: number;
+  /** Solo en el último lote: el envío vino vacío y se conservó la lista anterior. */
+  conservada?: boolean;
+}
+
+export const LIMITES_ZONA_RURAL = {
+  /** Documentos por lote que manda el agente. */
+  LOTE: 5000,
+  /** Lo más que acepta el servidor por lote. */
+  MAX_LOTE: 10000,
+  /** Cada cuánto, como mucho, se vuelve a mandar la lista completa. */
+  CADA_MS: 20 * 60 * 60 * 1000,
+  /** Un envío más viejo que esto ya no se acepta (el agente empieza otro). */
+  MAX_DURACION_ENVIO_MS: 6 * 60 * 60 * 1000,
+} as const;
+
 // ── POST /mirror/catalog ────────────────────────────────────────────────────
 
 /**

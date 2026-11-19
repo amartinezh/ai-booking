@@ -25,6 +25,7 @@ import {
   franjaDelCupo,
   type FranjaDelDia,
   type HoraPreferida,
+  tramosDeSabado,
 } from '@agenia/shared';
 import {
   bloqueosDeLaClinica,
@@ -40,6 +41,10 @@ import {
   parteDelChatDeLaClinica,
   tramosReservadosParaElHospital,
 } from './reserva-presencial';
+import {
+  sabadoRuralDeLaClinica,
+  sabadoSoloRuralLoImpide,
+} from './sabado-rural';
 
 /**
  * Hasta cuándo se convierten los días sin citas en tramos para la consulta
@@ -117,6 +122,12 @@ export class AppointmentsService {
       ignorarPlazo?: boolean;
       ignorarReserva?: boolean;
       apartados?: readonly string[];
+      // 🌾 Sábados solo para la zona rural (2026-11-19). Con la regla
+      // encendida, los sábados no se ofrecen a quien no se sabe si es del campo.
+      // 'SOLO': solo los sábados (el menú «Vivo en zona rural: ver citas del
+      // sábado»; el documento se revisa al darlo). 'INCLUIR': también los
+      // sábados (la persona ya es rural: cambio de fecha de su cita).
+      sabados?: 'SOLO' | 'INCLUIR';
       franja?: FranjaDelDia | null;
       excluir?: readonly string[];
       hora?: HoraPreferida | null;
@@ -188,8 +199,38 @@ export class AppointmentsService {
           );
           return [];
         });
+    // 🌾 Sábados solo para la zona rural: con la regla encendida, los sábados
+    // salen de la consulta (como los días sin citas) salvo que se pidan solo
+    // ellos o que la persona ya sea rural. Sin la regla, la consulta no cambia.
+    const hastaVentana =
+      startTimeFilter.lte ??
+      finDelPlazo ??
+      new Date(startTimeFilter.gte.getTime() + HORIZONTE_BLOQUEOS_MS);
+    const sabadoRural =
+      opts.sabados === 'INCLUIR'
+        ? null
+        : await sabadoRuralDeLaClinica(this.prisma, organizationId);
+    const sabados =
+      opts.sabados === 'SOLO' || sabadoRural
+        ? tramosDeSabado(
+            startTimeFilter.gte,
+            hastaVentana,
+            sabadoRural?.timeZone,
+          )
+        : [];
+    if (
+      opts.sabados === 'SOLO' &&
+      (!sabadoRural?.abierto || sabados.length === 0)
+    ) {
+      // 'SOLO' es solo para la regla encendida y con la lista de pacientes
+      // rurales ya recibida; sin sábados en la ventana tampoco hay nada.
+      return [];
+    }
     const fueraDeLaOferta: Prisma.ScheduleSlotWhereInput[] = [
       ...tramos.map((t) => ({ startTime: { gte: t.gte, lt: t.lt } })),
+      ...(opts.sabados !== 'SOLO'
+        ? sabados.map((t) => ({ startTime: { gte: t.gte, lt: t.lt } }))
+        : []),
       ...reservados.map((r) => ({
         doctorId: r.doctorId,
         startTime: { gte: r.gte, lt: r.lt },
@@ -210,6 +251,17 @@ export class AppointmentsService {
           OR: [{ allowedEpsId: null }, { allowedEpsId: epsId }],
           ...(opts.excluir?.length ? { id: { notIn: [...opts.excluir] } } : {}),
           ...(fueraDeLaOferta.length > 0 ? { NOT: fueraDeLaOferta } : {}),
+          ...(opts.sabados === 'SOLO'
+            ? {
+                AND: [
+                  {
+                    OR: sabados.map((t) => ({
+                      startTime: { gte: t.gte, lt: t.lt },
+                    })),
+                  },
+                ],
+              }
+            : {}),
         },
         include: { doctor: true, service: true },
         orderBy: { startTime: 'asc' },
@@ -337,6 +389,30 @@ export class AppointmentsService {
       organizationId,
       null,
       { todos: true, ignorarReserva: true },
+    );
+    return cupos.length > 0;
+  }
+
+  /**
+   * 🌾 ¿Hay citas de sábado que el asistente pueda dar a una persona de zona
+   * rural? Solo con la regla encendida y la lista de pacientes rurales ya
+   * recibida. Para mostrar la opción «Vivo en zona rural: ver citas del sábado».
+   * Sin la regla, false sin consultar la agenda.
+   */
+  async hayCuposDeSabadoRural(
+    serviceName: string,
+    epsId: string | null,
+    organizationId: string,
+    excluir: readonly string[] = [],
+  ): Promise<boolean> {
+    const regla = await sabadoRuralDeLaClinica(this.prisma, organizationId);
+    if (!regla?.abierto) return false;
+    const cupos = await this.getAvailableSlots(
+      serviceName,
+      epsId,
+      organizationId,
+      null,
+      { todos: true, sabados: 'SOLO', excluir: [...excluir] },
     );
     return cupos.length > 0;
   }
@@ -489,7 +565,9 @@ export class AppointmentsService {
       | 'PATIENT_REGIME_MISSING'
       | 'PATIENT_LIMIT_REACHED'
       /** El asistente ya tomó su parte de la agenda de ese médico ese día. */
-      | 'RESERVA_PRESENCIAL';
+      | 'RESERVA_PRESENCIAL'
+      /** Sábado con la regla de zona rural encendida y el paciente no es rural. */
+      | 'SOLO_ZONA_RURAL';
     /** Solo con `PATIENT_LIMIT_REACHED`: qué límite y cuántas citas tenía. */
     limite?: LimiteDelPaciente;
   }> {
@@ -585,6 +663,26 @@ export class AppointmentsService {
           }))
         ) {
           throw new Error('RESERVA_PRESENCIAL');
+        }
+        // 🌾 Sábados solo para la zona rural: con la regla encendida, una cita
+        // de sábado por el asistente exige que el hospital tenga al paciente con
+        // zona rural. Solo el bot; sin la regla no consulta nada más.
+        if (
+          (origin === 'WHATSAPP' || origin === 'TELEGRAM') &&
+          (await sabadoSoloRuralLoImpide(
+            tx,
+            organizationId,
+            slot.startTime,
+            async () =>
+              (
+                await tx.patientProfile.findUnique({
+                  where: { id: patientId },
+                  select: { cedula: true },
+                })
+              )?.cedula,
+          ))
+        ) {
+          throw new Error('SOLO_ZONA_RURAL');
         }
 
         // 🚦 LÍMITE DE CITAS POR PACIENTE: el bot no le asigna a un paciente
@@ -758,6 +856,18 @@ export class AppointmentsService {
           success: false,
           reason: 'RESERVA_PRESENCIAL',
           message: 'Ese horario quedó reservado para agendar en el hospital.',
+        };
+      }
+
+      if (message === 'SOLO_ZONA_RURAL') {
+        this.logger.warn(
+          `Reserva frenada: el cupo ${scheduleSlotId} es de sábado y el paciente ${patientId} no está en la lista de zona rural.`,
+        );
+        return {
+          success: false,
+          reason: 'SOLO_ZONA_RURAL',
+          message:
+            'Los sábados, por este medio, las citas son para personas de zona rural.',
         };
       }
 

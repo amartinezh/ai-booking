@@ -9,6 +9,7 @@ import { MirrorCatalogService } from './mirror-catalog.service';
 import { MirrorNoticeService } from './mirror-notice.service';
 import { MirrorLookupService } from './mirror-lookup.service';
 import { MirrorAttentionSummaryService } from './mirror-attention-summary.service';
+import { MirrorRuralZoneService } from './mirror-rural-zone.service';
 import { MirrorAgentGuard } from './mirror-agent.guard';
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -55,6 +56,7 @@ describe('MirrorController — validación de /mirror/ack', () => {
         { provide: MirrorNoticeService, useValue: {} },
         { provide: MirrorLookupService, useValue: {} },
         { provide: MirrorAttentionSummaryService, useValue: {} },
+        { provide: MirrorRuralZoneService, useValue: {} },
       ],
     })
       // El guard tiene su propia batería de pruebas (mirror-agent.guard.spec).
@@ -170,6 +172,7 @@ describe('MirrorController — validación de /mirror/availability', () => {
         { provide: MirrorNoticeService, useValue: {} },
         { provide: MirrorLookupService, useValue: {} },
         { provide: MirrorAttentionSummaryService, useValue: {} },
+        { provide: MirrorRuralZoneService, useValue: {} },
       ],
     })
       .overrideGuard(MirrorAgentGuard)
@@ -248,6 +251,7 @@ describe('MirrorController — validación de /mirror/catalog', () => {
         { provide: MirrorNoticeService, useValue: {} },
         { provide: MirrorLookupService, useValue: {} },
         { provide: MirrorAttentionSummaryService, useValue: {} },
+        { provide: MirrorRuralZoneService, useValue: {} },
       ],
     })
       .overrideGuard(MirrorAgentGuard)
@@ -355,6 +359,7 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
         { provide: MirrorNoticeService, useValue: notice },
         { provide: MirrorLookupService, useValue: lookup },
         { provide: MirrorAttentionSummaryService, useValue: {} },
+        { provide: MirrorRuralZoneService, useValue: {} },
       ],
     })
       .overrideGuard(MirrorAgentGuard)

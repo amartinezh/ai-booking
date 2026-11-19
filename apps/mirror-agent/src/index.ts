@@ -245,6 +245,30 @@ async function main() {
     }
   };
 
+  // 🌾 Sábados solo para la zona rural: la lista de pacientes rurales. Con la
+  // regla apagada (lo de fábrica) cada vuelta es una pregunta a AgenIA y no toca
+  // el HIS; encendida, la lista sale como mucho una vez al día.
+  const bucleZonaRural = async () => {
+    await dormir(config.ruralZoneDelayMs);
+    for (;;) {
+      try {
+        const r = await engine.syncRuralZone();
+        if (!r.skipped && r.enviados !== undefined) {
+          console.log(
+            `[mirror-agent] zona rural: ${r.enviados} documento(s) enviados` +
+              (r.total !== undefined ? `, ${r.total} en la lista` : '') +
+              (r.conservada ? ' (vino vacía: se conservó la anterior)' : '') +
+              '.',
+          );
+        }
+        reporter.reset('zona rural');
+      } catch (error) {
+        reporter.report('zona rural', mensajeDeError(error));
+      }
+      await dormir(config.ruralZoneIntervalMs);
+    }
+  };
+
   // Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
   // cnt-sanvicente-anserma. Ver PLAN_AVISOS_MASIVOS.md §5.
   //
@@ -440,6 +464,7 @@ async function main() {
     bucleReconciliacion(),
     bucleAgenda(),
     bucleCatalogo(),
+    bucleZonaRural(),
     bucleAvisos(),
     bucleConsultas(),
     bucleResumenes(),

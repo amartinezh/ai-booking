@@ -10,6 +10,7 @@ import { MirrorSchemaCheckService } from './mirror-schema-check.service';
 import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
+import { MirrorRuralZoneService } from './mirror-rural-zone.service';
 import { MirrorNoticeService } from './mirror-notice.service';
 import { MirrorLookupService } from './mirror-lookup.service';
 import { MirrorAttentionSummaryService } from './mirror-attention-summary.service';
@@ -56,6 +57,7 @@ import { SyncAlertsController } from './sync-alerts.controller';
     MirrorReconciliationService,
     MirrorAvailabilityService,
     MirrorCatalogService,
+    MirrorRuralZoneService,
     // 📣 Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
     // cnt-sanvicente-anserma. Ver mirror-notice.service.ts para por qué vive
     // aquí y no en mass-notice/.

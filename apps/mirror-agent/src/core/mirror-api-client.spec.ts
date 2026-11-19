@@ -247,6 +247,23 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
   });
 
   describe('rutas y verbos', () => {
+    it('zona rural: estado → GET /mirror/rural-zone/state; lote → POST /mirror/rural-zone', async () => {
+      await client.getRuralZoneState();
+      expect(llamada().url).toBe(`${BASE}/mirror/rural-zone/state`);
+      expect(llamada().init.method).toBe('GET');
+
+      fetchMock.mockClear();
+      const lote = {
+        inicioIso: '2026-11-20T08:00:00.000Z',
+        documentos: ['1088123456'],
+        ultimo: true,
+      };
+      await client.pushRuralZoneBatch(lote);
+      expect(llamada().url).toBe(`${BASE}/mirror/rural-zone`);
+      expect(llamada().init.method).toBe('POST');
+      expect(JSON.parse(llamada().init.body ?? '{}')).toEqual(lote);
+    });
+
     it('handshake → POST /mirror/handshake', async () => {
       await client.handshake({
         driverVersion: '1.0.0',
@@ -313,7 +330,10 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
       const { url, init } = llamada();
       expect(url).toBe(`${BASE}/mirror/attention-summaries`);
       expect(init.method).toBe('POST');
-      expect(JSON.parse(init.body as string)).toEqual({ resumenes: [], nextCursor: '7' });
+      expect(JSON.parse(init.body as string)).toEqual({
+        resumenes: [],
+        nextCursor: '7',
+      });
     });
 
     it('getPendingLookupRequests → GET /mirror/lookup-requests, sin cuerpo', async () => {

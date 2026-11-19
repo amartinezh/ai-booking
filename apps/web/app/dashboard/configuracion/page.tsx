@@ -5,6 +5,7 @@ import {
     getMyOrgSettings,
     getMyPlazoAgendarResumen,
     getMyReservaPresencialResumen,
+    getMySabadoRuralEstado,
 } from '@/app/actions/settings';
 import { getMyKnowledgeBase } from '@/app/actions/knowledge-base';
 import { getMyAiConfig } from '@/app/actions/ai-config';
@@ -20,6 +21,7 @@ import CancelToggle from './CancelToggle';
 import RescheduleToggle from './RescheduleToggle';
 import PlazoAgendarSetting from './PlazoAgendarSetting';
 import ReservaPresencialSetting from './ReservaPresencialSetting';
+import SabadoRuralSetting from './SabadoRuralSetting';
 import HomologacionAutomatica from './HomologacionAutomatica';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
@@ -87,17 +89,22 @@ export default async function ConfiguracionPage({
     let reservaResumen:
         | Extract<Awaited<ReturnType<typeof getMyReservaPresencialResumen>>, { success: true }>['resumen']
         | null = null;
+    // 🌾 Cómo están los sábados por el asistente. Aislado como los demás.
+    let sabadoEstado: Extract<Awaited<ReturnType<typeof getMySabadoRuralEstado>>, { success: true }>['estado'] | null =
+        null;
     // 🩺 Médicos nuevos del hospital: solo con espejo. Aislado como los demás.
     let homologacion: Awaited<ReturnType<typeof getMyHomologacionAutomatica>> | null = null;
 
     if (activeTab === 'chatbot') {
-        const [setRes, audRes, plazoRes, homRes, reservaRes] = await Promise.allSettled([
+        const [setRes, audRes, plazoRes, homRes, reservaRes, sabadoRes] = await Promise.allSettled([
             getMyOrgSettings(),
             getMyAudioConfig(),
             getMyPlazoAgendarResumen(),
             getMyHomologacionAutomatica(),
             getMyReservaPresencialResumen(),
+            getMySabadoRuralEstado(),
         ]);
+        if (sabadoRes.status === 'fulfilled' && sabadoRes.value.success) sabadoEstado = sabadoRes.value.estado;
         if (reservaRes.status === 'fulfilled' && reservaRes.value.success) reservaResumen = reservaRes.value.resumen;
         if (homRes.status === 'fulfilled') homologacion = homRes.value;
         if (setRes.status === 'fulfilled') settings = setRes.value;
@@ -213,6 +220,13 @@ export default async function ConfiguracionPage({
                             <ReservaPresencialSetting
                                 initialPorcentaje={settings.botAgendaSharePercent}
                                 resumenInicial={reservaResumen}
+                            />
+                        )}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {settings && (
+                            <SabadoRuralSetting
+                                initialPorcentaje={settings.saturdayRuralSharePercent}
+                                estadoInicial={sabadoEstado}
                             />
                         )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}

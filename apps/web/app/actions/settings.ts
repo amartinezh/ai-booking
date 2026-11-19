@@ -12,13 +12,17 @@ import {
     normalizarCuposOfrecidos,
     normalizarParteDelChat,
     normalizarPlazoAgendar,
+    normalizarSabadoRural,
     operacionHisDelEvento,
     textoParteDelChat,
     textoPlazoAgendar,
+    textoSabadoRural,
     validarParteDelChat,
+    validarSabadoRural,
     validarPlazoAgendar,
 } from '@agenia/shared';
 import { OP_CAMBIO_RESERVA, cargarResumenDeLaReserva } from '@/lib/reserva-presencial/resumen';
+import { OP_CAMBIO_SABADO_RURAL, cargarEstadoSabadoRural } from '@/lib/sabado-rural/estado';
 import { OP_CAMBIO_PLAZO, cargarResumenDelPlazo } from '@/lib/plazo-agendar/resumen';
 import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import { listarCambios } from '@/lib/actividad/catalogo';
@@ -67,6 +71,7 @@ export async function getMyOrgSettings() {
             rescheduleEnabled: true,
             bookingMaxDaysAhead: true,
             botAgendaSharePercent: true,
+            saturdayRuralSharePercent: true,
             organization: { select: { timezone: true } },
         },
     });
@@ -89,6 +94,8 @@ export async function getMyOrgSettings() {
         bookingMaxDaysAhead: normalizarPlazoAgendar(s?.bookingMaxDaysAhead),
         // Sin fila (o sin valor) = sin reserva para la atención presencial.
         botAgendaSharePercent: normalizarParteDelChat(s?.botAgendaSharePercent),
+        // Sin fila (o sin valor) = sin regla especial para los sábados.
+        saturdayRuralSharePercent: normalizarSabadoRural(s?.saturdayRuralSharePercent),
         // «Hoy» en la zona de la clínica: el panel muestra con fechas reales
         // hasta qué día ofrece citas el asistente.
         hoyEnLaClinica: diaLocal(new Date(), s?.organization?.timezone || undefined),
@@ -328,6 +335,91 @@ export async function setMyBotAgendaSharePercent(porcentaje: number | null) {
         }
         revalidatePath('/dashboard/configuracion');
         return { success: true as const, botAgendaSharePercent };
+    } catch (e) {
+        return { success: false as const, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * 🌾 Sábados por el asistente: con un porcentaje, el asistente agenda los sábados
+ * solo a pacientes que el hospital tiene con zona rural, y como mucho ese
+ * porcentaje de la agenda de cada médico (100 = sin tope). null = sin regla
+ * especial (el sábado es un día más). Guarda al instante; el bot lo lee cada vez
+ * que busca o confirma un cupo, y el agente del hospital empieza a mandar la
+ * lista de pacientes rurales en la hora siguiente. El personal y el hospital
+ * agendan sábados como siempre.
+ */
+export async function setMySaturdayRuralSharePercent(porcentaje: number | null) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false as const, error: 'Acceso denegado' };
+
+    // Un valor inválido es un error, no «sin regla»: quien quiso encenderla no
+    // debe quedar sin ella por un dato mal enviado.
+    const v = validarSabadoRural(porcentaje);
+    if (!v.ok) return { success: false as const, error: v.error };
+    const saturdayRuralSharePercent = v.porcentaje;
+    try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { saturdayRuralSharePercent: true },
+        });
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, saturdayRuralSharePercent },
+            update: { saturdayRuralSharePercent },
+        });
+        const anterior = normalizarSabadoRural(antes?.saturdayRuralSharePercent);
+        if (anterior !== saturdayRuralSharePercent) {
+            const actor = session.email ?? session.userId ?? 'desconocido';
+            const detalle =
+                `«Sábados por el asistente» cambió de «${textoSabadoRural(anterior)}» a ` +
+                `«${textoSabadoRural(saturdayRuralSharePercent)}»`;
+            // En la auditoría del espejo y en la Actividad de usuarios. Si alguna
+            // falla, no deshace el cambio: solo queda en el log.
+            try {
+                await prisma.syncAudit.create({
+                    data: {
+                        organizationId: session.organizationId!,
+                        direction: SYNC_AUDIT_DIRECTION.CONFIG,
+                        entityType: 'OrganizationSettings',
+                        op: OP_CAMBIO_SABADO_RURAL,
+                        outcome: 'OK',
+                        detail: `${detalle} desde Configuración por ${actor}.`,
+                    },
+                });
+            } catch (e) {
+                console.error('[configuración] no se pudo anotar el cambio de los sábados en la auditoría', {
+                    error: getErrorMessage(e),
+                });
+            }
+            try {
+                await anotarAjuste(session, 'BOT_SETTINGS_CHANGED', `Asistente: ${detalle}`, {
+                    anterior,
+                    nuevo: saturdayRuralSharePercent,
+                });
+            } catch (e) {
+                console.error('[configuración] no se pudo anotar el cambio de los sábados en la actividad', {
+                    error: getErrorMessage(e),
+                });
+            }
+        }
+        revalidatePath('/dashboard/configuracion');
+        return { success: true as const, saturdayRuralSharePercent };
+    } catch (e) {
+        return { success: false as const, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * 🌾 Cómo están los sábados por el asistente: la regla, si llegó la lista de
+ * pacientes rurales, si los sábados siguen en «Días sin citas» y el último
+ * cambio. Solo lectura.
+ */
+export async function getMySabadoRuralEstado() {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false as const, error: 'Acceso denegado' };
+    try {
+        return { success: true as const, estado: await cargarEstadoSabadoRural(session.organizationId!) };
     } catch (e) {
         return { success: false as const, error: getErrorMessage(e) };
     }

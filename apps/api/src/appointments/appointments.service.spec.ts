@@ -2047,3 +2047,307 @@ describe('AppointmentsService — reserva para la atención presencial (tope del
     });
   });
 });
+
+describe('AppointmentsService — sábados solo para la zona rural', () => {
+  const { diaLocal, sumarDiasAFecha, diaDeLaSemana } =
+    jest.requireActual('@agenia/shared');
+  // El próximo sábado y el lunes siguiente (en Bogotá), desde mañana.
+  let sabado: string = sumarDiasAFecha(diaLocal(new Date()), 1);
+  while (diaDeLaSemana(sabado) !== 6) sabado = sumarDiasAFecha(sabado, 1);
+  const lunes: string = sumarDiasAFecha(sabado, 2);
+  const a = (fecha: string, hhmm: string) =>
+    new Date(`${fecha}T${hhmm}:00-05:00`);
+  const slotRow = (id: string, inicio: Date) => ({
+    id,
+    startTime: inicio,
+    isAvailable: true,
+    organizationId: 'org1',
+    doctorId: 'doc1',
+    doctor: { fullName: 'Ana Ruiz', whatsappBookingEnabled: true },
+    service: { name: 'Medicina General' },
+  });
+
+  describe('getAvailableSlots', () => {
+    const conRegla = async (
+      sabadoRural: number | null,
+      ruralListCount: number | null = 27000,
+    ) => {
+      const findMany = jest.fn(() => [slotRow('s1', a(lunes, '09:00'))]);
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: {
+              scheduleSlot: { findMany },
+              hospitalMirrorConfig: {
+                findUnique: jest.fn(() => ({
+                  enabled: false,
+                  ruralListCount,
+                })),
+              },
+              mirrorEntityMap: { findMany: jest.fn(() => []) },
+              bookingBlock: { findMany: jest.fn(() => []) },
+              organizationSettings: {
+                findUnique: jest.fn(() => ({
+                  bookingMaxDaysAhead: null,
+                  botAgendaSharePercent: null,
+                  saturdayRuralSharePercent: sabadoRural,
+                })),
+              },
+              organization: {
+                findUnique: jest.fn(() => ({
+                  timezone: 'America/Bogota',
+                  settings: null,
+                })),
+              },
+              $queryRaw: jest.fn(async () => []),
+              waitlistEntry: { findMany: jest.fn(() => []) },
+            },
+          },
+        ],
+      }).compile();
+      return {
+        svc: module.get<AppointmentsService>(AppointmentsService),
+        findMany,
+      };
+    };
+    const where = (findMany: jest.Mock) => findMany.mock.calls[0][0].where;
+    const elSabado = {
+      startTime: {
+        gte: a(sabado, '00:00'),
+        lt: a(sumarDiasAFecha(sabado, 1), '00:00'),
+      },
+    };
+
+    it('sin la regla (lo de siempre), la consulta no cambia', async () => {
+      const { svc, findMany } = await conRegla(null);
+      await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(where(findMany)).not.toHaveProperty('NOT');
+      expect(where(findMany)).not.toHaveProperty('AND');
+    });
+
+    it('con la regla, el menú normal no trae sábados', async () => {
+      const { svc, findMany } = await conRegla(50);
+      await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(where(findMany).NOT).toContainEqual(elSabado);
+    });
+
+    it("con la regla, 'SOLO' trae solo los sábados", async () => {
+      const { svc, findMany } = await conRegla(50);
+      await svc.getAvailableSlots('Medicina', null, 'org1', null, {
+        todos: true,
+        sabados: 'SOLO',
+      });
+      expect(where(findMany).AND[0].OR).toContainEqual(elSabado);
+      expect(where(findMany).NOT ?? []).not.toContainEqual(elSabado);
+    });
+
+    it("'INCLUIR' (la persona ya es rural) no quita los sábados", async () => {
+      const { svc, findMany } = await conRegla(50);
+      await svc.getAvailableSlots('Medicina', null, 'org1', null, {
+        sabados: 'INCLUIR',
+      });
+      expect(where(findMany).NOT ?? []).not.toContainEqual(elSabado);
+    });
+
+    it("sin la regla, 'SOLO' no trae nada (no hay a quién dárselos con esa marca)", async () => {
+      const { svc, findMany } = await conRegla(null);
+      expect(
+        await svc.getAvailableSlots('Medicina', null, 'org1', null, {
+          sabados: 'SOLO',
+        }),
+      ).toEqual([]);
+      expect(findMany).not.toHaveBeenCalled();
+    });
+
+    it("con la regla y sin la lista de pacientes rurales, los sábados quedan cerrados: 'SOLO' no trae nada", async () => {
+      const { svc, findMany } = await conRegla(50, null);
+      expect(
+        await svc.getAvailableSlots('Medicina', null, 'org1', null, {
+          sabados: 'SOLO',
+        }),
+      ).toEqual([]);
+      expect(findMany).not.toHaveBeenCalled();
+      expect(await svc.hayCuposDeSabadoRural('Medicina', null, 'org1')).toBe(
+        false,
+      );
+    });
+
+    it('hayCuposDeSabadoRural: con la regla, la lista y citas de sábado, sí', async () => {
+      const { svc } = await conRegla(50);
+      expect(await svc.hayCuposDeSabadoRural('Medicina', null, 'org1')).toBe(
+        true,
+      );
+    });
+  });
+
+  describe('bookAppointment — revalida al reservar', () => {
+    const reservar = async (
+      origin: any,
+      opts: {
+        sabadoRural: number | null;
+        inicio: Date;
+        rural: boolean;
+        ruralListCount?: number | null;
+      },
+    ) => {
+      const tx = {
+        scheduleSlot: {
+          findUnique: jest.fn(() => ({
+            id: 's1',
+            isAvailable: true,
+            organizationId: 'org1',
+            doctorId: 'doc1',
+            startTime: opts.inicio,
+            doctor: { whatsappBookingEnabled: true },
+          })),
+          update: jest.fn(),
+        },
+        appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
+        patientProfile: {
+          findUnique: jest.fn(() => ({ cedula: '0012345678' })),
+        },
+        ruralPatient: {
+          findUnique: jest.fn(() => (opts.rural ? { id: 'r1' } : null)),
+        },
+        hospitalMirrorConfig: {
+          findUnique: jest.fn(() => ({
+            ruralListCount:
+              opts.ruralListCount === undefined ? 27000 : opts.ruralListCount,
+          })),
+        },
+        organizationSettings: {
+          findUnique: jest.fn(() => ({
+            bookingMaxDaysAhead: null,
+            botAgendaSharePercent: null,
+            saturdayRuralSharePercent: opts.sabadoRural,
+          })),
+        },
+        organization: {
+          findUnique: jest.fn(() => ({ timezone: 'America/Bogota' })),
+        },
+        $executeRawUnsafe: jest.fn(),
+        $executeRaw: jest.fn(),
+        $queryRaw: jest.fn(async () => [
+          {
+            doctorId: 'doc1',
+            dia: sabado,
+            capacidad: 20,
+            chat: 0,
+            apartados: 0,
+          },
+        ]),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: { $transaction: jest.fn((cb: any) => cb(tx)) },
+          },
+        ],
+      }).compile();
+      const r = await module
+        .get<AppointmentsService>(AppointmentsService)
+        .bookAppointment('p1', 's1', null, origin, 'org1');
+      return { r, tx };
+    };
+
+    it.each(['WHATSAPP', 'TELEGRAM'] as const)(
+      'por el bot (%s), un sábado a quien no es de zona rural: no se crea y el motivo es SOLO_ZONA_RURAL',
+      async (origin) => {
+        const { r, tx } = await reservar(origin, {
+          sabadoRural: 50,
+          inicio: a(sabado, '09:00'),
+          rural: false,
+        });
+        expect(r).toMatchObject({ success: false, reason: 'SOLO_ZONA_RURAL' });
+        expect(tx.appointment.create).not.toHaveBeenCalled();
+        expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it('por el bot, un sábado a quien sí es de zona rural: se reserva (buscando el documento sin ceros a la izquierda)', async () => {
+      const { r, tx } = await reservar('WHATSAPP', {
+        sabadoRural: 50,
+        inicio: a(sabado, '09:00'),
+        rural: true,
+      });
+      expect(r.success).toBe(true);
+      expect(tx.ruralPatient.findUnique).toHaveBeenCalledWith({
+        where: {
+          organizationId_document: {
+            organizationId: 'org1',
+            document: '12345678',
+          },
+        },
+        select: { id: true },
+      });
+    });
+
+    it('con la regla y sin la lista, ni siquiera un paciente rural toma el sábado', async () => {
+      const { r } = await reservar('WHATSAPP', {
+        sabadoRural: 50,
+        inicio: a(sabado, '09:00'),
+        rural: true,
+        ruralListCount: 0,
+      });
+      expect(r).toMatchObject({ success: false, reason: 'SOLO_ZONA_RURAL' });
+    });
+
+    it('entre semana la regla no aplica: no se busca el documento', async () => {
+      const { r, tx } = await reservar('WHATSAPP', {
+        sabadoRural: 50,
+        inicio: a(lunes, '09:00'),
+        rural: false,
+      });
+      expect(r.success).toBe(true);
+      expect(tx.ruralPatient.findUnique).not.toHaveBeenCalled();
+    });
+
+    it.each(['MANUAL', 'MIRROR'] as const)(
+      '%s (el personal o el hospital) agenda sábados como siempre',
+      async (origin) => {
+        const { r, tx } = await reservar(origin, {
+          sabadoRural: 50,
+          inicio: a(sabado, '09:00'),
+          rural: false,
+        });
+        expect(r.success).toBe(true);
+        expect(tx.ruralPatient.findUnique).not.toHaveBeenCalled();
+      },
+    );
+
+    it('sin la regla, un sábado por el bot es como cualquier día', async () => {
+      const { r, tx } = await reservar('WHATSAPP', {
+        sabadoRural: null,
+        inicio: a(sabado, '09:00'),
+        rural: false,
+      });
+      expect(r.success).toBe(true);
+      expect(tx.ruralPatient.findUnique).not.toHaveBeenCalled();
+      expect(tx.patientProfile.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('con la regla al 50 %, el sábado tiene tope aunque entre semana no haya reserva (con candado)', async () => {
+      const { tx } = await reservar('WHATSAPP', {
+        sabadoRural: 50,
+        inicio: a(sabado, '09:00'),
+        rural: true,
+      });
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(tx.$queryRaw).toHaveBeenCalled();
+    });
+
+    it('entre semana, sin reserva, no hay candado ni conteo aunque la regla del sábado esté encendida', async () => {
+      const { tx } = await reservar('WHATSAPP', {
+        sabadoRural: 50,
+        inicio: a(lunes, '09:00'),
+        rural: false,
+      });
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+});

@@ -47,6 +47,8 @@ describe('resumen de la reserva para la atención presencial', () => {
                     otras: 6,
                     libres: 4,
                     medicosEnElTope: 1,
+                    conTope: true,
+                    soloRural: false,
                 },
                 {
                     dia: '2026-11-18',
@@ -57,6 +59,8 @@ describe('resumen de la reserva para la atención presencial', () => {
                     otras: 10,
                     libres: 0,
                     medicosEnElTope: 0,
+                    conTope: true,
+                    soloRural: false,
                 },
             ]);
         });
@@ -65,6 +69,13 @@ describe('resumen de la reserva para la atención presencial', () => {
             const [d] = resumirPorDia(filas, null);
             expect(d.tope).toBe(27);
             expect(d.medicosEnElTope).toBe(0);
+        });
+
+        it('🌾 con «Sábados: solo zona rural» al 50 %, el sábado lleva su tope aunque no haya reserva', () => {
+            const sabado = [fila('a', '2026-11-21', 24, 12, 10), fila('a', '2026-11-23', 20, 5, 10)];
+            const [sab, lun] = resumirPorDia(sabado, null, 50);
+            expect(sab).toMatchObject({ dia: '2026-11-21', tope: 12, medicosEnElTope: 1, conTope: true, soloRural: true });
+            expect(lun).toMatchObject({ dia: '2026-11-23', tope: 20, medicosEnElTope: 0, conTope: false, soloRural: false });
         });
 
         it('un médico sin capacidad ese día no cuenta', () => {
