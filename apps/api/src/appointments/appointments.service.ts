@@ -123,11 +123,13 @@ export class AppointmentsService {
       ignorarReserva?: boolean;
       apartados?: readonly string[];
       // 🌾 Sábados solo para la zona rural (2026-11-19). Con la regla
-      // encendida, los sábados no se ofrecen a quien no se sabe si es del campo.
-      // 'SOLO': solo los sábados (el menú «Vivo en zona rural: ver citas del
-      // sábado»; el documento se revisa al darlo). 'INCLUIR': también los
-      // sábados (la persona ya es rural: cambio de fecha de su cita).
-      sabados?: 'SOLO' | 'INCLUIR';
+      // encendida, los sábados se le ofrecen a todos como un día más (el chat
+      // no dice que son para la zona rural) y el documento se revisa al darlo.
+      // 'EXCLUIR': sin sábados (ya se sabe que la persona no es rural: después
+      // de decírselo, o al cambiar la fecha de su cita). 'INCLUIR': con
+      // sábados aunque no haya lista (la persona ya es rural). Sin la lista de
+      // pacientes rurales, los sábados no se ofrecen: nadie podría tomarlos.
+      sabados?: 'INCLUIR' | 'EXCLUIR';
       franja?: FranjaDelDia | null;
       excluir?: readonly string[];
       hora?: HoraPreferida | null;
@@ -200,37 +202,26 @@ export class AppointmentsService {
           return [];
         });
     // 🌾 Sábados solo para la zona rural: con la regla encendida, los sábados
-    // salen de la consulta (como los días sin citas) salvo que se pidan solo
-    // ellos o que la persona ya sea rural. Sin la regla, la consulta no cambia.
-    const hastaVentana =
-      startTimeFilter.lte ??
-      finDelPlazo ??
-      new Date(startTimeFilter.gte.getTime() + HORIZONTE_BLOQUEOS_MS);
+    // salen de la consulta (como los días sin citas) solo si todavía no llegó
+    // la lista de pacientes rurales, o si ya se sabe que la persona no es rural
+    // ('EXCLUIR'). Sin la regla, la consulta no cambia.
     const sabadoRural =
       opts.sabados === 'INCLUIR'
         ? null
         : await sabadoRuralDeLaClinica(this.prisma, organizationId);
     const sabados =
-      opts.sabados === 'SOLO' || sabadoRural
+      sabadoRural && (opts.sabados === 'EXCLUIR' || !sabadoRural.abierto)
         ? tramosDeSabado(
             startTimeFilter.gte,
-            hastaVentana,
-            sabadoRural?.timeZone,
+            startTimeFilter.lte ??
+              finDelPlazo ??
+              new Date(startTimeFilter.gte.getTime() + HORIZONTE_BLOQUEOS_MS),
+            sabadoRural.timeZone,
           )
         : [];
-    if (
-      opts.sabados === 'SOLO' &&
-      (!sabadoRural?.abierto || sabados.length === 0)
-    ) {
-      // 'SOLO' es solo para la regla encendida y con la lista de pacientes
-      // rurales ya recibida; sin sábados en la ventana tampoco hay nada.
-      return [];
-    }
     const fueraDeLaOferta: Prisma.ScheduleSlotWhereInput[] = [
       ...tramos.map((t) => ({ startTime: { gte: t.gte, lt: t.lt } })),
-      ...(opts.sabados !== 'SOLO'
-        ? sabados.map((t) => ({ startTime: { gte: t.gte, lt: t.lt } }))
-        : []),
+      ...sabados.map((t) => ({ startTime: { gte: t.gte, lt: t.lt } })),
       ...reservados.map((r) => ({
         doctorId: r.doctorId,
         startTime: { gte: r.gte, lt: r.lt },
@@ -251,17 +242,6 @@ export class AppointmentsService {
           OR: [{ allowedEpsId: null }, { allowedEpsId: epsId }],
           ...(opts.excluir?.length ? { id: { notIn: [...opts.excluir] } } : {}),
           ...(fueraDeLaOferta.length > 0 ? { NOT: fueraDeLaOferta } : {}),
-          ...(opts.sabados === 'SOLO'
-            ? {
-                AND: [
-                  {
-                    OR: sabados.map((t) => ({
-                      startTime: { gte: t.gte, lt: t.lt },
-                    })),
-                  },
-                ],
-              }
-            : {}),
         },
         include: { doctor: true, service: true },
         orderBy: { startTime: 'asc' },
@@ -389,30 +369,6 @@ export class AppointmentsService {
       organizationId,
       null,
       { todos: true, ignorarReserva: true },
-    );
-    return cupos.length > 0;
-  }
-
-  /**
-   * 🌾 ¿Hay citas de sábado que el asistente pueda dar a una persona de zona
-   * rural? Solo con la regla encendida y la lista de pacientes rurales ya
-   * recibida. Para mostrar la opción «Vivo en zona rural: ver citas del sábado».
-   * Sin la regla, false sin consultar la agenda.
-   */
-  async hayCuposDeSabadoRural(
-    serviceName: string,
-    epsId: string | null,
-    organizationId: string,
-    excluir: readonly string[] = [],
-  ): Promise<boolean> {
-    const regla = await sabadoRuralDeLaClinica(this.prisma, organizationId);
-    if (!regla?.abierto) return false;
-    const cupos = await this.getAvailableSlots(
-      serviceName,
-      epsId,
-      organizationId,
-      null,
-      { todos: true, sabados: 'SOLO', excluir: [...excluir] },
     );
     return cupos.length > 0;
   }

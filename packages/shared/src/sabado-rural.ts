@@ -14,8 +14,11 @@
  *  - Como mucho el porcentaje elegido de la agenda de cada médico ese día (el
  *    mismo tope de la reserva para la atención presencial, `reserva-presencial
  *    .ts`, pero solo el sábado). 100 % = solo zona rural, sin tope.
- *  - El menú normal no muestra sábados: quien vive en el campo los pide con la
- *    opción «Vivo en zona rural: ver citas del sábado» o escribiendo «sábado».
+ *  - El chat NO dice que los sábados son para la zona rural (2026-11-19, pedido
+ *    del usuario): se los ofrece a todos como un día más y revisa la zona cuando
+ *    la persona da el documento; si no es rural, le pide con amabilidad
+ *    comunicarse con el hospital o acercarse para el sábado, y le muestra otros
+ *    días.
  *  - Los demás días no cambian, y el personal y el hospital agendan sábados como
  *    siempre.
  *

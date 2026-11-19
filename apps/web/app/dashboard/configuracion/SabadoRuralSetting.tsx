@@ -112,12 +112,12 @@ export default function SabadoRuralSetting({
 
                 <ul className="text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5 space-y-1">
                     <li>
-                        El menú de horarios del asistente no muestra los sábados: muestra la opción «Vivo en zona rural:
-                        ver citas del sábado», y también los muestra si la persona escribe «sábado».
+                        El asistente ofrece los sábados a todos, como un día más, y no dice que son para la zona rural.
                     </li>
                     <li>
-                        Al dar el documento de quien va a la cita, el asistente revisa la zona en la ficha del hospital.
-                        Si no dice rural, le explica que los sábados son para la zona rural y le muestra los otros días.
+                        Al dar el documento de quien va a la cita, revisa la zona en la ficha del hospital. Si no dice
+                        rural, le pide con amabilidad comunicarse con el hospital o acercarse a la ventanilla para la
+                        cita del sábado, y le muestra los horarios de otros días.
                     </li>
                     <li>Aplica al agendar, al cambiar la fecha de una cita y a la lista de espera.</li>
                 </ul>

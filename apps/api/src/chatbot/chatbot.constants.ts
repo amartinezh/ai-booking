@@ -630,39 +630,22 @@ const FORMAL = {
   opcionOtroDia: (letra: string) =>
     `*${letra})* Otro día _(o escríbame qué día u hora le sirve)_\n`,
 
-  // 🌾 Sábados solo para la zona rural (2026-11-19): el menú normal no muestra
-  // sábados; quien vive en el campo los pide con esta opción o con «sábado».
-  opcionSabadoRural: (letra: string) =>
-    `*${letra})* 🌾 Vivo en zona rural: ver citas del sábado\n`,
-
-  cuposSabadoRural: (epsName: string, lineas: string) =>
-    `Los sábados, por este medio, las citas son *solo para personas que viven en zona rural* (según su registro en el hospital). ` +
-    `Estas son las del sábado con *${epsName}*:\n\n${lineas}\n` +
-    `_Responda con la letra del que prefiera; después le pido el documento de quien va a la cita._`,
-
-  sinCuposSabadoRuralMenu: () =>
-    `Por este medio ya no quedan citas del sábado. 🙏\n\n` +
-    `Los horarios que le mostré siguen disponibles: responda con la letra, o dígame otro día u hora.`,
-
-  sinCuposSabadoRuralLista: () =>
-    `Por este medio ya no quedan citas del sábado. 🙏\n\n` +
-    `¿Le anoto en la *lista de espera*? Responda *SÍ* o *NO*.`,
-
-  // Eligió un sábado y su registro en el hospital no dice zona rural.
-  sabadoSoloRuralOtrasOpciones: (epsName: string, lineas: string) =>
-    `Los sábados, por este medio, las citas son solo para personas que viven en zona rural, y su registro en el hospital no dice zona rural. 🙏 ` +
-    `Si vive en el campo, pida en el hospital que actualicen su dirección.\n\n` +
-    `Estos son los horarios de los otros días con *${epsName}*:\n\n${lineas}\n` +
+  // 🌾 Sábados solo para la zona rural (2026-11-19): eligió un sábado y la ficha
+  // del hospital no dice zona rural. A propósito NO se menciona la zona: se le
+  // pide comunicarse con el hospital para el sábado y se le ofrecen otros días.
+  sabadoPorElHospitalOtrasOpciones: (
+    epsName: string,
+    contacto: string,
+    lineas: string,
+  ) =>
+    `Le pido disculpas: las citas de ese sábado no las puedo agendar por este medio. 🙏 ` +
+    `Para una cita el sábado, por favor comuníquese con ${contacto} o acérquese a la ventanilla del hospital, y con gusto se la asignan.\n\n` +
+    `Si le sirve otro día, estos son los horarios disponibles con *${epsName}*:\n\n${lineas}\n` +
     `_Responda con la letra del que prefiera._`,
 
-  sabadoSoloRuralSinOtros: (contacto: string) =>
-    `Los sábados, por este medio, las citas son solo para personas que viven en zona rural, y su registro en el hospital no dice zona rural. 🙏 ` +
-    `Por ahora no quedan horarios de otros días por este medio.\n\n` +
-    `Puede escribirme *"Hola"* más tarde o comunicarse con ${contacto}.`,
-
-  // Va al final del «no hay cupos», solo si hay citas del sábado para la zona rural.
-  lineaSabadoRural: () =>
-    `\n\n🌾 Si vive en zona rural, hay citas el sábado: escriba *sábado* para verlas.`,
+  sabadoPorElHospitalSinOtros: (contacto: string) =>
+    `Le pido disculpas: las citas de ese sábado no las puedo agendar por este medio. 🙏 ` +
+    `Para una cita el sábado, por favor comuníquese con ${contacto} o acérquese a la ventanilla del hospital, y con gusto se la asignan.`,
 
   // Pidió «otro horario» u «otro día» y los cupos no caen en un solo día.
   otrosCuposDisponibles: (epsName: string, lineas: string) =>
@@ -2277,35 +2260,19 @@ const INFORMAL = {
   opcionOtroDia: (letra: string) =>
     `*${letra})* Otro día _(o escríbeme qué día u hora te sirve)_\n`,
 
-  opcionSabadoRural: (letra: string) =>
-    `*${letra})* 🌾 Vivo en zona rural: ver citas del sábado\n`,
-
-  cuposSabadoRural: (epsName: string, lineas: string) =>
-    `Los sábados, por aquí, las citas son *solo para personas que viven en zona rural* (según tu registro en el hospital). 🌾 ` +
-    `Estas son las del sábado con *${epsName}*:\n\n${lineas}\n` +
-    `_Mándame la letra del que prefieras; después te pido el documento de quien va a la cita._`,
-
-  sinCuposSabadoRuralMenu: () =>
-    `Por aquí ya no quedan citas del sábado. 🙏\n\n` +
-    `Los horarios que te mostré siguen disponibles: mándame la letra, o dime otro día u hora.`,
-
-  sinCuposSabadoRuralLista: () =>
-    `Por aquí ya no quedan citas del sábado. 🙏\n\n` +
-    `¿Te anoto en la *lista de espera*? Responde *SÍ* o *NO*.`,
-
-  sabadoSoloRuralOtrasOpciones: (epsName: string, lineas: string) =>
-    `Los sábados, por aquí, las citas son solo para personas que viven en zona rural, y tu registro en el hospital no dice zona rural. 🙏 ` +
-    `Si vives en el campo, pide en el hospital que actualicen tu dirección.\n\n` +
-    `Estos son los horarios de los otros días con *${epsName}*:\n\n${lineas}\n` +
+  sabadoPorElHospitalOtrasOpciones: (
+    epsName: string,
+    contacto: string,
+    lineas: string,
+  ) =>
+    `Qué pena: las citas de ese sábado no las puedo agendar por aquí. 🙏 ` +
+    `Para una cita el sábado, comunícate con ${contacto} o acércate a la ventanilla del hospital, y con gusto te la asignan.\n\n` +
+    `Si te sirve otro día, mira estos horarios con *${epsName}*:\n\n${lineas}\n` +
     `_Mándame la letra del que prefieras._`,
 
-  sabadoSoloRuralSinOtros: (contacto: string) =>
-    `Los sábados, por aquí, las citas son solo para personas que viven en zona rural, y tu registro en el hospital no dice zona rural. 🙏 ` +
-    `Por ahora no quedan horarios de otros días por aquí.\n\n` +
-    `Escríbeme *"Hola"* más tarde o comunícate con ${contacto}.`,
-
-  lineaSabadoRural: () =>
-    `\n\n🌾 Si vives en zona rural, hay citas el sábado: escribe *sábado* para verlas.`,
+  sabadoPorElHospitalSinOtros: (contacto: string) =>
+    `Qué pena: las citas de ese sábado no las puedo agendar por aquí. 🙏 ` +
+    `Para una cita el sábado, comunícate con ${contacto} o acércate a la ventanilla del hospital, y con gusto te la asignan.`,
 
   otrosCuposDisponibles: (epsName: string, lineas: string) =>
     pick([

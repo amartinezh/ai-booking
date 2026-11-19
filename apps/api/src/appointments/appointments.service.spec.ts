@@ -2127,58 +2127,40 @@ describe('AppointmentsService — sábados solo para la zona rural', () => {
       expect(where(findMany)).not.toHaveProperty('AND');
     });
 
-    it('con la regla, el menú normal no trae sábados', async () => {
+    it('con la regla y la lista, los sábados se ofrecen a todos como un día más (el chat no dice que son para la zona rural)', async () => {
       const { svc, findMany } = await conRegla(50);
       await svc.getAvailableSlots('Medicina', null, 'org1');
-      expect(where(findMany).NOT).toContainEqual(elSabado);
-    });
-
-    it("con la regla, 'SOLO' trae solo los sábados", async () => {
-      const { svc, findMany } = await conRegla(50);
-      await svc.getAvailableSlots('Medicina', null, 'org1', null, {
-        todos: true,
-        sabados: 'SOLO',
-      });
-      expect(where(findMany).AND[0].OR).toContainEqual(elSabado);
       expect(where(findMany).NOT ?? []).not.toContainEqual(elSabado);
     });
 
-    it("'INCLUIR' (la persona ya es rural) no quita los sábados", async () => {
+    it("'EXCLUIR' (ya se sabe que no es rural) quita los sábados", async () => {
       const { svc, findMany } = await conRegla(50);
+      await svc.getAvailableSlots('Medicina', null, 'org1', null, {
+        sabados: 'EXCLUIR',
+      });
+      expect(where(findMany).NOT).toContainEqual(elSabado);
+    });
+
+    it("'INCLUIR' (la persona ya es rural) no quita los sábados", async () => {
+      const { svc, findMany } = await conRegla(50, null);
       await svc.getAvailableSlots('Medicina', null, 'org1', null, {
         sabados: 'INCLUIR',
       });
       expect(where(findMany).NOT ?? []).not.toContainEqual(elSabado);
     });
 
-    it("sin la regla, 'SOLO' no trae nada (no hay a quién dárselos con esa marca)", async () => {
+    it("sin la regla, 'EXCLUIR' no quita nada: el sábado es un día más", async () => {
       const { svc, findMany } = await conRegla(null);
-      expect(
-        await svc.getAvailableSlots('Medicina', null, 'org1', null, {
-          sabados: 'SOLO',
-        }),
-      ).toEqual([]);
-      expect(findMany).not.toHaveBeenCalled();
+      await svc.getAvailableSlots('Medicina', null, 'org1', null, {
+        sabados: 'EXCLUIR',
+      });
+      expect(where(findMany)).not.toHaveProperty('NOT');
     });
 
-    it("con la regla y sin la lista de pacientes rurales, los sábados quedan cerrados: 'SOLO' no trae nada", async () => {
+    it('con la regla y sin la lista de pacientes rurales todavía, los sábados salen de la consulta: nadie podría tomarlos', async () => {
       const { svc, findMany } = await conRegla(50, null);
-      expect(
-        await svc.getAvailableSlots('Medicina', null, 'org1', null, {
-          sabados: 'SOLO',
-        }),
-      ).toEqual([]);
-      expect(findMany).not.toHaveBeenCalled();
-      expect(await svc.hayCuposDeSabadoRural('Medicina', null, 'org1')).toBe(
-        false,
-      );
-    });
-
-    it('hayCuposDeSabadoRural: con la regla, la lista y citas de sábado, sí', async () => {
-      const { svc } = await conRegla(50);
-      expect(await svc.hayCuposDeSabadoRural('Medicina', null, 'org1')).toBe(
-        true,
-      );
+      await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(where(findMany).NOT).toContainEqual(elSabado);
     });
   });
 

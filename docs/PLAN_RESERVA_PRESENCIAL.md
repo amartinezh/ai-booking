@@ -221,3 +221,15 @@ Verificado contra Postgres 15 real (desechable): la migración no deja deriva co
 **Verificado:** pruebas de la regla, la API, la lista de espera, el agente, el panel y conversaciones completas (persona del campo que agenda, persona urbana que recibe los otros días, «para el sábado», el «no hay cupos»); y contra un Postgres 15 real y desechable, la migración sin deriva, la carga de la lista en dos lotes con reemplazo, el envío vacío que no borra, la búsqueda sin sábados y con solo sábados, la reserva rural y urbana (también con ceros a la izquierda) y el tope del sábado con dos reservas simultáneas. **No verificado:** el agente contra el HIS real ni una conversación real de WhatsApp.
 
 **Para encender (en orden):** desplegar con `./update.sh`; actualizar el agente del hospital; en Configuración, «Sábados por el asistente» → «Solo zona rural, hasta el 50 %»; esperar a que el recuadro diga que llegó la lista (menos de una hora); y el hospital quita su bloqueo de los sábados en «Días sin citas».
+
+### 10.1 Ajuste del 19-nov: el chat no dice que el sábado es para la zona rural
+
+Pedido del usuario el mismo día: que por el chat no se sepa que los sábados son solo para la zona rural. Ahora:
+
+- El asistente ofrece los sábados a todos, como un día más. Se quitaron la opción «Vivo en zona rural: ver citas del sábado», el menú del sábado con su aviso y la invitación a escribir «sábado» tras el «no hay cupos».
+- Al dar el documento se revisa la zona. Si no es rural, se le dice: «las citas de ese sábado no las puedo agendar por este medio; para una cita el sábado, comuníquese con el hospital al … o acérquese a la ventanilla del hospital», y se le muestran los horarios de otros días. Los menús que siguen en esa conversación ya no traen sábados.
+- Al cambiar la fecha de una cita, los sábados solo le aparecen a un paciente rural; a los demás no, sin explicación.
+- Sin la lista de pacientes rurales, los sábados siguen sin ofrecerse a nadie.
+- No cambia: el tope del 50 %, la revisión al confirmar y en la lista de espera, el panel y el agente.
+
+Efecto esperado: como solo el 24 % de quienes agendan por el chat son rurales, la mayoría de quienes elijan un sábado recibirán la invitación a comunicarse con el hospital.

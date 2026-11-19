@@ -20,7 +20,6 @@ import {
   fechaEnPalabras,
   franjaDelCupo,
   horaLocalAUtc,
-  parseFechaPreferida,
   periodoDelLimite,
   regimenSeguroDelPadron,
   sumarDiasAFecha,
@@ -1724,8 +1723,11 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   // 1S. Sábados solo para la zona rural (2026-11-19)
   // ──────────────────────────────────────────────────────────────────
   describe('1S. Sábados solo para la zona rural', () => {
-    // El sábado que el bot entiende por «el sábado», y el lunes siguiente.
-    const sabado = diaLocal(parseFechaPreferida('el sábado')!.desde);
+    // El próximo sábado (desde mañana) y el lunes siguiente.
+    let sabado = sumarDiasAFecha(diaLocal(new Date()), 1);
+    while (new Date(`${sabado}T12:00:00Z`).getUTCDay() !== 6) {
+      sabado = sumarDiasAFecha(sabado, 1);
+    }
     const lunes = sumarDiasAFecha(sabado, 2);
     const en = (dia: string, hora: number): Date => {
       const [y, m, d] = dia.split('-').map(Number);
@@ -1735,6 +1737,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       diaLocal(c.startTime) === sabado;
     const letra = (l: string) =>
       redis.store.get(`temp_slot_${l}:${ORG_ID}:${SENDER}`);
+    const letrasDelMenu = () =>
+      ['A', 'B', 'C', 'D', 'E', 'F'].map(letra).filter(Boolean) as string[];
     const RURAL = '1088123456';
     const URBANO = '1099000111';
     let regla: number | null;
@@ -1744,10 +1748,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       regla = 50;
       lista = 27000;
       db.slots = [
-        slotRow('l-0800', en(lunes, 8), 'Ana Pérez', SVC_MEDICINA),
-        slotRow('l-1400', en(lunes, 14), 'Luis Gómez', SVC_MEDICINA),
         slotRow('s-0700', en(sabado, 7), 'Ana Pérez', SVC_MEDICINA),
         slotRow('s-0900', en(sabado, 9), 'Luis Gómez', SVC_MEDICINA),
+        slotRow('l-0800', en(lunes, 8), 'Ana Pérez', SVC_MEDICINA),
+        slotRow('l-1400', en(lunes, 14), 'Luis Gómez', SVC_MEDICINA),
       ];
       (prisma as any).organizationSettings = {
         findUnique: jest.fn(async () => ({
@@ -1770,19 +1774,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
               : null,
         ),
       };
-      // Lo que hace la búsqueda real con la regla: el menú normal sin sábados,
-      // 'SOLO' solo ellos (y nada sin la regla o sin la lista).
-      const abierta = () => regla !== null && lista > 0;
-      const libres = (opts: { sabados?: string; excluir?: string[] }) =>
-        db.slots
-          .filter((c) => c.isAvailable)
-          .filter((c) => !opts.excluir?.includes(c.id))
-          .filter((c) =>
-            opts.sabados === 'SOLO'
-              ? abierta() && esDelSabado(c)
-              : opts.sabados === 'INCLUIR' || regla === null || !esDelSabado(c),
-          )
-          .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+      // Lo que hace la búsqueda real con la regla: con la lista, los sábados
+      // para todos; sin la lista, o con 'EXCLUIR', sin sábados.
       appointments.getAvailableSlots.mockImplementation(
         (
           _svc: string,
@@ -1790,23 +1783,29 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
           _org: string,
           ventana?: { desde: Date; hasta?: Date | null } | null,
           opts: { sabados?: string; excluir?: string[] } = {},
-        ) =>
-          libres(opts)
+        ) => {
+          const quitarSabados =
+            regla !== null &&
+            opts.sabados !== 'INCLUIR' &&
+            (opts.sabados === 'EXCLUIR' || lista <= 0);
+          return db.slots
+            .filter((c) => c.isAvailable)
+            .filter((c) => !opts.excluir?.includes(c.id))
+            .filter((c) => !quitarSabados || !esDelSabado(c))
             .filter(
               (c) =>
                 !ventana ||
                 (c.startTime >= ventana.desde &&
                   (!ventana.hasta || c.startTime <= ventana.hasta)),
             )
+            .sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
             .map((c) => ({
               slotId: c.id,
               fecha: c.startTime,
               doctor: c.doctor.fullName,
               servicio: c.service.name,
-            })),
-      );
-      (appointments as any).hayCuposDeSabadoRural = jest.fn(
-        async () => libres({ sabados: 'SOLO' }).length > 0,
+            }));
+        },
       );
     });
     afterEach(() => {
@@ -1822,53 +1821,40 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(await state()).toBe(ChatState.AWAITING_DATE);
     };
 
-    it('1S.1 el menú normal no trae sábados y ofrece «Vivo en zona rural: ver citas del sábado»', async () => {
+    it('1S.1 el menú ofrece los sábados a todos, como un día más, sin hablar de zona rural', async () => {
       await hastaLosCupos();
-      expect(lastSent()).toMatch(
-        /\*C\)\* 🌾 Vivo en zona rural: ver citas del sábado/,
-      );
-      expect(letra('A')).toBe('l-0800');
-      expect(letra('B')).toBe('l-1400');
-      expect(letra('C')).toBeUndefined();
-    });
-
-    it('1S.2 elegir la opción muestra los del sábado, con el aviso de que son para la zona rural', async () => {
-      await hastaLosCupos();
-      await say('C');
-      expect(await state()).toBe(ChatState.AWAITING_DATE);
-      expect(lastSent()).toMatch(/solo para personas que viven en zona rural/);
-      expect(lastSent()).not.toMatch(/Vivo en zona rural/);
       expect(letra('A')).toBe('s-0700');
-      expect(letra('B')).toBe('s-0900');
+      expect(letra('C')).toBe('l-0800');
+      expect(lastSent()).not.toMatch(/rural|campo/i);
     });
 
-    it('1S.3 una persona del campo elige el sábado, da su documento y agenda', async () => {
+    it('1S.2 una persona de zona rural elige el sábado, da su documento y agenda', async () => {
       await hastaLosCupos();
-      await say('C');
       await say('B'); // s-0900
       expect(await state()).toBe(ChatState.AWAITING_CEDULA);
       await say(RURAL);
       expect(await state()).toBe(ChatState.AWAITING_NAME);
       await decirNombre(say);
       await responderAlta(say);
-      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
       await say('Sí');
       expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
       expect(appointments.bookAppointment.mock.calls[0][1]).toBe('s-0900');
     });
 
-    it('1S.4 a quien no es del campo se le dice al dar el documento y se le muestran los otros días, sin pedirle más datos', async () => {
+    it('1S.3 a quien no es de zona rural se le pide, con amabilidad, comunicarse con el hospital para el sábado, sin decirle por qué, y se le muestran otros días', async () => {
       await hastaLosCupos();
-      await say('C');
       await say('A'); // s-0700
       await say(URBANO);
       expect(await state()).toBe(ChatState.AWAITING_DATE);
-      expect(lastSent()).toMatch(
-        /su registro en el hospital no dice zona rural/,
+      const aviso = lastSent();
+      expect(aviso).toMatch(/ese sábado no las puedo agendar por este medio/);
+      expect(aviso).toMatch(
+        /comuníquese con el hospital( al \*[^*]+\*)? o acérquese a la ventanilla del hospital/,
       );
-      expect(lastSent()).toMatch(/otros días/);
-      expect(letra('A')).toBe('l-0800');
-      // El sábado quedó libre para otro: ni apartado ni elegido.
+      expect(aviso).not.toMatch(/rural|campo|zona/i);
+      // Los otros días, sin sábados.
+      expect(letrasDelMenu()).toEqual(['l-0800', 'l-1400']);
+      // El sábado quedó libre para otro y no se le pidió nada más.
       expect(redis.store.get(`cupo_apartado:${ORG_ID}:s-0700`)).toBeUndefined();
       expect(
         redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
@@ -1876,40 +1862,44 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(appointments.bookAppointment).not.toHaveBeenCalled();
     });
 
-    it('1S.5 «para el sábado» en el menú muestra los del sábado', async () => {
+    it('1S.4 después de decírselo, los menús que siguen en la conversación no le vuelven a ofrecer sábados', async () => {
       await hastaLosCupos();
+      await say('A'); // s-0700
+      await say(URBANO);
       await say('para el sábado');
-      expect(lastSent()).toMatch(/solo para personas que viven en zona rural/);
-      expect(letra('A')).toBe('s-0700');
+      expect(letrasDelMenu().some((id) => id.startsWith('s-'))).toBe(false);
+      // Y puede agendar el lunes sin volver a dar el documento.
+      await say('A');
+      expect(
+        redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
+      ).toMatch(/^l-/);
     });
 
-    it('1S.6 sin cupos entre semana pero sí el sábado: el «no hay cupos» invita a escribir «sábado», y «sábado» los muestra', async () => {
+    it('1S.5 sin otros días, solo se le pide comunicarse con el hospital', async () => {
       db.slots = db.slots.filter(esDelSabado);
-      await hastaLosCupos().catch(() => undefined);
-      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
-      expect(lastSent()).toMatch(/escriba \*sábado\*/);
-      await say('sábado');
-      expect(await state()).toBe(ChatState.AWAITING_DATE);
-      expect(lastSent()).toMatch(/solo para personas que viven en zona rural/);
-      expect(letra('A')).toBe('s-0700');
+      await hastaLosCupos();
+      await say('A');
+      await say(URBANO);
+      expect(lastSent()).toMatch(/comuníquese con el hospital/);
+      expect(lastSent()).not.toMatch(/rural|campo|zona/i);
+      expect(lastSent()).not.toMatch(/Si le sirve otro día/);
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
     });
 
-    it('1S.7 sin la regla, el menú es el de siempre (los sábados como un día más, sin la opción)', async () => {
+    it('1S.6 sin la regla, el sábado es un día más: no se revisa la zona', async () => {
       regla = null;
       await hastaLosCupos();
-      expect(lastSent()).not.toMatch(/zona rural/);
-      // El sábado es el primer día con cupos: sale primero, como siempre.
-      expect(letra('A')).toBe('s-0700');
-      expect(
-        (appointments as any).hayCuposDeSabadoRural,
-      ).not.toHaveBeenCalled();
+      await say('A'); // s-0700
+      await say(URBANO);
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      expect((prisma as any).ruralPatient.findUnique).not.toHaveBeenCalled();
     });
 
-    it('1S.8 con la regla y sin la lista de pacientes rurales todavía, no se ofrecen sábados', async () => {
+    it('1S.7 con la regla y sin la lista de pacientes rurales todavía, no se ofrecen sábados', async () => {
       lista = 0;
       await hastaLosCupos();
-      expect(lastSent()).not.toMatch(/zona rural/);
-      expect(letra('C')).toBeUndefined();
+      expect(letra('A')).toBe('l-0800');
+      expect(letrasDelMenu().some((id) => id.startsWith('s-'))).toBe(false);
     });
   });
 
