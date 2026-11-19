@@ -9,7 +9,7 @@ const listarDocumentosAction = jest.fn(async (...args: unknown[]): Promise<unkno
     return {
         success: true,
         documentos: [
-            { id: 'resumen', titulo: 'Resumen de la atención', hojas: 1, nombreArchivo: 'Resumen_01-11-2026' },
+            { id: 'resumen', titulo: 'Historia clínica · Resumen de la atención', hojas: 1, nombreArchivo: 'Historia_clinica_01-11-2026' },
             { id: 'formula-77', titulo: 'Fórmula médica N.º 77', hojas: 2, nombreArchivo: 'Formula_01-11-2026_N77' },
         ],
     };

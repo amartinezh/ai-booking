@@ -765,10 +765,12 @@ Reparto acordado: el hospital responde por lo administrativo (acuerdo de datos, 
 
 - el acuerdo de datos;
 - los permisos de P-7 en `ESEHSVP`, con `DATOS_PLANTILLA_DATE`: TI corre `sql/HISTORIA_CLINICA_PERMISOS_LECTURA_ESEHSVP.sql` (comprobaciones y permisos en un solo bloque, en una transacción, más una prueba como `agenia_sync` sin leer datos que debe dar «35 de 35»). Para deshacerlo: `sql/HISTORIA_CLINICA_PERMISOS_LECTURA_REVERSA.sql`, que no toca las 6 tablas que `agenia_sync` ya lee completas por las citas. Los dos se probaron el 2026-11-11 en un SQL Server 2022 desechable con el HIS falso: sin permisos el lector falla; con el script pasan sus 21 revisiones; correrlo dos veces no cambia nada; se detiene sin cambiar nada si la base no es la correcta o hay un DENY; la reversa deja las citas como estaban;
-- la plantilla «Documentos de la consulta» aprobada en Meta y registrada en Configuración;
+- la plantilla «Documentos de la consulta» aprobada en Meta y registrada en Configuración. **19-nov:** `documentos_consulta` está activa en Meta (Utilidad, Spanish (COL) = `es_CO`; {{1}} el primer nombre y {{2}} la fecha como «lunes, 10 de noviembre», que es lo que manda `enviarAviso`), pero todavía no está registrada en AgenIA;
 - leer en sombra y revisar resúmenes;
 - probar en modo prueba;
 - aprobar el piloto en el panel.
+
+**Encabezado y título (2026-11-19):** el «Encabezado de los documentos» de Anserma se llenó en producción a pedido del administrador, con `aplicarCambioDeDocumentos` y por SQL, dejando huella en la Actividad con el origen: nombre «E.S.E. Hospital San Vicente de Paúl», dirección, teléfonos con la línea gratuita y el logo (PNG de 200 × 200). **Falta el NIT.** La dirección queda «Carrera 5 # Calle 1»: el hospital dudó entre «Calle 1» y «Calle 1 Bis», así que hay que confirmarla. Además, el hospital pidió que el resumen diga «Historia clínica» en el título: el primer documento se titula «Historia clínica · Resumen de la atención» y su archivo es `Historia_clinica_<fecha>`.
 
 ## 9. Volumen y costo
 

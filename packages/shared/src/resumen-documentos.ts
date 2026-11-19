@@ -59,8 +59,16 @@ function fechaArchivo(iso: string, timeZone?: string): string {
  */
 export function documentosDelResumen(r: ResumenAtencionHis, opts: { timeZone?: string } = {}): DocumentoDelResumen[] {
   const fecha = fechaArchivo(r.historia.guardadaIso, opts.timeZone);
+  // El hospital pidió que el resumen diga «Historia clínica» en el título
+  // (19-nov); también en el nombre del PDF, que es lo que WhatsApp muestra.
   const docs: DocumentoDelResumen[] = [
-    { id: 'resumen', tipo: 'RESUMEN', titulo: 'Resumen de la atención', numero: null, nombreArchivo: `Resumen_${fecha}` },
+    {
+      id: 'resumen',
+      tipo: 'RESUMEN',
+      titulo: 'Historia clínica · Resumen de la atención',
+      numero: null,
+      nombreArchivo: `Historia_clinica_${fecha}`,
+    },
   ];
   const usados = new Set(['resumen']);
   const agregar = (d: DocumentoDelResumen) => {

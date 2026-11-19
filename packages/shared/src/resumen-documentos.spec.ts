@@ -104,7 +104,7 @@ describe('documentosDelResumen', () => {
       incapacidades: [{ numero: '5', desdeIso: '2026-11-01T05:00:00.000Z', dias: 3, prorroga: false, tipo: null, origen: null, observacion: null }],
     });
     expect(documentosDelResumen(r).map((d) => [d.id, d.titulo, d.nombreArchivo])).toEqual([
-      ['resumen', 'Resumen de la atención', 'Resumen_01-11-2026'],
+      ['resumen', 'Historia clínica · Resumen de la atención', 'Historia_clinica_01-11-2026'],
       ['formula-77', 'Fórmula médica N.º 77', 'Formula_01-11-2026_N77'],
       ['formula-81', 'Fórmula médica N.º 81', 'Formula_01-11-2026_N81'],
       ['orden-78', 'Orden de laboratorio N.º 78', 'Laboratorio_01-11-2026_N78'],

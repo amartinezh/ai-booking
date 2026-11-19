@@ -47,13 +47,13 @@ describe('GET /resumen/[token]/documento', () => {
         fetchMock.mockResolvedValue(
             new Response(Buffer.from('%PDF-1.7'), {
                 status: 200,
-                headers: { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="Resumen_01-11-2026.pdf"' },
+                headers: { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="Historia_clinica_01-11-2026.pdf"' },
             }),
         );
         const r = await pedir('doc=resumen&formato=pdf&descargar=1');
         expect(r.status).toBe(200);
         expect(r.headers.get('content-type')).toBe('application/pdf');
-        expect(r.headers.get('content-disposition')).toBe('attachment; filename="Resumen_01-11-2026.pdf"');
+        expect(r.headers.get('content-disposition')).toBe('attachment; filename="Historia_clinica_01-11-2026.pdf"');
         expect(r.headers.get('cache-control')).toBe('no-store');
         expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
             token: TOKEN,

@@ -193,7 +193,9 @@ describe('GeneradorDocumentos', () => {
   it('PNG de cada hoja a 200 ppp (1.700 × 2.200); una hoja que no existe no sale', async () => {
     const g = new GeneradorDocumentos(resumen(), ctx);
     const png = (await g.png('resumen', 1))!;
-    expect(png.nombreArchivo).toBe('Resumen_01-11-2026_hoja-1-de-1.png');
+    expect(png.nombreArchivo).toBe(
+      'Historia_clinica_01-11-2026_hoja-1-de-1.png',
+    );
     expect(dimensionesImagen(png.datos)).toEqual({ ancho: 1700, alto: 2200 });
     await expect(g.png('resumen', 2)).resolves.toBeNull();
     await expect(g.png('no-existe', 1)).resolves.toBeNull();

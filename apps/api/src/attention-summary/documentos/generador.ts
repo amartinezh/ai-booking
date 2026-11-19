@@ -81,7 +81,10 @@ export class GeneradorDocumentos {
   /** Todos los documentos en un solo PDF, cada uno desde una hoja nueva (el del correo lleva clave). */
   async pdfCompleto(o: { clave?: string } = {}): Promise<Archivo> {
     const hojas = this.docs.flatMap((d) => this.hojas(d) ?? []);
-    const base = this.docs[0].nombreArchivo.replace(/^Resumen_/, 'Documentos_');
+    const base = this.docs[0].nombreArchivo.replace(
+      /^Historia_clinica_/,
+      'Documentos_',
+    );
     return {
       nombreArchivo: `${base}.pdf`,
       tipo: 'application/pdf',

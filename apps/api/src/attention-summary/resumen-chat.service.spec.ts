@@ -114,7 +114,11 @@ function armar(
   };
   const generador = {
     listar: () => [
-      { id: 'resumen', titulo: 'Resumen de la atención', hojas: 1 },
+      {
+        id: 'resumen',
+        titulo: 'Historia clínica · Resumen de la atención',
+        hojas: 1,
+      },
       { id: 'formula-77', titulo: 'Fórmula médica N.º 77', hojas: 2 },
     ],
     pdf: jest.fn(async (id: string) => ({
