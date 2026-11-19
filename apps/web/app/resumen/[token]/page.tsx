@@ -97,7 +97,8 @@ export default async function ResumenPage(props: { params: Promise<{ token: stri
                     <h2 className="text-xl font-semibold">Sus documentos</h2>
                     <p className="text-base text-[#586378]">
                         Puede descargarlos e imprimirlos. Son una copia informativa: para reclamar medicamentos o hacerse los
-                        exámenes, siga las indicaciones del hospital y de su EPS.
+                        exámenes, siga las indicaciones del hospital y de su EPS. Los PDF se abren con una clave: el número de
+                        documento del paciente, sin puntos ni espacios.
                     </p>
                     <ul className="divide-y divide-[#eef1f5]">
                         {c.documentos.map((d) => (

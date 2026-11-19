@@ -160,7 +160,8 @@ export default function DocumentosDelResumen({ id, destinosPrueba = [] }: { id: 
                 {avisoPrueba && <p className="text-sm text-emerald-700 dark:text-emerald-400">{avisoPrueba}</p>}
                 <p className="text-xs text-zinc-500">
                     Llega el aviso con el botón «Recibir mis documentos». Como ese número no es el del paciente, el asistente
-                    pedirá la fecha de nacimiento del paciente antes de mandar los documentos.
+                    pedirá la fecha de nacimiento del paciente antes de mandar los documentos. Los PDF llegan con clave: el
+                    número de documento del paciente, sin puntos ni ceros a la izquierda (aquí, en el panel, se ven sin clave).
                 </p>
             </div>
             <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">

@@ -19,6 +19,7 @@ import { CryptoService } from '../common/crypto/crypto.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import type { Archivo } from './documentos/generador';
 import {
+  claveDelPaciente,
   ResumenDocumentosService,
   type DocumentoListado,
   type FormatoDocumento,
@@ -380,15 +381,15 @@ export class ResumenEnlacesService {
     const link = await this.conAcceso(token, acceso);
     if (!link) return null;
     const s = link.attentionSummary;
-    const g = await this.documentos.generador(
-      s.organizationId,
-      this.resumenDe(s.content!),
-    );
+    const resumen = this.resumenDe(s.content!);
+    const g = await this.documentos.generador(s.organizationId, resumen);
+    // El PDF que se descarga lleva la clave del paciente, como el del chat.
     const a = await this.documentos.archivo(
       g,
       pedido.documento,
       pedido.formato,
       pedido.hoja,
+      claveDelPaciente(resumen),
     );
     if (a) {
       await this.anotar(

@@ -789,6 +789,8 @@ Los seis puntos «B» de la evaluación del 19-nov. El reparto acordado con el h
 
 **Despliegue:** migración → API → web → **agente** (la relectura y el error en el latido; trae también el convenio al cambiar la fecha de 8963353, que no está instalado). Con el agente viejo no se rompe nada: no relee, y la alerta de lectura detenida no trae el error.
 
+**PDF con clave (2026-11-19, después de B1-B6):** a pedido del administrador, los PDF que recibe el paciente (chat y página) llevan la clave del correo: su número de documento sin ceros a la izquierda. Las imágenes por hoja se siguen enviando sin clave: el administrador lo eligió así, sabiendo que quien tenga el celular las ve. La vista previa del personal va sin clave.
+
 **Riesgo que queda:** la relectura es una sola. Una corrección hecha más de un día después de la primera lectura no llega. Si el hospital la necesita, se agrega una segunda relectura con otra columna.
 
 ## 9. Volumen y costo

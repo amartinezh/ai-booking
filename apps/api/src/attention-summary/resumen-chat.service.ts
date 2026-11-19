@@ -17,7 +17,10 @@ import type { ResumenAtencionHis } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { RedisService } from '../redis/redis.service';
-import { ResumenDocumentosService } from './resumen-documentos.service';
+import {
+  ResumenDocumentosService,
+  claveDelPaciente,
+} from './resumen-documentos.service';
 import { ResumenEnlacesService } from './resumen-enlaces.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
 import { TelegramChannelService } from '../telegram/telegram-channel.service';
@@ -414,11 +417,15 @@ export class ResumenChatService {
     verificadoPor: 'NUMERO' | 'FECHA_NACIMIENTO',
   ): Promise<void> {
     const timeZone = this.timeZone(e);
+    // Los PDF van con la clave del paciente (su número de documento); las
+    // imágenes no se pueden cifrar y salen como siempre.
+    const clave = claveDelPaciente(resumen);
     await this.texto(
       organizationId,
       remitente,
       TEXTOS_RESUMEN.enviando(
         formatDateOnly(resumen.historia.guardadaIso, { timeZone }),
+        Boolean(clave),
       ),
       { entrega: e.id },
     );
@@ -431,7 +438,7 @@ export class ResumenChatService {
         attentionSummaryDeliveryId: e.id,
       };
       for (const doc of g.listar()) {
-        const pdf = await g.pdf(doc.id);
+        const pdf = await g.pdf(doc.id, { clave });
         if (
           !pdf ||
           !(
@@ -467,7 +474,7 @@ export class ResumenChatService {
       }
     }
     for (const doc of porTelegram ? [] : g.listar()) {
-      const pdf = await g.pdf(doc.id);
+      const pdf = await g.pdf(doc.id, { clave });
       const idPdf = pdf
         ? await this.whatsapp.subir(
             organizationId,

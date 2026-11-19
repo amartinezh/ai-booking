@@ -47,7 +47,10 @@ import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import { TelegramChannelService } from '../telegram/telegram-channel.service';
 import { ResumenCorreoService } from './resumen-correo.service';
-import { ResumenDocumentosService } from './resumen-documentos.service';
+import {
+  ResumenDocumentosService,
+  claveDelPaciente,
+} from './resumen-documentos.service';
 import { ResumenEnlacesService } from './resumen-enlaces.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
 import { TechAlertService } from '../tech-alerts/tech-alert.service';
@@ -525,10 +528,7 @@ export class ResumenEnvioService {
       },
     });
     const g = await this.documentos.generador(organizationId, resumen);
-    const clave = documentoSinCerosIniciales(
-      normalizeDocumento(resumen.paciente.documento),
-    );
-    const pdf = await g.pdfCompleto({ clave });
+    const pdf = await g.pdfCompleto({ clave: claveDelPaciente(resumen) });
     let enlace: string | null = null;
     const base = (process.env.PUBLIC_WEB_URL ?? '').replace(/\/+$/, '');
     if (base && this.enlaces && fila) {

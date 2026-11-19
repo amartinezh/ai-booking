@@ -4,12 +4,34 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { DEFAULT_TIMEZONE, leerConfigDocumentos } from '@agenia/shared';
+import {
+  DEFAULT_TIMEZONE,
+  documentoSinCerosIniciales,
+  leerConfigDocumentos,
+  normalizeDocumento,
+} from '@agenia/shared';
 import type { ResumenAtencionHis } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import { GeneradorDocumentos, type Archivo } from './documentos/generador';
+
+/**
+ * La clave de los PDF que recibe el paciente (2026-11-19, a pedido del
+ * administrador): su número de documento (cédula, tarjeta de identidad o
+ * registro civil, el que tenga el HIS), sin puntos ni ceros a la izquierda. La
+ * misma del correo (plan §3.4). Las imágenes no llevan clave: no se puede.
+ * `undefined` si el HIS no trae documento (el PDF sale sin clave).
+ */
+export function claveDelPaciente(
+  resumen: ResumenAtencionHis,
+): string | undefined {
+  return (
+    documentoSinCerosIniciales(
+      normalizeDocumento(resumen.paciente.documento),
+    ) || undefined
+  );
+}
 
 export type FormatoDocumento = 'pdf' | 'png';
 
@@ -95,15 +117,22 @@ export class ResumenDocumentosService {
     }));
   }
 
-  /** PDF de un documento (o de todos), o PNG de una hoja; `null` si no existe. */
+  /**
+   * PDF de un documento (o de todos), o PNG de una hoja; `null` si no existe.
+   * Con `clave`, el PDF va cifrado (lo que se descarga desde la página del
+   * paciente); la vista previa del personal va sin clave.
+   */
   archivo(
     g: GeneradorDocumentos,
     documento: string,
     formato: FormatoDocumento,
     hoja: number,
+    clave?: string,
   ): Promise<Archivo | null> {
     if (formato === 'png') return g.png(documento, hoja);
-    return documento === TODO ? g.pdfCompleto() : g.pdf(documento);
+    return documento === TODO
+      ? g.pdfCompleto({ clave })
+      : g.pdf(documento, { clave });
   }
 
   // ─── Vista previa del personal ──────────────────────────────────────────

@@ -184,6 +184,7 @@ function armar(
     telegram,
     prisma,
     tecladosTg,
+    generador,
   };
 }
 
@@ -223,8 +224,13 @@ describe('ResumenChatService', () => {
       'Fórmula médica N.º 77 (hoja 2 de 2)',
     );
     expect(a.textos[0]).toBe(
-      'Con gusto. Estos son los documentos de su consulta del domingo, 1 de noviembre:',
+      'Con gusto. Estos son los documentos de su consulta del domingo, 1 de noviembre. Los PDF se abren con una clave: el número de documento del paciente, sin puntos ni espacios.',
     );
+    // Cada PDF va con la clave del paciente; las imágenes no la pueden llevar.
+    expect(a.generador.pdf.mock.calls).toEqual([
+      ['resumen', { clave: '900000001' }],
+      ['formula-77', { clave: '900000001' }],
+    ]);
     expect(a.textos.at(-1)).toContain('https://hospital.example/resumen/TOKEN');
     expect(a.enlaces.crearEnlace).toHaveBeenCalledWith(
       's-1',

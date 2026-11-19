@@ -53,8 +53,12 @@ export const TEXTOS_RESUMEN = {
     'No encontramos documentos recientes para este número. Si tuvo una consulta hace poco, pídalos en el hospital.',
   otroNumero:
     'Este botón no corresponde a este número. Si usted es el paciente, pida sus documentos en el hospital.',
-  enviando: (fecha: string) =>
-    `Con gusto. Estos son los documentos de su consulta del ${fecha}:`,
+  enviando: (fecha: string, conClave = false) =>
+    `Con gusto. Estos son los documentos de su consulta del ${fecha}.${
+      conClave
+        ? ' Los PDF se abren con una clave: el número de documento del paciente, sin puntos ni espacios.'
+        : ''
+    }`,
   listo: (enlace: string | null) =>
     `Listo. Son una copia para usted: el hospital conserva el original. Para reclamar medicamentos o hacerse los exámenes, siga las indicaciones del hospital y de su EPS.${
       enlace ? `\n\nPara volver a descargarlos durante 30 días: ${enlace}` : ''

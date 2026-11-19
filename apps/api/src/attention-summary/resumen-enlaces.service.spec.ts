@@ -275,7 +275,16 @@ describe('ResumenEnlacesService', () => {
       ORIGEN,
     );
     expect(pdf!.datos.subarray(0, 5).toString()).toBe('%PDF-');
-    expect(a.accesos.map((x) => x.kind)).toEqual([
+    // Lo que se descarga de la página lleva la clave del paciente, como el del chat.
+    expect(pdf!.datos.toString('latin1')).toMatch(/\/Encrypt/);
+    const imagen = await a.servicio.archivo(
+      token,
+      v.acceso,
+      { documento: 'resumen', formato: 'png', hoja: 1 },
+      ORIGEN,
+    );
+    expect(imagen!.tipo).toBe('image/png');
+    expect(a.accesos.map((x) => x.kind).slice(0, 3)).toEqual([
       'VERIFICAR_OK',
       'VER',
       'DOCUMENTO',
