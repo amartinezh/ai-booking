@@ -1349,6 +1349,11 @@ model AttentionSummary {
   reviewedAt       DateTime?
   reviewedByUserId String?
 
+  // D10, relectura (2026-11-19): cuándo el agente volvió a leer la historia un
+  // día después, para traer lo que el médico agregó o corrigió. null = todavía
+  // no (se relee una sola vez).
+  rereadAt DateTime?
+
   links      AttentionSummaryLink[]
   accesses   AttentionSummaryAccess[]
   deliveries AttentionSummaryDelivery[]
@@ -2851,6 +2856,10 @@ model HospitalMirrorConfig {
   // últimas 288 = un día; `agregarMedicion` en @agenia/shared). La escribe solo
   // el agente, por lo mismo que el cursor. Sin datos de pacientes.
   resumenAtencionMedicion Json?
+  // El último error del bucle del resumen que reportó el agente en su latido
+  // (2026-11-19); null = su última vuelta salió bien o el agente no lo informa.
+  // Lo lee la alerta «la lectura se detuvo» para decir por qué.
+  resumenAtencionError    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

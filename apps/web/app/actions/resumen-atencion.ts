@@ -528,6 +528,7 @@ export async function updateDocumentosResumenAction(
         pie: cambio?.pie,
         logo: cambio?.logo,
         frecuenciaDelHis: cambio?.frecuenciaDelHis,
+        prioridadesRemision: cambio?.prioridadesRemision,
     });
     if (!r.ok) return { success: false, error: r.error };
     await prisma.hospitalMirrorConfig.update({

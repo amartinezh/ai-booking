@@ -456,6 +456,7 @@ describe('ResumenAtencionClient', () => {
         expect(screen.getByTestId('encabezado-documentos')).toHaveTextContent('Marca de agua: «Copia para el paciente»');
         fireEvent.change(screen.getByLabelText('Nombre del hospital'), { target: { value: 'E.S.E. HOSPITAL' } });
         fireEvent.change(screen.getByLabelText('NIT'), { target: { value: '890.000.000-1' } });
+        fireEvent.change(screen.getByLabelText('Prioridad 1 de la remisión'), { target: { value: 'Prioritaria' } });
         fireEvent.click(screen.getByRole('button', { name: 'Guardar encabezado' }));
         await waitFor(() =>
             expect(updateDocumentosResumenAction).toHaveBeenCalledWith({
@@ -466,6 +467,7 @@ describe('ResumenAtencionClient', () => {
                 pie: '',
                 logo: '',
                 frecuenciaDelHis: false,
+                prioridadesRemision: { '0': '', '1': 'Prioritaria', '2': '', '3': '' },
             }),
         );
         expect(await screen.findByText(/Guardado. Los documentos/)).toBeInTheDocument();

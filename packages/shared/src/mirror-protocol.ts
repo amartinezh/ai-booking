@@ -341,6 +341,13 @@ export interface HeartbeatInput {
   lookupCapable?: boolean;
   /** La versión que corre (también va en el handshake); el servidor anota cuando cambia. */
   agentVersion?: AgentVersionInfo;
+  /**
+   * El último error del bucle del resumen de la atención (2026-11-19), o `null`
+   * si su última vuelta salió bien. Sin esto el error solo quedaba en la consola
+   * del agente, en la máquina del hospital, y la alerta «la lectura se detuvo»
+   * no podía decir por qué. Un agente anterior no lo manda (`undefined`).
+   */
+  attentionSummaryError?: string | null;
 }
 
 // ── POST /mirror/reconcile ──────────────────────────────────────────────────

@@ -12,8 +12,11 @@ import { Prisma } from '@agenia/database';
 import {
   LIMITES_RESUMEN_ATENCION,
   agregarMedicion,
+  contenidoClinicoDelResumen,
   documentoSinCerosIniciales,
   leerConfigResumenAtencion,
+  leerExclusiones,
+  motivoDeExclusion,
   puedeLeerDelHospital,
   serviciosALeer,
   validarMedicion,
@@ -21,6 +24,7 @@ import {
 } from '@agenia/shared';
 import type {
   EstadoResumenesAgente,
+  ExclusionesResumen,
   MedicionLecturaResumen,
   ResumenAtencionHis,
   ResumenesAtencionInput,
@@ -31,6 +35,19 @@ import { CryptoService } from '../common/crypto/crypto.service';
 import { SystemLogService } from '../system-log/system-log.service';
 
 const MS_DIA = 86_400_000;
+const MS_HORA = 3_600_000;
+
+/**
+ * La huella que dice si el médico cambió la historia (D10): del contenido
+ * clínico, sin el contacto del paciente ni lo que entregó farmacia
+ * (`contenidoClinicoDelResumen`). Así, al releer, un celular nuevo no sube la
+ * versión ni hace decir a la página «El médico actualizó esta historia».
+ */
+export function huellaClinica(resumen: ResumenAtencionHis): string {
+  return createHash('sha256')
+    .update(JSON.stringify(contenidoClinicoDelResumen(resumen)))
+    .digest('hex');
+}
 /** Si el documento casa con más de un paciente (con y sin ceros), no se elige ninguno. */
 const MAX_CANDIDATOS = 2;
 
@@ -47,9 +64,20 @@ const MAX_CANDIDATOS = 2;
  * ═══ Qué se guarda ═══
  * El resumen completo, CIFRADO, con fecha de borrado a los 30 días (D11). La
  * llave es la historia del HIS: el mismo resumen dos veces no se duplica; uno
- * distinto (el médico agregó una orden, farmacia entregó) sube la versión (D10).
+ * con otro contenido clínico (el médico agregó una orden o anuló un
+ * medicamento) sube la versión (D10). Lo que cambia sin el médico (el celular
+ * del paciente, la entrega en farmacia) no cuenta (`huellaClinica`).
  * Un resumen que ya caducó no revive aunque el agente lo vuelva a mandar.
  * Nada del contenido va a los registros (logs).
+ *
+ * ═══ Relectura (D10, 2026-11-19) ═══
+ * El agente leía cada historia una sola vez, a las 2 horas, y lo que el médico
+ * agregaba o corregía después no llegaba. Ahora el estado le pide, además,
+ * las historias leídas hace más de un día que todavía no se releyeron
+ * (`releer`); el agente las vuelve a leer y las sube con `releidos`, y quedan
+ * marcadas (`rereadAt`) aunque el HIS ya no las devuelva. Si la versión nueva
+ * cae en las exclusiones (D7), el resumen pasa a «No se envía» y ni el chat ni
+ * la página lo vuelven a entregar.
  *
  * ═══ Revisión (cierre de la Fase 1) ═══
  * El administrador abre un resumen para compararlo con el HIS
@@ -84,7 +112,43 @@ export class MirrorAttentionSummaryService {
       maxPorLote: LIMITES_RESUMEN_ATENCION.maxPorLote,
       servicios: leer ? serviciosALeer(config) : [],
       camposPlantilla: leer ? (config?.camposPlantilla ?? null) : null,
+      releer: leer
+        ? await this.paraReleer(organizationId, serviciosALeer(config))
+        : [],
     };
+  }
+
+  /**
+   * Las historias que toca releer: leídas por primera vez hace más de
+   * `relecturaHoras`, de los últimos `relecturaHastaDias`, con contenido y de
+   * un servicio que se lee. Las más viejas primero.
+   */
+  private async paraReleer(
+    organizationId: string,
+    servicios: string[],
+    ahora: Date = new Date(),
+  ): Promise<string[]> {
+    if (servicios.length === 0) return [];
+    const L = LIMITES_RESUMEN_ATENCION;
+    const filas = await this.prisma.attentionSummary.findMany({
+      where: {
+        organizationId,
+        rereadAt: null,
+        purgedAt: null,
+        content: { not: null },
+        serviceCode: { in: servicios },
+        receivedAt: {
+          lte: new Date(ahora.getTime() - L.relecturaHoras * MS_HORA),
+        },
+        attendedAt: {
+          gte: new Date(ahora.getTime() - L.relecturaHastaDias * MS_DIA),
+        },
+      },
+      orderBy: { attendedAt: 'asc' },
+      take: L.maxRelecturaPorVuelta,
+      select: { hisKey: true },
+    });
+    return filas.map((f) => f.hisKey);
   }
 
   /** POST /mirror/attention-summaries */
@@ -107,6 +171,16 @@ export class MirrorAttentionSummaryService {
         'nextCursor debe ser el número de una historia.',
       );
     }
+    const releidos = body.releidos ?? [];
+    if (
+      !Array.isArray(releidos) ||
+      releidos.length > LIMITES_RESUMEN_ATENCION.maxPorLote ||
+      releidos.some((n) => typeof n !== 'string' || !/^\d{1,18}$/.test(n))
+    ) {
+      throw new BadRequestException(
+        'releidos debe ser una lista de números de historia.',
+      );
+    }
 
     const fila = await this.prisma.hospitalMirrorConfig.findUnique({
       where: { organizationId },
@@ -123,6 +197,7 @@ export class MirrorAttentionSummaryService {
       );
     }
     const servicios = new Set(serviciosALeer(config));
+    const exclusiones = leerExclusiones(fila?.resumenAtencion);
 
     const resultado: ResumenesAtencionResult = {
       recibidos: body.resumenes.length,
@@ -151,7 +226,12 @@ export class MirrorAttentionSummaryService {
         continue;
       }
       try {
-        const efecto = await this.guardar(organizationId, resumen, servicio);
+        const efecto = await this.guardar(
+          organizationId,
+          resumen,
+          servicio,
+          exclusiones,
+        );
         resultado[efecto]++;
       } catch (error: unknown) {
         // El motivo, nunca el contenido.
@@ -161,6 +241,13 @@ export class MirrorAttentionSummaryService {
         );
         resultado.rechazados.push({ numero, motivo: 'error al guardar' });
       }
+    }
+
+    if (releidos.length > 0) {
+      await this.prisma.attentionSummary.updateMany({
+        where: { organizationId, hisKey: { in: releidos }, rereadAt: null },
+        data: { rereadAt: new Date() },
+      });
     }
 
     await this.anotarVuelta(organizationId, {
@@ -228,20 +315,27 @@ export class MirrorAttentionSummaryService {
     organizationId: string,
     resumen: ResumenAtencionHis,
     servicio: string,
+    exclusiones: ExclusionesResumen,
   ): Promise<'nuevos' | 'actualizados' | 'sinCambios'> {
     const hisKey = resumen.historia.numero;
     const json = JSON.stringify(resumen);
-    const contentHash = createHash('sha256').update(json).digest('hex');
+    const contentHash = huellaClinica(resumen);
 
     const existente = await this.prisma.attentionSummary.findUnique({
       where: { organizationId_hisKey: { organizationId, hisKey } },
-      select: { id: true, contentHash: true, purgedAt: true },
+      select: { id: true, contentHash: true, purgedAt: true, status: true },
     });
 
     if (existente) {
       // Caducado: no revive. Igual: nada que hacer.
       if (existente.purgedAt || existente.contentHash === contentHash)
         return 'sinCambios';
+      // D7 sobre la versión nueva: si el médico agregó algo sensible, deja de
+      // entregarse (el chat y la página no entregan lo que «No se envía»).
+      const excluida =
+        existente.status === 'EXCLUIDO'
+          ? null
+          : motivoDeExclusion(resumen, exclusiones);
       await this.prisma.attentionSummary.update({
         where: { id: existente.id },
         data: {
@@ -249,6 +343,15 @@ export class MirrorAttentionSummaryService {
           contentHash,
           version: { increment: 1 },
           serviceCode: servicio,
+          ...(excluida
+            ? {
+                status: 'EXCLUIDO' as const,
+                statusReason: `Al releer la historia: ${excluida}`.slice(
+                  0,
+                  500,
+                ),
+              }
+            : {}),
         },
       });
       return 'actualizados';

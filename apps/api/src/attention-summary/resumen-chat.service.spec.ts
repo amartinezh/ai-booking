@@ -56,10 +56,13 @@ function armar(
     fecha?: string | null;
     destino?: string;
     sinContenido?: boolean;
+    estado?: string;
+    proposito?: string;
   } = {},
 ) {
   const entrega: any = {
     id: ID,
+    purpose: o.proposito ?? 'PACIENTE',
     failedAttempts: 0,
     lockedUntil: null,
     destinationHash: hashDelDestino(o.destino ?? NUMERO),
@@ -73,6 +76,7 @@ function armar(
             resumen(o.fecha === undefined ? '1980-05-17' : o.fecha),
           ),
       contentExpiresAt: new Date(Date.now() + 10 * 86_400_000),
+      status: o.estado ?? 'ENVIADO',
       organization: { timezone: null },
     },
   };
@@ -321,6 +325,28 @@ describe('ResumenChatService', () => {
     expect(a.textos).toEqual([
       expect.stringContaining('pida sus documentos en el hospital'),
     ]);
+  });
+
+  it('D7 sobre la versión releída: lo que quedó «No se envía» ya no se entrega al paciente; a una prueba del equipo, sí', async () => {
+    const a = armar({
+      perfil: { whatsappId: NUMERO, bsuid: null },
+      escribio: true,
+      estado: 'EXCLUIDO',
+    });
+    await a.s.manejarBoton(ORG, NUMERO, `resumen:${ID}`);
+    expect(a.textos).toEqual([
+      'Los documentos de esa consulta no se pueden enviar por este medio. Por favor pídalos en el hospital.',
+    ]);
+    expect(a.whatsapp.documento).not.toHaveBeenCalled();
+
+    const prueba = armar({
+      perfil: { whatsappId: NUMERO, bsuid: null },
+      escribio: true,
+      estado: 'EXCLUIDO',
+      proposito: 'PRUEBA',
+    });
+    await prueba.s.manejarBoton(ORG, NUMERO, `resumen:${ID}`);
+    expect(prueba.whatsapp.documento).toHaveBeenCalled();
   });
 
   it('contenido ya borrado: no disponible', async () => {

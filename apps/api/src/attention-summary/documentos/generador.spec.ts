@@ -190,6 +190,33 @@ describe('GeneradorDocumentos', () => {
     expect(pdf.datos.toString('latin1')).not.toMatch(/\/Encrypt/);
   });
 
+  it('la prioridad de la remisión sale solo con el nombre que el hospital confirmó (un «1» suelto no)', () => {
+    const r = resumen();
+    r.remisiones = [
+      {
+        numero: '12',
+        fechaIso: null,
+        remiteA: 'HSVPA',
+        servicioPedido: 'MEDICINA INTERNA',
+        cups: '890266',
+        prioridad: '1',
+        motivo: null,
+        observaciones: null,
+        casoClinicoCaracteres: 0,
+      },
+    ];
+    const textoDe = (documentos: unknown) => {
+      const c = { ...ctx, documentos: leerConfigDocumentos({ documentos }) };
+      const g = new GeneradorDocumentos(r, c);
+      const doc = g.listar().find((d) => d.id === 'remision-12')!;
+      return armarHojas(crearMedidor(), r, doc, c)!.map(textos).join(' ');
+    };
+    expect(textoDe({})).not.toMatch(/Prioridad/);
+    expect(textoDe({ prioridadesRemision: { '1': 'Prioritaria' } })).toMatch(
+      /Prioridad:\s+Prioritaria/,
+    );
+  });
+
   it('PNG de cada hoja a 200 ppp (1.700 × 2.200); una hoja que no existe no sale', async () => {
     const g = new GeneradorDocumentos(resumen(), ctx);
     const png = (await g.png('resumen', 1))!;

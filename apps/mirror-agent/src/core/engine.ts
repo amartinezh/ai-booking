@@ -5,6 +5,8 @@ import type {
   OutboxEventDto,
   ReconcileResult,
   AvailabilityResult,
+  ResumenAtencionHis,
+  ResumenesAtencionResult,
 } from '@agenia/shared';
 import { LIMITES_RESUMEN_ATENCION, validarConsultaHis } from '@agenia/shared';
 import type { MirrorApiClient } from './mirror-api-client';
@@ -307,9 +309,19 @@ export class MirrorEngine {
     nuevos: number;
     actualizados: number;
     rechazados: number;
+    /** D10: historias que se volvieron a leer en esta vuelta, y cuántas traían cambios. */
+    releidos: number;
+    releidosConCambios: number;
     primerRechazo?: string;
   }> {
-    const vacio = { leidos: 0, nuevos: 0, actualizados: 0, rechazados: 0 };
+    const vacio = {
+      leidos: 0,
+      nuevos: 0,
+      actualizados: 0,
+      rechazados: 0,
+      releidos: 0,
+      releidosConCambios: 0,
+    };
     if (!isAttentionSummaryCapable(this.driver)) {
       return { skipped: true, apagado: false, ...vacio };
     }
@@ -360,17 +372,54 @@ export class MirrorEngine {
         historias: resumenes.length,
       },
     });
+
+    // D10, relectura (2026-11-19): las historias que la API pide volver a leer
+    // (un día después de la primera lectura) traen lo que el médico agregó o
+    // corrigió. Van aparte, después de las nuevas: si fallan, las nuevas ya
+    // subieron. Se suben con `releidos` aunque el HIS ya no devuelva alguna,
+    // para que no se pidan otra vez.
+    const releer = (estado.releer ?? [])
+      .filter((n) => /^\d+$/.test(n))
+      .slice(0, LIMITES_RESUMEN_ATENCION.maxRelecturaPorVuelta);
+    let releidos: ResumenAtencionHis[] = [];
+    let r2: ResumenesAtencionResult | null = null;
+    if (releer.length > 0) {
+      releidos = await this.driver.fetchAttentionSummaries(
+        releer,
+        estado.camposPlantilla,
+      );
+      r2 = await this.api.pushAttentionSummaries({
+        resumenes: releidos,
+        nextCursor,
+        releidos: releer,
+      });
+    }
+
+    const rechazos = [...r.rechazados, ...(r2?.rechazados ?? [])];
     return {
       skipped: false,
       apagado: false,
       leidos: resumenes.length,
       nuevos: r.nuevos,
       actualizados: r.actualizados,
-      rechazados: r.rechazados.length,
-      primerRechazo: r.rechazados[0]
-        ? `historia ${r.rechazados[0].numero ?? '?'}: ${r.rechazados[0].motivo}`
+      rechazados: rechazos.length,
+      releidos: releidos.length,
+      releidosConCambios: r2?.actualizados ?? 0,
+      primerRechazo: rechazos[0]
+        ? `historia ${rechazos[0].numero ?? '?'}: ${rechazos[0].motivo}`
         : undefined,
     };
+  }
+
+  /**
+   * El último error del bucle del resumen de la atención (`null` = la última
+   * vuelta salió bien). Va en cada latido: sin esto quedaba solo en la consola
+   * del agente, en la máquina del hospital.
+   */
+  private errorDelResumen: string | null = null;
+
+  anotarResultadoDelResumen(error: string | null): void {
+    this.errorDelResumen = error ? error.slice(0, 500) : null;
   }
 
   async handshake(): Promise<void> {
@@ -653,6 +702,10 @@ export class MirrorEngine {
       lookupCapable: isPatientLookupCapable(this.driver),
       // En cada latido, no solo al arrancar: si el servidor reinicia, igual la sabe.
       ...(this.agentVersion ? { agentVersion: this.agentVersion } : {}),
+      // Solo un driver con el resumen lo informa (null = su última vuelta salió bien).
+      ...(isAttentionSummaryCapable(this.driver)
+        ? { attentionSummaryError: this.errorDelResumen }
+        : {}),
     });
   }
 }

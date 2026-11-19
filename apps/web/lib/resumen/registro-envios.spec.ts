@@ -1,4 +1,4 @@
-import { filasDelRegistro, nombreDelRegistro } from './registro-envios';
+import { filasDelRegistro, nombreDelRegistro, porQueNoLlego } from './registro-envios';
 import type { AtencionConEnvios, EnvioDeLaAtencion } from '@/app/actions/resumen-envios';
 
 const vacia = { enviados: 0, entregados: 0, leidos: 0, fallidos: 0 };
@@ -38,6 +38,7 @@ const atencion = (c: Partial<AtencionConEnvios>): AtencionConEnvios => ({
     contenidoDisponible: true,
     envios: [],
     pagina: { veces: 0, ultimaIso: null, descargas: 0 },
+    noLlego: null,
     ...c,
 });
 
@@ -101,5 +102,61 @@ describe('el registro de envíos (Excel)', () => {
 
     it('nombre del archivo con las fechas', () => {
         expect(nombreDelRegistro('2026-11-01', '2026-11-10')).toBe('Envios_documentos_2026-11-01_a_2026-11-10.xlsx');
+        expect(nombreDelRegistro('2026-11-01', '2026-11-10', true)).toBe('Envios_documentos_no_llegaron_2026-11-01_a_2026-11-10.xlsx');
+    });
+
+    it('la columna «Por qué no le llegó» va en cada fila, también en la de la atención sin envíos', () => {
+        const ahora = new Date('2026-11-12T15:00:00.000Z');
+        const [cabecera, sinContacto] = filasDelRegistro(
+            [atencion({ estado: 'SIN_CONTACTO', motivo: 'Sin un celular utilizable', envios: [] })],
+            ahora,
+        );
+        expect(cabecera[cabecera.length - 1]).toBe('Por qué no le llegó');
+        expect(sinContacto).toHaveLength(cabecera.length);
+        expect(sinContacto[cabecera.indexOf('Veces que abrió la página')]).toBe(0);
+        expect(sinContacto[cabecera.length - 1]).toContain('Sin un celular utilizable');
+    });
+});
+
+describe('a quién no le llegó el aviso (plan de celulares del hospital)', () => {
+    const ahora = new Date('2026-11-12T15:00:00.000Z');
+    const aviso = (c: Partial<EnvioDeLaAtencion['traza']['aviso']>) => ({
+        tipo: 'PLANTILLA' as const,
+        enviadoIso: '2026-11-10T15:00:00.000Z',
+        entregadoIso: null,
+        leidoIso: null,
+        estado: 'SENT' as const,
+        error: null,
+        ...c,
+    });
+    const sinNada = { pidioIso: null, verificadoIso: null, documentosIso: null, archivos: vacia };
+    const con = (av: Parameters<typeof aviso>[0], e: Partial<EnvioDeLaAtencion> = {}) =>
+        atencion({ envios: [envio({ estado: 'AVISO_ENVIADO', traza: { aviso: aviso(av), ...sinNada }, ...e })] });
+
+    it('le llegó: Meta lo entregó, lo leyó, pidió o recibió los documentos, o lo aceptó Telegram', () => {
+        expect(porQueNoLlego(atencion({ envios: [envio({})] }), ahora)).toBeNull();
+        expect(porQueNoLlego(con({ estado: 'DELIVERED' }), ahora)).toBeNull();
+        expect(porQueNoLlego(con({ entregadoIso: '2026-11-10T15:00:05.000Z' }), ahora)).toBeNull();
+        expect(porQueNoLlego(con({ tipo: 'TELEGRAM', estado: 'ACCEPTED' }, { canal: 'TELEGRAM' }), ahora)).toBeNull();
+    });
+
+    it('no cuenta lo que no se envía a propósito, lo que todavía no se intenta ni lo que salió hace menos de 24 h', () => {
+        expect(porQueNoLlego(atencion({ estado: 'EXCLUIDO', motivo: 'F32' }), ahora)).toBeNull();
+        expect(porQueNoLlego(atencion({ estado: 'RECIBIDO' }), ahora)).toBeNull();
+        expect(porQueNoLlego(con({ enviadoIso: '2026-11-12T10:00:00.000Z' }), ahora)).toBeNull();
+        expect(porQueNoLlego(con({}, { proposito: 'PRUEBA' }), ahora)).toBeNull();
+    });
+
+    it('no le llegó: sin celular, Meta no lo entregó (con su error) o sin confirmar en 24 h', () => {
+        expect(porQueNoLlego(atencion({ estado: 'SIN_CONTACTO', motivo: 'El celular del HIS es de otro paciente en AgenIA' }), ahora)).toBe(
+            'Sin un celular utilizable: El celular del HIS es de otro paciente en AgenIA',
+        );
+        expect(porQueNoLlego(con({ estado: 'FAILED', error: '131026 Message undeliverable' }), ahora)).toBe(
+            'WhatsApp no lo entregó: 131026 Message undeliverable',
+        );
+        expect(
+            porQueNoLlego(con({ tipo: null, enviadoIso: null, estado: null }, { estado: 'FALLO', motivo: 'Meta rechazó el número' }), ahora),
+        ).toBe('WhatsApp no lo entregó: Meta rechazó el número');
+        expect(porQueNoLlego(con({}), ahora)).toContain('no confirmó la entrega en 24 horas');
     });
 });

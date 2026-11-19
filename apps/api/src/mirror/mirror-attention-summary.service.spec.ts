@@ -88,7 +88,9 @@ function armar(
       id: string;
       contentHash: string;
       purgedAt: Date | null;
+      status?: string;
     } | null;
+    paraReleer?: { hisKey: string }[];
     perfiles?: { id: string }[];
     crearFalla?: Error;
     medicion?: unknown;
@@ -105,6 +107,7 @@ function armar(
   const actualizados: any[] = [];
   const cursores: string[] = [];
   const escrituras: any[] = [];
+  const releidas: any[] = [];
   const prisma: any = {
     hospitalMirrorConfig: {
       findUnique: jest.fn(async () =>
@@ -126,6 +129,11 @@ function armar(
     attentionSummary: {
       findUnique: jest.fn(async () => opciones.existente ?? null),
       findFirst: jest.fn(async () => opciones.paraRevisar ?? null),
+      findMany: jest.fn(async () => opciones.paraReleer ?? []),
+      updateMany: jest.fn(async (args: any) => {
+        releidas.push(args);
+        return { count: 1 };
+      }),
       create: jest.fn(async ({ data }: any) => {
         if (opciones.crearFalla) throw opciones.crearFalla;
         creados.push(data);
@@ -152,6 +160,7 @@ function armar(
     actualizados,
     cursores,
     escrituras,
+    releidas,
   };
 }
 
@@ -170,6 +179,7 @@ describe('estadoParaElAgente', () => {
         maxPorLote: 50,
         servicios: [],
         camposPlantilla: null,
+        releer: [],
       });
     }
   });
@@ -202,7 +212,176 @@ describe('estadoParaElAgente', () => {
       maxPorLote: 50,
       servicios: ['S39141', 'S39141-1'],
       camposPlantilla: null,
+      releer: [],
     });
+  });
+
+  it('D10: le pide releer las historias leídas hace más de un día, de la última semana, una sola vez', async () => {
+    const { servicio, prisma } = armar({
+      config: CONFIG_LEYENDO,
+      cursor: '2441000',
+      paraReleer: [{ hisKey: '2440990' }, { hisKey: '2440995' }],
+    });
+    const antes = Date.now();
+    const estado = await servicio.estadoParaElAgente(ORG);
+    expect(estado.releer).toEqual(['2440990', '2440995']);
+    const { where, take } = prisma.attentionSummary.findMany.mock.calls[0][0];
+    expect(where).toMatchObject({
+      organizationId: ORG,
+      rereadAt: null,
+      purgedAt: null,
+      serviceCode: { in: ['S39141', 'S39141-1'] },
+    });
+    expect(antes - where.receivedAt.lte.getTime()).toBeGreaterThanOrEqual(
+      24 * 3_600_000 - 1000,
+    );
+    expect(antes - where.attendedAt.gte.getTime()).toBeLessThanOrEqual(
+      7 * 86_400_000 + 1000,
+    );
+    expect(take).toBe(10);
+  });
+
+  it('con la lectura apagada no pide releer nada (ni consulta la base para eso)', async () => {
+    const { servicio, prisma } = armar({
+      config: { servicios: { S39141: {} } },
+    });
+    expect((await servicio.estadoParaElAgente(ORG)).releer).toEqual([]);
+    expect(prisma.attentionSummary.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('relectura (D10)', () => {
+  it('marca releídas las que el agente intentó, aunque el HIS ya no devuelva alguna', async () => {
+    const { servicio, releidas } = armar({ config: CONFIG_LEYENDO });
+    await servicio.recibirLote(ORG, {
+      resumenes: [],
+      nextCursor: '2441058',
+      releidos: ['2440990', '2440995'],
+    });
+    expect(releidas).toHaveLength(1);
+    expect(releidas[0].where).toEqual({
+      organizationId: ORG,
+      hisKey: { in: ['2440990', '2440995'] },
+      rereadAt: null,
+    });
+    expect(releidas[0].data.rereadAt).toBeInstanceOf(Date);
+  });
+
+  it('una lista de releídos rota es un 400', async () => {
+    const { servicio } = armar({ config: CONFIG_LEYENDO });
+    await expect(
+      servicio.recibirLote(ORG, {
+        resumenes: [],
+        nextCursor: '2441058',
+        releidos: ['24409; DROP'],
+      } as any),
+    ).rejects.toThrow('releidos');
+  });
+
+  it('lo que cambia sin el médico (el celular, la entrega en farmacia) no sube la versión', async () => {
+    const primero = armar({ config: CONFIG_LEYENDO });
+    const conFormula = resumen('2441058', {
+      ordenes: [
+        {
+          numero: '77',
+          tipo: 'MEDICAMENTOS',
+          farmacia: 'AI',
+          escritaIso: null,
+          desdeIso: null,
+          serie: null,
+          vigencia: null,
+          medicamentos: [
+            {
+              codigo: '1',
+              nombre: 'LOSARTAN',
+              cum: null,
+              invima: null,
+              medida: null,
+              concentracion: '50 MG',
+              forma: 'TABLETA',
+              via: 'ORAL',
+              cantidad: 30,
+              duracionDias: 30,
+              indicacion: '1 TAB VO',
+              frecuencia: null,
+              entregado: false,
+            },
+          ],
+          examenes: [],
+        },
+      ],
+    });
+    await primero.servicio.recibirLote(ORG, {
+      resumenes: [conFormula],
+      nextCursor: '2441058',
+    });
+    const hash = primero.creados[0].contentHash;
+
+    const releido = JSON.parse(
+      JSON.stringify(conFormula),
+    ) as ResumenAtencionHis;
+    releido.paciente.celular = '3109999999';
+    releido.ordenes[0].medicamentos[0].entregado = true;
+    const { servicio, actualizados } = armar({
+      config: CONFIG_LEYENDO,
+      existente: { id: 's1', contentHash: hash, purgedAt: null },
+    });
+    const r = await servicio.recibirLote(ORG, {
+      resumenes: [releido],
+      nextCursor: '2441058',
+    });
+    expect(r.sinCambios).toBe(1);
+    expect(actualizados).toHaveLength(0);
+  });
+
+  it('si la versión nueva cae en las exclusiones (D7), queda «No se envía»', async () => {
+    const { servicio, actualizados } = armar({
+      config: CONFIG_LEYENDO,
+      existente: {
+        id: 's1',
+        contentHash: 'otra',
+        purgedAt: null,
+        status: 'ENVIADO',
+      },
+    });
+    await servicio.recibirLote(ORG, {
+      resumenes: [
+        resumen('2441058', {
+          diagnosticos: [
+            {
+              cie10: 'F322',
+              descripcion: 'EPISODIO DEPRESIVO',
+              tipo: null,
+              principal: true,
+            },
+          ],
+        }),
+      ],
+      nextCursor: '2441058',
+    });
+    expect(actualizados[0].data.version).toEqual({ increment: 1 });
+    expect(actualizados[0].data.status).toBe('EXCLUIDO');
+    expect(actualizados[0].data.statusReason).toMatch(
+      /^Al releer la historia: /,
+    );
+  });
+
+  it('una corrección que no es sensible sube la versión sin cambiar el estado', async () => {
+    const { servicio, actualizados } = armar({
+      config: CONFIG_LEYENDO,
+      existente: {
+        id: 's1',
+        contentHash: 'otra',
+        purgedAt: null,
+        status: 'ENVIADO',
+      },
+    });
+    await servicio.recibirLote(ORG, {
+      resumenes: [resumen()],
+      nextCursor: '2441058',
+    });
+    expect(actualizados[0].data.version).toEqual({ increment: 1 });
+    expect(actualizados[0].data.status).toBeUndefined();
   });
 });
 

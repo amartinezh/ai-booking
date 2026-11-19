@@ -175,6 +175,10 @@ Quien esté en el grupo ve los nombres de las clínicas y la información técni
 | ℹ️ La API arrancó | Cada arranque, con la versión desplegada (sin sonido) | — |
 | 🔴 La API se está reiniciando en bucle | Dos arranques en 10 min | `agenia logs api` |
 | 🔴/🟠 … · Servidor | Lo ve el **vigía** (§4): contenedor caído o reiniciado, panel sin responder, disco, respaldo | `agenia ps`, `df -h`, `agenia backup` |
+| 🟠 La lectura de historias clínicas del hospital se detuvo · Documentos de la consulta | Con «Leer del hospital» encendido, 30 min sin una vuelta del agente (sube una cada 5). El mensaje trae el último latido y el error que reporta el agente (desde la versión del 19-nov) | Si no late: el agente. Si late con error: el error (casi siempre un permiso de `agenia_sync` en el HIS; `sql/HISTORIA_CLINICA_PERMISOS_LECTURA_ESEHSVP.sql`) |
+| 🔴 Los avisos de los documentos de la consulta no están saliendo | Una vuelta del envío con ≥ 3 fallos y ninguno que saliera (ni aviso ni correo); trae el último motivo | WhatsApp de la clínica y Meta; el detalle, en «Envíos de documentos» |
+| 🔴 La plantilla «Documentos de la consulta» no se puede usar | Sin registrar, sin las 2 variables, o Meta la pausó, deshabilitó o no la encuentra (132000, 132001, 132005, 132007, 132012, 132015, 132016). Se resuelve con la primera plantilla que salga | Administrador de WhatsApp de Meta y Configuración › WhatsApp (`documentos_consulta`, `es_CO`) |
+| 🟠 Muchos avisos de los documentos no se entregan | De los avisos a pacientes de las últimas 24 h (con 1 h para entregarse), con 10 o más, Meta confirmó menos del 70 %; trae los errores de Meta más comunes | Calidad del número en Meta; la lista «Solo a quienes no les llegó» en «Envíos de documentos» |
 
 Cada problema llega **una vez**; si empeora llega «(empeoró)»; si sigue abierto se recuerda cada 60 min (hasta 3 veces); al resolverse llega «✅ RESUELTO» con lo que duró. Lo que se abre a la vez llega junto. A las **07:00** llega el resumen del día anterior: **si un día no llega, el problema es el canal** (bot expulsado, token revocado), no que todo esté bien.
 

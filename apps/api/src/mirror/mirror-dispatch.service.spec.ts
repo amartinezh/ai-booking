@@ -326,6 +326,23 @@ describe('MirrorDispatchService', () => {
       expect(datosDelUpdate().lastHisReachable).toBe(true);
     });
 
+    it('guarda el error del bucle del resumen que reporta el agente; null lo limpia; un agente viejo no lo toca', async () => {
+      await service.heartbeat('org1', 'driver-x', {
+        attentionSummaryError: 'The SELECT permission was denied',
+      });
+      expect(datosDelUpdate().resumenAtencionError).toBe(
+        'The SELECT permission was denied',
+      );
+      prisma.hospitalMirrorConfig.update.mockClear();
+      await service.heartbeat('org1', 'driver-x', {
+        attentionSummaryError: null,
+      });
+      expect(datosDelUpdate().resumenAtencionError).toBeNull();
+      prisma.hospitalMirrorConfig.update.mockClear();
+      await service.heartbeat('org1', 'driver-x', {});
+      expect(datosDelUpdate()).not.toHaveProperty('resumenAtencionError');
+    });
+
     it('un agente viejo que no reporta salud del HIS deja el campo en nulo', async () => {
       // Nulo significa "no lo sé", que es distinto de "no alcanza".
       await service.heartbeat('org1', 'driver-x', {});

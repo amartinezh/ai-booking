@@ -1460,6 +1460,23 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       });
     });
 
+    it('con el resumen de la atención, el latido lleva su último error (o null si salió bien)', async () => {
+      driver.healthCheck.mockResolvedValue({ ok: true });
+      const d = driver as unknown as Record<string, unknown>;
+      d.detectFinishedAttentions = jest.fn();
+      d.fetchAttentionSummaries = jest.fn();
+      engine.anotarResultadoDelResumen('permiso denegado en HIST_REMI');
+      await engine.sendHeartbeat(0);
+      expect(api.heartbeat.mock.calls[0][0].attentionSummaryError).toBe(
+        'permiso denegado en HIST_REMI',
+      );
+      engine.anotarResultadoDelResumen(null);
+      await engine.sendHeartbeat(0);
+      expect(api.heartbeat.mock.calls[1][0].attentionSummaryError).toBeNull();
+      delete d.detectFinishedAttentions;
+      delete d.fetchAttentionSummaries;
+    });
+
     it('un HIS que responde «no» viaja tal cual', async () => {
       driver.healthCheck.mockResolvedValue({
         ok: false,
@@ -1738,8 +1755,67 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
         nuevos: 1,
         actualizados: 0,
         rechazados: 1,
+        releidos: 0,
+        releidosConCambios: 0,
         primerRechazo: 'historia 2441061: servicio fuera de la matriz',
       });
+    });
+
+    it('D10: después de las nuevas, relee las que pide la API y las sube con «releidos»', async () => {
+      api.getAttentionSummaryState.mockResolvedValue({
+        ...encendido,
+        releer: ['2440990', '2440995', 'x; DROP'],
+      });
+      capacidad().detectFinishedAttentions.mockResolvedValue({
+        numeros: ['2441058'],
+        cursor: '2441060',
+      });
+      const nueva = { version: 1, historia: { numero: '2441058' } };
+      const releida = { version: 1, historia: { numero: '2440990' } };
+      capacidad()
+        .fetchAttentionSummaries.mockResolvedValueOnce([nueva])
+        .mockResolvedValueOnce([releida]);
+      api.pushAttentionSummaries
+        .mockResolvedValueOnce({
+          recibidos: 1,
+          nuevos: 1,
+          actualizados: 0,
+          sinCambios: 0,
+          rechazados: [],
+        })
+        .mockResolvedValueOnce({
+          recibidos: 1,
+          nuevos: 0,
+          actualizados: 1,
+          sinCambios: 0,
+          rechazados: [],
+        });
+
+      const r = await engine.syncAttentionSummaries(AHORA);
+      expect(capacidad().fetchAttentionSummaries.mock.calls[1]).toEqual([
+        ['2440990', '2440995'],
+        null,
+      ]);
+      expect(api.pushAttentionSummaries.mock.calls[1][0]).toEqual({
+        resumenes: [releida],
+        nextCursor: '2441060',
+        releidos: ['2440990', '2440995'],
+      });
+      expect(r).toMatchObject({
+        leidos: 1,
+        nuevos: 1,
+        releidos: 1,
+        releidosConCambios: 1,
+      });
+    });
+
+    it('sin nada que releer no hace una segunda subida', async () => {
+      api.getAttentionSummaryState.mockResolvedValue({
+        ...encendido,
+        releer: [],
+      });
+      await engine.syncAttentionSummaries(AHORA);
+      expect(api.pushAttentionSummaries).toHaveBeenCalledTimes(1);
     });
 
     it('si el HIS falla, lanza y no sube nada (el cursor del servidor no se mueve)', async () => {

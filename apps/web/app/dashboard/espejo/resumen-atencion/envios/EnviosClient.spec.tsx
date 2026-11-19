@@ -71,6 +71,7 @@ const atencion = (c: Partial<AtencionConEnvios> = {}): AtencionConEnvios => ({
         envio({ canal: 'EMAIL', destino: '—', estado: 'NO_ENVIADO', motivo: 'Sin correo utilizable (vacío o de relleno)' }),
     ],
     pagina: { veces: 0, ultimaIso: null, descargas: 0 },
+    noLlego: null,
     ...c,
 });
 
@@ -154,7 +155,7 @@ describe('EnviosClient', () => {
         fireEvent.change(screen.getByLabelText('Registro desde'), { target: { value: '2026-08-01' } });
         fireEvent.change(screen.getByLabelText('Registro hasta'), { target: { value: '2026-11-10' } });
         fireEvent.click(screen.getByRole('button', { name: 'Descargar registro (Excel)' }));
-        await waitFor(() => expect(exportarEnviosAction).toHaveBeenCalledWith('2026-08-01', '2026-11-10'));
+        await waitFor(() => expect(exportarEnviosAction).toHaveBeenCalledWith('2026-08-01', '2026-11-10', false));
         expect(await screen.findByText('Máximo 92 días por archivo.')).toBeInTheDocument();
     });
 
@@ -163,7 +164,17 @@ describe('EnviosClient', () => {
         expect(screen.getByTestId('sin-atenciones')).toBeInTheDocument();
         fireEvent.change(screen.getByLabelText('Buscar por historia o cédula'), { target: { value: '900000001' } });
         fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
-        await waitFor(() => expect(listarEnviosAction).toHaveBeenCalledWith('900000001'));
+        await waitFor(() => expect(listarEnviosAction).toHaveBeenCalledWith('900000001', false));
+    });
+
+    it('«Solo a quienes no les llegó» filtra la lista y el registro, y cada atención dice por qué', async () => {
+        render(<EnviosClient iniciales={[atencion({ noLlego: 'WhatsApp no lo entregó: 131026 Message undeliverable' })]} />);
+        expect(screen.getByTestId('no-llego')).toHaveTextContent('No le llegó: WhatsApp no lo entregó: 131026');
+        fireEvent.click(screen.getByLabelText('Lista solo de quienes no les llegó'));
+        await waitFor(() => expect(listarEnviosAction).toHaveBeenCalledWith('', true));
+        fireEvent.click(screen.getByLabelText('Registro solo de quienes no les llegó'));
+        fireEvent.click(screen.getByRole('button', { name: 'Descargar registro (Excel)' }));
+        await waitFor(() => expect(exportarEnviosAction).toHaveBeenCalledWith(expect.any(String), expect.any(String), true));
     });
 
     it('«Reenviar» no sale sin marcar la identidad verificada; con ella, reenvía y lo dice', async () => {

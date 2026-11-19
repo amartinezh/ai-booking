@@ -13,6 +13,7 @@ import {
   validarResumenAtencion,
   validarRevision,
   type ResumenAtencionHis,
+  contenidoClinicoDelResumen,
 } from './resumen-atencion';
 
 // La regla del usuario (2026-11-01): todo nace apagado y un dato roto nunca
@@ -349,5 +350,22 @@ describe('validarRevision', () => {
     expect(validarRevision({ resultado: 'TAL_VEZ' }).ok).toBe(false);
     expect(validarRevision(null).ok).toBe(false);
     expect(validarRevision({ resultado: 'CORRECTO', nota: 'x'.repeat(501) }).ok).toBe(false);
+  });
+});
+
+describe('contenidoClinicoDelResumen (D10, relectura)', () => {
+  it('quita lo que cambia sin el médico (el contacto y la entrega en farmacia) y deja lo clínico', () => {
+    const base = {
+      historia: { numero: '1' },
+      paciente: { documento: '1', nombre: 'A', celular: '300', correo: 'a@b.co', celularAcompanante: '301', correoAcompanante: null },
+      ordenes: [{ numero: '77', medicamentos: [{ codigo: 'X', indicacion: '1 TAB', entregado: true }] }],
+      diagnosticos: [{ cie10: 'I10X' }],
+    } as never;
+    const c = contenidoClinicoDelResumen(base) as any;
+    expect(c.paciente).toMatchObject({ documento: '1', nombre: 'A', celular: null, correo: null, celularAcompanante: null });
+    expect(c.ordenes[0].medicamentos[0]).toEqual({ codigo: 'X', indicacion: '1 TAB', entregado: false });
+    expect(c.diagnosticos).toEqual([{ cie10: 'I10X' }]);
+    // No toca el original.
+    expect((base as any).paciente.celular).toBe('300');
   });
 });

@@ -37,12 +37,15 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
     const [hastaDia, setHastaDia] = useState(hoy);
     const [descargando, startDescargar] = useTransition();
     const [descarga, setDescarga] = useState<{ ok: boolean; texto: string } | null>(null);
+    // Plan §8.11: la lista para que el hospital actualice los celulares.
+    const [soloNoLlegaron, setSoloNoLlegaron] = useState(false);
+    const [excelNoLlegaron, setExcelNoLlegaron] = useState(false);
 
     const descargar = (e: React.FormEvent) => {
         e.preventDefault();
         setDescarga(null);
         startDescargar(async () => {
-            const r = await exportarEnviosAction(desdeDia, hastaDia);
+            const r = await exportarEnviosAction(desdeDia, hastaDia, excelNoLlegaron);
             if (!r.success) {
                 setDescarga({ ok: false, texto: r.error });
                 return;
@@ -51,12 +54,12 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                 const XLSX = await import('xlsx');
                 const libro = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(libro, XLSX.utils.aoa_to_sheet(filasDelRegistro(r.atenciones)), 'Envíos');
-                XLSX.writeFile(libro, nombreDelRegistro(desdeDia, hastaDia));
+                XLSX.writeFile(libro, nombreDelRegistro(desdeDia, hastaDia, excelNoLlegaron));
                 setDescarga({
                     ok: true,
                     texto: r.truncado
-                        ? `Se descargaron las primeras ${r.atenciones.length} atenciones. Acorte las fechas para bajar el resto.`
-                        : `Descargadas ${r.atenciones.length} atenciones.`,
+                        ? `Se revisaron las primeras 5000 atenciones y se descargaron ${r.atenciones.length}. Acorte las fechas para bajar el resto.`
+                        : `Descargadas ${r.atenciones.length} atenciones${excelNoLlegaron ? ' a las que no les llegó el aviso' : ''}.`,
                 });
             } catch {
                 setDescarga({ ok: false, texto: 'No se pudo armar el archivo. Intente de nuevo.' });
@@ -64,11 +67,11 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
         });
     };
 
-    const buscar = (e?: React.FormEvent) => {
+    const buscar = (e?: React.FormEvent, soloNo: boolean = soloNoLlegaron) => {
         e?.preventDefault();
         setError(null);
         startBuscar(async () => {
-            const r = await listarEnviosAction(consulta);
+            const r = await listarEnviosAction(consulta, soloNo);
             if (r.success) setAtenciones(r.atenciones);
             else setError(r.error);
         });
@@ -86,7 +89,7 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
             if (r.success) {
                 setAbierta(null);
                 setVerificada(false);
-                const lista = await listarEnviosAction(consulta);
+                const lista = await listarEnviosAction(consulta, soloNoLlegaron);
                 if (lista.success) setAtenciones(lista.atenciones);
             }
         });
@@ -127,6 +130,16 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                         className="mt-1 block rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
                     />
                 </label>
+                <label className="flex items-center gap-2 self-center text-sm text-zinc-700 dark:text-zinc-300">
+                    <input
+                        type="checkbox"
+                        checked={excelNoLlegaron}
+                        onChange={(e) => setExcelNoLlegaron(e.target.checked)}
+                        className="h-4 w-4 rounded border-zinc-300"
+                        aria-label="Registro solo de quienes no les llegó"
+                    />
+                    Solo a quienes no les llegó
+                </label>
                 <button
                     type="submit"
                     disabled={descargando}
@@ -135,8 +148,10 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                     {descargando ? 'Preparando…' : 'Descargar registro (Excel)'}
                 </button>
                 <span className="basis-full text-xs text-zinc-500">
-                    Una fila por envío, con cada hora (enviado, entregado, leído, pidió, verificó, documentos) y por qué no se
-                    envió a quien no le llegó. Hasta 3 meses por archivo. Queda anotado quién lo descargó.
+                    Una fila por envío, con cada hora (enviado, entregado, leído, pidió, verificó, documentos), por qué no se
+                    envió y por qué no le llegó. «Solo a quienes no les llegó» deja la lista para actualizar los celulares en el
+                    sistema del hospital: sin celular utilizable, aviso que WhatsApp no entregó o sin confirmar en 24 horas.
+                    Hasta 3 meses por archivo. Queda anotado quién lo descargó.
                 </span>
                 {descarga && (
                     <span className={`basis-full text-sm ${descarga.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
@@ -161,6 +176,19 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                 >
                     {buscando ? 'Buscando…' : 'Buscar'}
                 </button>
+                <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                    <input
+                        type="checkbox"
+                        checked={soloNoLlegaron}
+                        onChange={(e) => {
+                            setSoloNoLlegaron(e.target.checked);
+                            buscar(undefined, e.target.checked);
+                        }}
+                        className="h-4 w-4 rounded border-zinc-300"
+                        aria-label="Lista solo de quienes no les llegó"
+                    />
+                    Solo a quienes no les llegó
+                </label>
                 <span className="text-xs text-zinc-500">Sin buscar: las atenciones de los últimos 30 días.</span>
             </form>
             {error && <p className="text-sm text-red-600">{error}</p>}
@@ -215,6 +243,11 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                                 </ul>
                             )}
                             {lineaDeLaPagina(a) && <p className="text-xs text-zinc-600 dark:text-zinc-400">{lineaDeLaPagina(a)}</p>}
+                            {a.noLlego && (
+                                <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="no-llego">
+                                    ⚠ No le llegó: {a.noLlego}
+                                </p>
+                            )}
 
                             {resultado?.id === a.id && (
                                 <p className={`text-sm ${resultado.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>

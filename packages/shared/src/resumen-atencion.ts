@@ -79,6 +79,17 @@ export const LIMITES_RESUMEN_ATENCION = {
   /** Fase 1: el hospital revisa 20 resúmenes contra el HIS antes de pensar en enviar. */
   revisionesParaCerrar: 20,
   maxCaracteresNotaRevision: 500,
+  /**
+   * D10, relectura (2026-11-19): cada historia se vuelve a leer UNA vez, un día
+   * después de la primera lectura, para traer lo que el médico agregó o corrigió
+   * después de las 2 horas (una orden tardía, un medicamento anulado). El
+   * enlace y «mis documentos» muestran entonces la versión nueva.
+   */
+  relecturaHoras: 24,
+  /** No se relee una atención de hace más de estos días. */
+  relecturaHastaDias: 7,
+  /** Historias que se releen por vuelta del agente (además de las nuevas). */
+  maxRelecturaPorVuelta: 10,
 } as const;
 
 /**
@@ -534,6 +545,24 @@ export interface ResumenAtencionHis {
   campos: { seccion: string; grupo: string | null; campo: string; valor: string }[];
 }
 
+/**
+ * Lo que cuenta para decir que el médico cambió la historia (D10): el resumen
+ * sin lo que cambia sin que el médico la toque. Los datos de contacto los
+ * actualiza admisión; que farmacia entregó un medicamento no sale en ningún
+ * documento. Sin esto, al releer, un celular nuevo o una entrega en farmacia
+ * harían decir a la página «El médico actualizó esta historia».
+ */
+export function contenidoClinicoDelResumen(r: ResumenAtencionHis): unknown {
+  return {
+    ...r,
+    paciente: { ...r.paciente, celular: null, correo: null, celularAcompanante: null, correoAcompanante: null },
+    ordenes: r.ordenes.map((o) => ({
+      ...o,
+      medicamentos: o.medicamentos.map((m) => ({ ...m, entregado: false })),
+    })),
+  };
+}
+
 // ─── Mensajes entre el agente y la API ──────────────────────────────────────
 
 /** GET /mirror/attention-summaries/state — qué debe hacer el agente en esta vuelta. */
@@ -547,6 +576,11 @@ export interface EstadoResumenesAgente {
   servicios: string[];
   /** `null` = los campos de plantilla por defecto del driver. */
   camposPlantilla: CampoPlantillaResumen[] | null;
+  /**
+   * Historias ya leídas que toca volver a leer (D10): el agente las lee y las
+   * sube con `releidos`. Un agente anterior no lo mira y no pasa nada.
+   */
+  releer?: string[];
 }
 
 /** Lo que tardaron las consultas del agente al HIS en una vuelta (Fase 1: «la consulta pesa poco»). */
@@ -566,6 +600,11 @@ export interface ResumenesAtencionInput {
   nextCursor: string;
   /** Un agente anterior no la manda. */
   medicion?: MedicionLecturaResumen;
+  /**
+   * Las historias de `releer` que el agente intentó leer otra vez: quedan
+   * releídas aunque el HIS ya no las devuelva (así no se piden de nuevo).
+   */
+  releidos?: string[];
 }
 
 export interface ResumenesAtencionResult {

@@ -51,6 +51,8 @@ import {
   ventanaResumenDiario,
   type AlertaVista,
   type DatosMensajeAlerta,
+  lecturaDetenida,
+  entregaBajaDeAvisos,
 } from './alertas-tecnicas';
 import {
   formatAppointmentCompact,
@@ -1164,5 +1166,37 @@ describe('intermitencia, silencio y resumen diario', () => {
     expect(tocaResumenDiario('2026-10-18T12:00:30Z', despues)).toBe(true);
     expect(tocaResumenDiario('2026-10-19T12:00:30Z', despues)).toBe(false);
     expect(tocaResumenDiario('ilegible', despues)).toBe(true);
+  });
+});
+
+describe('documentos de la consulta (plan §8.11)', () => {
+  const ahora = new Date('2026-11-19T15:00:00.000Z');
+
+  it('la lectura: 30 minutos sin una vuelta del agente, o sin ninguna desde que se encendió', () => {
+    expect(lecturaDetenida({ leer: true, ultimaVueltaIso: '2026-11-19T14:40:00.000Z', leerVistoDesdeIso: null, ahora })).toBeNull();
+    expect(lecturaDetenida({ leer: true, ultimaVueltaIso: '2026-11-19T14:30:00.000Z', leerVistoDesdeIso: null, ahora })).toEqual({
+      minutos: 30,
+      nuncaLeyo: false,
+    });
+    expect(lecturaDetenida({ leer: true, ultimaVueltaIso: null, leerVistoDesdeIso: '2026-11-19T14:00:00.000Z', ahora })).toEqual({
+      minutos: 60,
+      nuncaLeyo: true,
+    });
+    // Apagada, o sin saber desde cuándo, no es una lectura detenida.
+    expect(lecturaDetenida({ leer: false, ultimaVueltaIso: '2026-11-18T00:00:00.000Z', leerVistoDesdeIso: null, ahora })).toBeNull();
+    expect(lecturaDetenida({ leer: true, ultimaVueltaIso: null, leerVistoDesdeIso: null, ahora })).toBeNull();
+  });
+
+  it('la entrega: menos del 70 % con 10 avisos o más', () => {
+    expect(entregaBajaDeAvisos({ avisos: 9, entregados: 0 })).toBeNull();
+    expect(entregaBajaDeAvisos({ avisos: 10, entregados: 7 })).toBeNull();
+    expect(entregaBajaDeAvisos({ avisos: 10, entregados: 6 })).toEqual({ porcentaje: 60 });
+  });
+
+  it('cuatro tipos propios, con su categoría para apagarlos desde el panel', () => {
+    for (const t of ['RESUMEN_LECTURA_DETENIDA', 'RESUMEN_AVISOS_FALLIDOS', 'RESUMEN_PLANTILLA_FALLA', 'RESUMEN_NO_ENTREGADOS'] as const) {
+      expect(CATALOGO_ALERTAS[t].categoria).toBe('RESUMEN_ATENCION');
+      expect(CATALOGO_ALERTAS[t].evento).toBe(false);
+    }
   });
 });

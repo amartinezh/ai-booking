@@ -31,6 +31,7 @@ const llavePendiente = (organizationId: string, remitente: string) =>
 
 const SELECT_ENTREGA = {
   id: true,
+  purpose: true,
   failedAttempts: true,
   lockedUntil: true,
   destinationHash: true,
@@ -43,6 +44,7 @@ const SELECT_ENTREGA = {
       patientProfileId: true,
       content: true,
       contentExpiresAt: true,
+      status: true,
       organization: { select: { timezone: true } },
     },
   },
@@ -50,6 +52,7 @@ const SELECT_ENTREGA = {
 
 type Entrega = {
   id: string;
+  purpose: string;
   failedAttempts: number;
   lockedUntil: Date | null;
   destinationHash: string;
@@ -61,9 +64,18 @@ type Entrega = {
     patientProfileId: string | null;
     content: string | null;
     contentExpiresAt: Date;
+    status: string;
     organization: { timezone: string | null };
   };
 };
+
+/**
+ * D7 sobre la versión nueva (relectura, D10): una atención que quedó en «No se
+ * envía» después de enviada ya no se entrega al paciente. Las pruebas del
+ * equipo sí, para poder revisarla.
+ */
+const yaNoSeEnvia = (e: Entrega) =>
+  e.purpose !== 'PRUEBA' && e.attentionSummary.status === 'EXCLUIDO';
 
 /**
  * 💬 El resumen de la atención dentro del chat de WhatsApp (plan §3.3, D23).
@@ -220,6 +232,10 @@ export class ResumenChatService {
         data: { requestedAt: e.requestedAt },
       });
     }
+    if (yaNoSeEnvia(e)) {
+      await this.texto(organizationId, remitente, TEXTOS_RESUMEN.yaNoSeEnvia);
+      return;
+    }
     const resumen = this.resumenDe(e);
     if (!resumen) {
       await this.texto(organizationId, remitente, TEXTOS_RESUMEN.noDisponible);
@@ -309,6 +325,11 @@ export class ResumenChatService {
       where: { id: entregaId, attentionSummary: { organizationId } },
       select: SELECT_ENTREGA,
     });
+    if (e && yaNoSeEnvia(e)) {
+      await this.redis.del(llavePendiente(organizationId, remitente));
+      await this.texto(organizationId, remitente, TEXTOS_RESUMEN.yaNoSeEnvia);
+      return true;
+    }
     const resumen = e ? this.resumenDe(e) : null;
     if (!e || !resumen) {
       await this.redis.del(llavePendiente(organizationId, remitente));

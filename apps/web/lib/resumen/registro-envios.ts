@@ -117,7 +117,52 @@ const COLUMNAS = [
     'Archivos vistos',
     'Archivos que no salieron',
     'Veces que abrió la página',
+    'Por qué no le llegó',
 ] as const;
+
+/** Un aviso de WhatsApp sin confirmación de entrega después de esto ya no se espera. */
+export const HORAS_SIN_CONFIRMAR = 24;
+
+/**
+ * Por qué al paciente NO le llegó el aviso, para el plan de actualización de
+ * celulares del hospital (docs/PLAN_RESUMEN_ATENCION.md §8.11); `null` si le
+ * llegó, si no se le envía a propósito (lo sensible, la baja) o si todavía se
+ * le está intentando. Cuenta lo que el paciente pudo recibir: el automático y
+ * el reenvío, por WhatsApp o Telegram (las pruebas del equipo no).
+ *  - Sin un celular utilizable en el HIS.
+ *  - El aviso no salió o Meta no lo entregó (número sin WhatsApp, apagado…).
+ *  - Salió hace más de 24 horas y WhatsApp nunca confirmó la entrega.
+ * Basta que UNO le llegue (lo entregó Meta, lo aceptó Telegram, pidió o
+ * recibió los documentos) para que no cuente.
+ */
+export function porQueNoLlego(a: AtencionConEnvios, ahora: Date = new Date()): string | null {
+    if (a.estado === 'EXCLUIDO') return null;
+    if (a.estado === 'SIN_CONTACTO') return `Sin un celular utilizable${a.motivo ? `: ${a.motivo}` : ''}`;
+    const delPaciente = a.envios.filter((e) => e.proposito !== 'PRUEBA' && e.canal !== 'EMAIL');
+    if (delPaciente.length === 0) return null;
+    const llego = delPaciente.some((e) => {
+        const t = e.traza;
+        return (
+            e.estado === 'DOCUMENTOS_ENVIADOS' ||
+            Boolean(t.documentosIso || t.pidioIso || t.aviso.entregadoIso || t.aviso.leidoIso) ||
+            t.aviso.estado === 'DELIVERED' ||
+            t.aviso.estado === 'READ' ||
+            (e.canal === 'TELEGRAM' && Boolean(t.aviso.enviadoIso) && t.aviso.estado !== 'FAILED')
+        );
+    });
+    if (llego) return null;
+    const limite = ahora.getTime() - HORAS_SIN_CONFIRMAR * 3_600_000;
+    // Uno que salió hace poco todavía puede llegar.
+    if (delPaciente.some((e) => e.traza.aviso.enviadoIso && e.traza.aviso.estado !== 'FAILED' && Date.parse(e.traza.aviso.enviadoIso) > limite)) {
+        return null;
+    }
+    const fallido = delPaciente.find((e) => e.traza.aviso.estado === 'FAILED' || !e.traza.aviso.enviadoIso);
+    if (fallido) {
+        const porque = fallido.traza.aviso.error ?? (fallido.motivo && fallido.motivo !== 'En curso' ? fallido.motivo : null);
+        return `${CANAL_DEL_ENVIO[fallido.canal] ?? fallido.canal} no lo entregó${porque ? `: ${porque}` : ''}`;
+    }
+    return `WhatsApp no confirmó la entrega en ${HORAS_SIN_CONFIRMAR} horas (el celular puede no tener WhatsApp, estar apagado o ser de otra persona)`;
+}
 
 const COMO_SALIO: Record<string, string> = {
     PLANTILLA: 'Plantilla de WhatsApp',
@@ -133,9 +178,10 @@ const enCelda = (iso: string | null) => (iso ? fechaHora(iso) : '');
  * Las filas del registro: una por envío; la atención sin envíos (excluida, sin
  * contacto, sin enviar todavía) va en una fila con las columnas del envío vacías.
  */
-export function filasDelRegistro(atenciones: AtencionConEnvios[]): (string | number)[][] {
+export function filasDelRegistro(atenciones: AtencionConEnvios[], ahora: Date = new Date()): (string | number)[][] {
     const filas: (string | number)[][] = [[...COLUMNAS]];
     for (const a of atenciones) {
+        const noLlego = porQueNoLlego(a, ahora) ?? '';
         const base = [
             a.historia,
             fechaHora(a.atendidaIso),
@@ -146,7 +192,7 @@ export function filasDelRegistro(atenciones: AtencionConEnvios[]): (string | num
             a.motivo ?? '',
         ];
         if (!a.envios.length) {
-            filas.push([...base, ...Array(COLUMNAS.length - base.length - 1).fill(''), a.pagina.veces]);
+            filas.push([...base, ...Array(COLUMNAS.length - base.length - 2).fill(''), a.pagina.veces, noLlego]);
             continue;
         }
         for (const e of a.envios) {
@@ -172,12 +218,13 @@ export function filasDelRegistro(atenciones: AtencionConEnvios[]): (string | num
                 e.canal === 'WHATSAPP' ? t.archivos.leidos : '',
                 t.archivos.fallidos,
                 a.pagina.veces,
+                noLlego,
             ]);
         }
     }
     return filas;
 }
 
-export function nombreDelRegistro(desdeDia: string, hastaDia: string): string {
-    return `Envios_documentos_${desdeDia}_a_${hastaDia}.xlsx`;
+export function nombreDelRegistro(desdeDia: string, hastaDia: string, soloNoLlegaron = false): string {
+    return `Envios_documentos_${soloNoLlegaron ? 'no_llegaron_' : ''}${desdeDia}_a_${hastaDia}.xlsx`;
 }

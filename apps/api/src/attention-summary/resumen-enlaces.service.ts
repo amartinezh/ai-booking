@@ -165,6 +165,7 @@ export class ResumenEnlacesService {
       where: { tokenHash: hashDelToken(token) },
       select: {
         id: true,
+        purpose: true,
         expiresAt: true,
         revokedAt: true,
         failedAttempts: true,
@@ -175,6 +176,7 @@ export class ResumenEnlacesService {
             organizationId: true,
             version: true,
             content: true,
+            status: true,
             organization: { select: { name: true } },
           },
         },
@@ -185,7 +187,10 @@ export class ResumenEnlacesService {
       !link ||
       link.revokedAt ||
       link.expiresAt.getTime() <= ahora ||
-      !link.attentionSummary.content
+      !link.attentionSummary.content ||
+      // D7 sobre la versión nueva (relectura): lo que quedó en «No se envía»
+      // ya no se ve con el enlace del paciente; con el de prueba, sí.
+      (link.purpose !== 'PRUEBA' && link.attentionSummary.status === 'EXCLUIDO')
     )
       return null;
     return link;

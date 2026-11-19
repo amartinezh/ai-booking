@@ -9,8 +9,11 @@ import { Cron } from '@nestjs/schedule';
 import { createHash } from 'crypto';
 import { Prisma } from '@agenia/database';
 import {
+  CATALOGO_ALERTAS,
   DEFAULT_TIMEZONE,
   LIMITES_ENVIO_RESUMEN,
+  UMBRALES_ALERTAS,
+  claveAlerta,
   candidatosDeDestino,
   celularParaWhatsapp,
   correoDeDestino,
@@ -47,10 +50,13 @@ import { ResumenCorreoService } from './resumen-correo.service';
 import { ResumenDocumentosService } from './resumen-documentos.service';
 import { ResumenEnlacesService } from './resumen-enlaces.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
+import { fallaDePlantilla } from './resumen-alertas';
 import {
   BOTON_RECIBIR,
   BOTON_RECIBIR_TELEGRAM,
   CORREO_RESUMEN,
+  PIE_BAJA_RESUMEN,
   TEXTOS_RESUMEN,
   primerNombre,
 } from './resumen-textos';
@@ -116,6 +122,8 @@ export class ResumenEnvioService {
     @Optional() private readonly correoSmtp?: ResumenCorreoService,
     @Optional() private readonly documentos?: ResumenDocumentosService,
     @Optional() private readonly enlaces?: ResumenEnlacesService,
+    // 🚨 Plan §8.11: la vuelta sin ningún aviso que salga y la plantilla que falla.
+    @Optional() private readonly alertas?: TechAlertService,
   ) {}
 
   @Cron('20 */2 * * * *')
@@ -151,7 +159,9 @@ export class ResumenEnvioService {
       select: {
         organizationId: true,
         resumenAtencion: true,
-        organization: { select: { timezone: true, isActive: true } },
+        organization: {
+          select: { timezone: true, isActive: true, name: true },
+        },
       },
     });
     for (const c of clinicas) {
@@ -167,6 +177,7 @@ export class ResumenEnvioService {
         ahora,
         leerCorreosDeRelleno(c.resumenAtencion),
       );
+      await this.vigilarVuelta(c.organizationId, c.organization.name, r, ahora);
       total.avisados += r.avisados;
       total.correos += r.correos;
       total.excluidos += r.excluidos;
@@ -687,9 +698,15 @@ export class ResumenEnvioService {
       const r = await this.whatsapp.botones(
         organizationId,
         destino.destino,
-        TEXTOS_RESUMEN.avisoEnVentana(nombre, fecha),
+        TEXTOS_RESUMEN.avisoEnVentana(
+          nombre,
+          fecha,
+          await this.nombreDeLaClinica(organizationId),
+          BOTON_RECIBIR,
+        ),
         [{ id: payload, titulo: BOTON_RECIBIR }],
         entrega.id,
+        PIE_BAJA_RESUMEN,
       );
       ok = r.ok;
       motivo = r.error;
@@ -708,6 +725,12 @@ export class ResumenEnvioService {
           ? 'La plantilla «Documentos de la consulta» no está configurada'
           : r.error;
       templateName = r.templateName ?? null;
+      await this.vigilarPlantilla(
+        organizationId,
+        r.success,
+        r.error,
+        templateName,
+      );
     }
 
     await this.prisma.attentionSummaryDelivery.update({
@@ -733,6 +756,101 @@ export class ResumenEnvioService {
       );
     }
     return ok ? { ok } : { ok, motivo };
+  }
+
+  /** El nombre de la clínica para el aviso (el mismo de la plantilla aprobada). */
+  private async nombreDeLaClinica(organizationId: string): Promise<string> {
+    try {
+      const o = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { name: true },
+      });
+      return o?.name ?? '';
+    } catch {
+      // Sin el nombre, el aviso dice «el hospital»: no se deja de avisar por esto.
+      return '';
+    }
+  }
+
+  /**
+   * 🚨 Una vuelta en la que fallaron al menos `avisosFallidosMin` y no salió
+   * ninguno (ni aviso ni correo): algo general falla (WhatsApp de la clínica,
+   * Meta, la plantilla). Lo que falló se reintenta solo. Se resuelve con el
+   * primero que salga. Nunca lanza.
+   */
+  private async vigilarVuelta(
+    organizationId: string,
+    nombreClinica: string,
+    r: ResultadoProgramador,
+    desde: Date,
+  ): Promise<void> {
+    if (!this.alertas) return;
+    const clave = claveAlerta.resumenAvisos(organizationId);
+    try {
+      if (r.avisados > 0 || r.correos > 0) {
+        await this.alertas.resolver(clave);
+        return;
+      }
+      if (r.fallos < UMBRALES_ALERTAS.resumenAtencion.avisosFallidosMin) return;
+      const ultimo = await this.prisma.attentionSummaryDelivery.findFirst({
+        where: {
+          attentionSummary: { organizationId },
+          status: 'FALLO',
+          createdAt: { gte: new Date(desde.getTime() - 60_000) },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { statusReason: true },
+      });
+      await this.alertas.avisar({
+        kind: 'RESUMEN_AVISOS_FALLIDOS',
+        dedupeKey: clave,
+        title: CATALOGO_ALERTAS.RESUMEN_AVISOS_FALLIDOS.titulo,
+        detail:
+          `En la última vuelta del envío fallaron ${r.fallos} y no salió ninguno.` +
+          (ultimo?.statusReason
+            ? ` Último motivo: ${ultimo.statusReason.slice(0, 300)}.`
+            : '') +
+          ' Lo que falló se reintenta solo (hasta 3 veces, cada 30 min); el detalle de cada uno está en «Envíos de documentos».',
+        organizationId,
+        organizationName: nombreClinica,
+        fuente: 'envío de los documentos de la consulta',
+      });
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo revisar la vuelta del envío (org ${organizationId}): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * 🚨 La plantilla «Documentos de la consulta»: si Meta la pausó, la
+   * deshabilitó o no la encuentra, o no está registrada, no sale ningún aviso
+   * a quien no escribió en las últimas 24 h. Se resuelve con la primera
+   * plantilla que salga. Nunca lanza.
+   */
+  private async vigilarPlantilla(
+    organizationId: string,
+    salio: boolean,
+    error: string | undefined,
+    templateName: string | null,
+  ): Promise<void> {
+    if (!this.alertas) return;
+    const clave = claveAlerta.resumenPlantilla(organizationId);
+    if (salio) {
+      await this.alertas.resolver(clave);
+      return;
+    }
+    const falla = fallaDePlantilla(error);
+    if (!falla) return;
+    await this.alertas.avisar({
+      kind: 'RESUMEN_PLANTILLA_FALLA',
+      dedupeKey: clave,
+      title: CATALOGO_ALERTAS.RESUMEN_PLANTILLA_FALLA.titulo,
+      detail: `La plantilla «Documentos de la consulta»${templateName ? ` (${templateName})` : ''}: ${falla}. Sin ella no sale ningún aviso a quien no escribió en las últimas 24 horas. Revisarla en el administrador de WhatsApp de Meta y en Configuración › WhatsApp.`,
+      organizationId,
+      organizationName: await this.nombreDeLaClinica(organizationId),
+      fuente: 'envío de los documentos de la consulta',
+    });
   }
 
   /**
@@ -799,10 +917,12 @@ export class ResumenEnvioService {
         createdByUserId,
       },
     });
-    const texto = TEXTOS_RESUMEN.avisoEnVentana(
+    const texto = `${TEXTOS_RESUMEN.avisoEnVentana(
       primerNombre(resumen.paciente.nombre),
       formatDateOnly(resumen.historia.guardadaIso, { timeZone }),
-    );
+      await this.nombreDeLaClinica(organizationId),
+      BOTON_RECIBIR_TELEGRAM,
+    )}\n\n${PIE_BAJA_RESUMEN}.`;
     const r = await this.telegram.sendTextConTeclado(
       organizationId,
       destino,

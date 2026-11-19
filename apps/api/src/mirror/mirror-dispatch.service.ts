@@ -1184,6 +1184,16 @@ export class MirrorDispatchService {
         // `null` = "no lo dice" (un agente anterior a la consulta en vivo): la
         // pantalla lo trata como "no puede", no como "sí".
         lastLookupCapable: input.lookupCapable ?? null,
+        // El error del bucle del resumen de la atención (2026-11-19). Un agente
+        // anterior no lo manda (`undefined`): entonces no se toca.
+        ...(input.attentionSummaryError !== undefined
+          ? {
+              resumenAtencionError:
+                typeof input.attentionSummaryError === 'string'
+                  ? input.attentionSummaryError.slice(0, 500) || null
+                  : null,
+            }
+          : {}),
       },
     });
     await this.anotarVersionDelAgente(organizationId, input.agentVersion);

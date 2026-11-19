@@ -451,6 +451,8 @@ export {
   baseDelPanel,
   categoriaDeServicio,
   claveAlerta,
+  lecturaDetenida,
+  entregaBajaDeAvisos,
   codigoVinculacion,
   codigoVinculacionVigente,
   cupoDeEnvio,
@@ -808,6 +810,7 @@ export {
   resumirMediciones,
   serviciosALeer,
   validarMedicion,
+  contenidoClinicoDelResumen,
   validarResumenAtencion,
   validarRevision,
 } from './src/resumen-atencion';
@@ -838,6 +841,8 @@ export type {
 // Fase 2): qué documentos salen, el contenido en palabras y el encabezado.
 export {
   LIMITES_DOCUMENTOS_RESUMEN,
+  CODIGOS_PRIORIDAD_REMISION,
+  textoPrioridadRemision,
   MARCA_DE_AGUA_POR_DEFECTO,
   PIE_RESUMEN_POR_DEFECTO,
   SIN_INDICACION,
@@ -854,6 +859,7 @@ export {
 } from './src/resumen-documentos';
 export type {
   CambioDocumentosResumen,
+  CodigoPrioridadRemision,
   ConfigDocumentosResumen,
   DocumentoDelResumen,
   SeccionDelResumen,

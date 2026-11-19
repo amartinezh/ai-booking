@@ -22,6 +22,7 @@ import { prisma } from '@/lib/prisma';
 import { personalDeEnvios } from '@/lib/resumen/acceso';
 import { INTERNAL_API_URL } from '@/lib/resumen/api';
 import { trazaDeEnvios, type TrazaDelEnvio } from '@/lib/resumen/trazabilidad';
+import { porQueNoLlego } from '@/lib/resumen/registro-envios';
 import { registrarActividad } from '@/lib/actividad/registrar';
 import { DESCARGAS } from '@/lib/actividad/pantallas';
 
@@ -32,6 +33,8 @@ const DIA = /^\d{4}-\d{2}-\d{2}$/;
 /** El registro descargable: hasta 3 meses y 5.000 atenciones por archivo. */
 const EXPORTAR_MAX_DIAS = 92;
 const EXPORTAR_MAX_ATENCIONES = 5000;
+/** «Solo a quienes no les llegó» en la pantalla: se revisan hasta estas atenciones de los 30 días. */
+const NO_LLEGARON_MAX_REVISADAS = 3000;
 
 export interface EnvioDeLaAtencion {
     canal: string;
@@ -59,6 +62,8 @@ export interface AtencionConEnvios {
     envios: EnvioDeLaAtencion[];
     /** La página del paciente: cuántas veces la abrió (con su fecha de nacimiento) y cuántos documentos descargó. */
     pagina: { veces: number; ultimaIso: string | null; descargas: number };
+    /** Por qué no le llegó el aviso (`porQueNoLlego`); null si le llegó, no se le envía o se le está intentando. */
+    noLlego: string | null;
 }
 
 const SELECT_ENVIO = {
@@ -125,9 +130,10 @@ async function conTrazas(organizationId: string, filas: FilaDeAtencion[]): Promi
               })
             : [],
     ]);
+    const ahora = new Date();
     return filas.map((f) => {
         const v = visitas.find((x) => x.attentionSummaryId === f.id);
-        return {
+        const atencion: Omit<AtencionConEnvios, 'noLlego'> = {
             id: f.id,
             historia: f.hisKey,
             atendidaIso: f.attendedAt.toISOString(),
@@ -155,15 +161,19 @@ async function conTrazas(organizationId: string, filas: FilaDeAtencion[]): Promi
                 descargas: descargas.find((x) => x.attentionSummaryId === f.id)?._count._all ?? 0,
             },
         };
+        return { ...atencion, noLlego: porQueNoLlego({ ...atencion, noLlego: null }, ahora) };
     });
 }
 
 /**
  * Las atenciones de los últimos 30 días con sus envíos, de la más reciente. Con
  * `consulta`, por número de historia o por cédula (de los pacientes con ficha).
+ * Con `soloNoLlegaron`, solo aquellas a las que no les llegó el aviso
+ * (`porQueNoLlego`): la lista para que el hospital actualice los celulares.
  */
 export async function listarEnviosAction(
     consulta?: string,
+    soloNoLlegaron = false,
 ): Promise<{ success: true; atenciones: AtencionConEnvios[] } | { success: false; error: string }> {
     const auth = await personalDeEnvios();
     if (!auth) return { success: false, error: 'Acceso denegado.' };
@@ -185,7 +195,9 @@ export async function listarEnviosAction(
     const filas = await prisma.attentionSummary.findMany({
         where: { organizationId: auth.organizationId, ...filtro },
         orderBy: { attendedAt: 'desc' },
-        take: LIMITE,
+        // Lo que no llegó se sabe con el recorrido de cada envío: se revisan
+        // todas las del período y se muestran las primeras que no llegaron.
+        take: soloNoLlegaron === true ? NO_LLEGARON_MAX_REVISADAS : LIMITE,
         select: {
             id: true,
             hisKey: true,
@@ -198,7 +210,11 @@ export async function listarEnviosAction(
             deliveries: { orderBy: { createdAt: 'desc' }, take: 6, select: SELECT_ENVIO },
         },
     });
-    return { success: true, atenciones: await conTrazas(auth.organizationId, filas) };
+    const atenciones = await conTrazas(auth.organizationId, filas);
+    return {
+        success: true,
+        atenciones: soloNoLlegaron === true ? atenciones.filter((a) => a.noLlego).slice(0, LIMITE) : atenciones,
+    };
 }
 
 /**
@@ -210,6 +226,7 @@ export async function listarEnviosAction(
 export async function exportarEnviosAction(
     desdeDia: string,
     hastaDia: string,
+    soloNoLlegaron = false,
 ): Promise<{ success: true; atenciones: AtencionConEnvios[]; truncado: boolean } | { success: false; error: string }> {
     const auth = await personalDeEnvios();
     if (!auth) return { success: false, error: 'Acceso denegado.' };
@@ -246,7 +263,8 @@ export async function exportarEnviosAction(
         },
     });
     const truncado = filas.length > EXPORTAR_MAX_ATENCIONES;
-    const atenciones = await conTrazas(auth.organizationId, filas.slice(0, EXPORTAR_MAX_ATENCIONES));
+    const todas = await conTrazas(auth.organizationId, filas.slice(0, EXPORTAR_MAX_ATENCIONES));
+    const atenciones = soloNoLlegaron === true ? todas.filter((a) => a.noLlego) : todas;
     await registrarActividad({
         action: 'DATA_EXPORTED',
         level: 'WARNING',
@@ -254,7 +272,7 @@ export async function exportarEnviosAction(
         actor: { userId: auth.userId, role: auth.role },
         organizationId: auth.organizationId,
         metadata: {
-            detalle: `${DESCARGAS.ENVIOS_RESUMEN} del ${desdeDia} al ${hastaDia} · ${atenciones.length} atención(es)`,
+            detalle: `${DESCARGAS.ENVIOS_RESUMEN} del ${desdeDia} al ${hastaDia}${soloNoLlegaron === true ? ' (solo a quienes no les llegó)' : ''} · ${atenciones.length} atención(es)`,
             tipo: 'ENVIOS_RESUMEN',
             filas: atenciones.length,
         },

@@ -74,6 +74,7 @@ export const CATEGORIAS_ALERTA = [
   'SERVIDOR',
   'CASOS_SOPORTE',
   'ASISTENTE_SOPORTE',
+  'RESUMEN_ATENCION',
 ] as const;
 export type CategoriaAlerta = (typeof CATEGORIAS_ALERTA)[number];
 
@@ -114,6 +115,11 @@ export const TEXTO_CATEGORIA_ALERTA: Record<
     descripcion:
       'El bot del personal: su webhook caído, sin la IA de una clínica, una clínica en su tope diario de IA y muchos códigos equivocados seguidos.',
   },
+  RESUMEN_ATENCION: {
+    titulo: 'Documentos de la consulta',
+    descripcion:
+      'El resumen de la atención: la lectura de historias clínicas detenida, los avisos que no salen, la plantilla de Meta que falla y los avisos que no se entregan.',
+  },
   CASOS_SOPORTE: {
     titulo: 'Casos de soporte',
     descripcion:
@@ -139,6 +145,10 @@ export const TEXTO_CATEGORIA_ALERTA: Record<
  *    sesiones.
  *  · Eventos sueltos (sin «resuelto»): `ERROR_5XX`, `PROCESO_EXCEPCION`, `API_ARRANCO`,
  *    `REINICIOS_EN_BUCLE`, `ESQUEMA_ESPEJO`.
+ *  · `RESUMEN_*` (2026-11-19, docs/PLAN_RESUMEN_ATENCION.md §8.11): el envío de
+ *    los documentos de la consulta. La lectura del hospital detenida, una vuelta
+ *    de avisos sin ninguno que salga, la plantilla de Meta que no se puede usar y
+ *    pocos avisos entregados. Una clave por clínica cada una.
  */
 export const TIPOS_ALERTA = [
   'SERVICIO_CAIDO',
@@ -155,6 +165,10 @@ export const TIPOS_ALERTA = [
   'SOPORTE_SIN_IA',
   'SOPORTE_TOPE_IA',
   'SOPORTE_CODIGOS_FALLIDOS',
+  'RESUMEN_LECTURA_DETENIDA',
+  'RESUMEN_AVISOS_FALLIDOS',
+  'RESUMEN_PLANTILLA_FALLA',
+  'RESUMEN_NO_ENTREGADOS',
 ] as const;
 export type TipoAlerta = (typeof TIPOS_ALERTA)[number];
 
@@ -254,6 +268,32 @@ export const CATALOGO_ALERTAS: Record<TipoAlerta, DefinicionAlerta> = {
     evento: true,
     titulo: 'Muchos códigos equivocados en el asistente de soporte',
   },
+  // Los documentos de la consulta (docs/PLAN_RESUMEN_ATENCION.md §8.11). Lo que
+  // no sale le toca al equipo técnico (el reparto acordado con el hospital).
+  RESUMEN_LECTURA_DETENIDA: {
+    categoria: 'RESUMEN_ATENCION',
+    gravedad: 'ADVERTENCIA',
+    evento: false,
+    titulo: 'La lectura de historias clínicas del hospital se detuvo',
+  },
+  RESUMEN_AVISOS_FALLIDOS: {
+    categoria: 'RESUMEN_ATENCION',
+    gravedad: 'CRITICA',
+    evento: false,
+    titulo: 'Los avisos de los documentos de la consulta no están saliendo',
+  },
+  RESUMEN_PLANTILLA_FALLA: {
+    categoria: 'RESUMEN_ATENCION',
+    gravedad: 'CRITICA',
+    evento: false,
+    titulo: 'La plantilla «Documentos de la consulta» no se puede usar',
+  },
+  RESUMEN_NO_ENTREGADOS: {
+    categoria: 'RESUMEN_ATENCION',
+    gravedad: 'ADVERTENCIA',
+    evento: false,
+    titulo: 'Muchos avisos de los documentos no se entregan',
+  },
 };
 
 /** ABIERTA | RESUELTA | EVENTO (suelto: nunca se abre ni se cierra). */
@@ -293,6 +333,20 @@ export const UMBRALES_ALERTAS = {
   arranquesEnBucle: { ventanaMin: 10 },
   codigoVinculacion: { largo: 6, vigenciaMin: 15 },
   resumenDiario: { hora: 7 },
+  /**
+   * Los documentos de la consulta. La lectura: el agente sube una vuelta cada
+   * 5 minutos con la lectura encendida, aunque no haya nada nuevo; 30 minutos
+   * sin ninguna son 6 vueltas perdidas. Los avisos: una vuelta en la que no
+   * salió NINGUNO y fallaron al menos `avisosFallidosMin`. La entrega: de los
+   * avisos de WhatsApp a pacientes de las últimas `horas` (que ya tuvieron
+   * `esperaMin` para entregarse), si son al menos `minimoAvisos` y se entregó
+   * menos del `minimoPorcentaje`.
+   */
+  resumenAtencion: {
+    lecturaSinVueltaMin: 30,
+    avisosFallidosMin: 3,
+    entrega: { horas: 24, esperaMin: 60, minimoAvisos: 10, minimoPorcentaje: 70 },
+  },
   retencionDias: 180,
   maxTitulo: 120,
   maxDetalle: 600,
@@ -354,7 +408,48 @@ export const claveAlerta = {
   /** Una vez por ventana de 10 minutos. */
   soporteCodigosFallidos: (ventana: number): string =>
     `soporte:codigos-fallidos:${ventana}`,
+  /** Los documentos de la consulta: una de cada una por clínica. */
+  resumenLectura: (organizationId: string): string =>
+    `resumen:lectura:${organizationId}`,
+  resumenAvisos: (organizationId: string): string =>
+    `resumen:avisos:${organizationId}`,
+  resumenPlantilla: (organizationId: string): string =>
+    `resumen:plantilla:${organizationId}`,
+  resumenEntrega: (organizationId: string): string =>
+    `resumen:entrega:${organizationId}`,
 };
+
+/**
+ * ¿La lectura del hospital está detenida? Con la lectura encendida, minutos sin
+ * una vuelta del agente desde la última que subió o, si nunca subió una, desde
+ * que la API vio la lectura encendida. `null` = está al día (o apagada).
+ */
+export function lecturaDetenida(v: {
+  leer: boolean;
+  ultimaVueltaIso: string | null;
+  leerVistoDesdeIso: string | null;
+  ahora: Date;
+}): { minutos: number; nuncaLeyo: boolean } | null {
+  if (!v.leer) return null;
+  const desde = v.ultimaVueltaIso ?? v.leerVistoDesdeIso;
+  const t = desde ? Date.parse(desde) : NaN;
+  if (Number.isNaN(t)) return null;
+  const minutos = Math.floor((v.ahora.getTime() - t) / 60_000);
+  return minutos >= UMBRALES_ALERTAS.resumenAtencion.lecturaSinVueltaMin
+    ? { minutos, nuncaLeyo: v.ultimaVueltaIso === null }
+    : null;
+}
+
+/** ¿Pocos avisos entregados? `null` = hay muy pocos para decir algo, o se entregan bien. */
+export function entregaBajaDeAvisos(v: {
+  avisos: number;
+  entregados: number;
+}): { porcentaje: number } | null {
+  const u = UMBRALES_ALERTAS.resumenAtencion.entrega;
+  if (v.avisos < u.minimoAvisos) return null;
+  const porcentaje = Math.round((v.entregados * 100) / v.avisos);
+  return porcentaje < u.minimoPorcentaje ? { porcentaje } : null;
+}
 
 const RE_UUID =
   /(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])/gi;

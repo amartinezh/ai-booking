@@ -356,6 +356,24 @@ export interface ConfigDocumentosResumen {
   pie: string | null;
   /** D19: mostrar la frecuencia del HIS cuando el médico no escribió la indicación. Apagada por defecto. */
   frecuenciaDelHis: boolean;
+  /**
+   * Cómo se llama cada código de prioridad de la remisión (`TX_PRIO_HREM`, 0 a
+   * 3). El HIS no tiene ese catálogo en la base: lo traduce su aplicación, y lo
+   * confirma la comparación con el papel (E7). Sin nombre, la remisión no
+   * muestra la prioridad: un «1» suelto no le dice nada al paciente.
+   */
+  prioridadesRemision: Record<CodigoPrioridadRemision, string | null>;
+}
+
+export const CODIGOS_PRIORIDAD_REMISION = ['0', '1', '2', '3'] as const;
+export type CodigoPrioridadRemision = (typeof CODIGOS_PRIORIDAD_REMISION)[number];
+
+/** El nombre de la prioridad de una remisión, o `null` si ese código no tiene nombre configurado. */
+export function textoPrioridadRemision(codigo: string | null, config: Pick<ConfigDocumentosResumen, 'prioridadesRemision'>): string | null {
+  const c = codigo?.trim() ?? '';
+  return (CODIGOS_PRIORIDAD_REMISION as readonly string[]).includes(c)
+    ? (config.prioridadesRemision[c as CodigoPrioridadRemision] ?? null)
+    : null;
 }
 
 export const LIMITES_DOCUMENTOS_RESUMEN = {
@@ -365,6 +383,7 @@ export const LIMITES_DOCUMENTOS_RESUMEN = {
   telefono: 60,
   marcaDeAgua: 60,
   pie: 400,
+  prioridadRemision: 40,
   /** Logo en base64: ~150 KB de imagen. */
   logoBase64: 200_000,
 } as const;
@@ -401,6 +420,12 @@ export function leerConfigDocumentos(json: unknown): ConfigDocumentosResumen {
     marcaDeAgua: textoONull(d.marcaDeAgua, L.marcaDeAgua) ?? MARCA_DE_AGUA_POR_DEFECTO,
     pie: textoONull(d.pie, L.pie),
     frecuenciaDelHis: d.frecuenciaDelHis === true,
+    prioridadesRemision: Object.fromEntries(
+      CODIGOS_PRIORIDAD_REMISION.map((c) => [
+        c,
+        textoONull(esObjeto(d.prioridadesRemision) ? d.prioridadesRemision[c] : null, L.prioridadRemision),
+      ]),
+    ) as Record<CodigoPrioridadRemision, string | null>,
   };
 }
 
@@ -414,9 +439,11 @@ export interface CambioDocumentosResumen {
   logo?: string;
   /** D19: mostrar la frecuencia del HIS cuando el médico no escribió la indicación. */
   frecuenciaDelHis?: boolean;
+  /** El nombre de cada código de prioridad de la remisión; cadena vacía = sin nombre. */
+  prioridadesRemision?: Partial<Record<CodigoPrioridadRemision, string>>;
 }
 
-const ETIQUETA_CAMBIO: Record<keyof Omit<CambioDocumentosResumen, 'logo' | 'frecuenciaDelHis'>, string> = {
+const ETIQUETA_CAMBIO: Record<keyof Omit<CambioDocumentosResumen, 'logo' | 'frecuenciaDelHis' | 'prioridadesRemision'>, string> = {
   nombre: 'Nombre del hospital',
   nit: 'NIT',
   direccion: 'Dirección',
@@ -478,6 +505,25 @@ export function aplicarCambioDeDocumentos(
       cambios.push(`Frecuencia del HIS cuando no hay indicación: ${antes.frecuenciaDelHis ? 'sí' : 'no'} → ${nueva ? 'sí' : 'no'}`);
     }
     previo.frecuenciaDelHis = nueva;
+  }
+
+  if (cambio.prioridadesRemision !== undefined) {
+    if (!esObjeto(cambio.prioridadesRemision)) return { ok: false, error: 'Prioridad de la remisión: valor inválido.' };
+    const nuevas: Record<string, string | null> = { ...antes.prioridadesRemision };
+    for (const [codigo, valor] of Object.entries(cambio.prioridadesRemision)) {
+      if (!(CODIGOS_PRIORIDAD_REMISION as readonly string[]).includes(codigo) || typeof valor !== 'string') {
+        return { ok: false, error: 'Prioridad de la remisión: valor inválido.' };
+      }
+      const t = valor.trim();
+      if (t.length > L.prioridadRemision) {
+        return { ok: false, error: `Prioridad ${codigo} de la remisión: máximo ${L.prioridadRemision} caracteres.` };
+      }
+      const nuevo = t || null;
+      const previa = antes.prioridadesRemision[codigo as CodigoPrioridadRemision];
+      if (nuevo !== previa) cambios.push(`Prioridad ${codigo} de la remisión: «${previa ?? ''}» → «${nuevo ?? ''}»`);
+      nuevas[codigo] = nuevo;
+    }
+    previo.prioridadesRemision = nuevas;
   }
 
   base.documentos = previo;

@@ -82,7 +82,11 @@ function armar(
         {
           organizationId: ORG,
           resumenAtencion: o.config ?? CONFIG,
-          organization: { timezone: null, isActive: true },
+          organization: {
+            timezone: null,
+            isActive: true,
+            name: 'Hospital San Vicente de Paúl',
+          },
         },
       ]),
       findUnique: jest.fn(async () => ({
@@ -121,6 +125,11 @@ function armar(
       findMany: jest.fn(async () => o.duenos ?? []),
     },
     syncException: { findFirst: jest.fn(async () => null) },
+    organization: {
+      findUnique: jest.fn(async () => ({
+        name: 'Hospital San Vicente de Paúl',
+      })),
+    },
     attentionSummaryOptOut: {
       findMany: jest.fn(async () =>
         (o.bajas ?? []).map((d) => ({ destinationHash: hashDelDestino(d) })),
@@ -141,7 +150,15 @@ function armar(
           data,
         ),
       ),
+      findFirst: jest.fn(
+        async () =>
+          entregas.filter((e) => e.status === 'FALLO').slice(-1)[0] ?? null,
+      ),
     },
+  };
+  const alertas: any = {
+    avisar: jest.fn(async () => undefined),
+    resolver: jest.fn(async () => undefined),
   };
   const plantillas: any = {
     sendTemplate: jest.fn(
@@ -195,9 +212,11 @@ function armar(
     correoSmtp,
     documentos,
     enlaces,
+    alertas,
   );
   return {
     s,
+    alertas,
     memoria,
     prisma,
     plantillas,
@@ -250,13 +269,15 @@ describe('ResumenEnvioService.programar', () => {
     const a = armar({ ventana: true });
     await a.s.programar(AHORA);
     expect(a.plantillas.sendTemplate).not.toHaveBeenCalled();
-    const [, destino, cuerpo, botones, entrega] =
+    const [, destino, cuerpo, botones, entrega, pie] =
       a.whatsapp.botones.mock.calls[0];
     expect(entrega).toBe(a.entregas[0].id);
     expect(destino).toBe('573001234567');
-    expect(cuerpo).toContain(
-      'documentos de su consulta del domingo, 1 de noviembre',
+    // El mismo texto de la plantilla aprobada en Meta; solo cambia el botón (20 letras).
+    expect(cuerpo).toBe(
+      'Hola Adulto. Los documentos de su consulta del domingo, 1 de noviembre en el Hospital San Vicente de Paúl ya están listos: el resumen de la atención y, si se los ordenaron, la fórmula, las órdenes de exámenes, la remisión o la incapacidad. Toque «Recibir documentos» para recibirlos en este chat.',
     );
+    expect(pie).toBe('Para no recibirlos más, escriba «no quiero resúmenes»');
     expect(botones).toEqual([
       { id: `resumen:${a.entregas[0].id}`, titulo: 'Recibir documentos' },
     ]);
@@ -406,7 +427,13 @@ describe('Telegram (D26) y la baja por número', () => {
     const [org, destino, texto, teclado, ctx] =
       a.telegram.sendTextConTeclado.mock.calls[0];
     expect([org, destino]).toEqual([ORG, 'tg:555']);
-    expect(texto).toContain('documentos de su consulta');
+    expect(texto).toContain(
+      'en el Hospital San Vicente de Paúl ya están listos',
+    );
+    expect(texto).toContain('Toque «Recibir mis documentos»');
+    expect(texto).toMatch(
+      /Para no recibirlos más, escriba «no quiero resúmenes»\.$/,
+    );
     expect(teclado).toEqual({ botones: ['Recibir mis documentos'] });
     expect(ctx).toEqual({
       kind: 'ATTENTION_SUMMARY',
@@ -757,5 +784,75 @@ describe('reintentos y espera eficiente', () => {
     await expect(cambio.s.programar(AHORA)).resolves.toMatchObject({
       avisados: 1,
     });
+  });
+});
+
+describe('alertas técnicas del envío (plan §8.11)', () => {
+  it('Meta pausó la plantilla: alerta crítica con qué le pasa; la siguiente que sale la resuelve', async () => {
+    const a = armar({
+      plantilla: {
+        success: false,
+        error: '{"error":{"message":"Template is paused","code":132015}}',
+      },
+    });
+    await a.s.programar(AHORA);
+    expect(a.alertas.avisar).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'RESUMEN_PLANTILLA_FALLA',
+        dedupeKey: `resumen:plantilla:${ORG}`,
+        detail: expect.stringContaining(
+          'Meta pausó la plantilla por baja calidad (código 132015)',
+        ),
+      }),
+    );
+    const bien = armar();
+    await bien.s.programar(AHORA);
+    expect(bien.alertas.resolver).toHaveBeenCalledWith(
+      `resumen:plantilla:${ORG}`,
+    );
+  });
+
+  it('un número sin WhatsApp no es falla de la plantilla', async () => {
+    const a = armar({
+      plantilla: { success: false, error: '{"error":{"code":131026}}' },
+    });
+    await a.s.programar(AHORA);
+    expect(a.alertas.avisar).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'RESUMEN_PLANTILLA_FALLA' }),
+    );
+  });
+
+  it('una vuelta con 3 fallos y ningún aviso que salga avisa con el último motivo; con uno que sale, se resuelve', async () => {
+    const tres = [resumen(), resumen(), resumen()];
+    const a = armar({
+      resumenes: tres,
+      plantilla: { success: false, error: 'Meta no responde' },
+    });
+    await expect(a.s.programar(AHORA)).resolves.toMatchObject({
+      fallos: 3,
+      avisados: 0,
+    });
+    expect(a.alertas.avisar).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'RESUMEN_AVISOS_FALLIDOS',
+        dedupeKey: `resumen:avisos:${ORG}`,
+        organizationName: 'Hospital San Vicente de Paúl',
+        detail: expect.stringContaining('Último motivo: Meta no responde'),
+      }),
+    );
+    const bien = armar();
+    await bien.s.programar(AHORA);
+    expect(bien.alertas.resolver).toHaveBeenCalledWith(`resumen:avisos:${ORG}`);
+  });
+
+  it('dos fallos sueltos no son una caída', async () => {
+    const a = armar({
+      resumenes: [resumen(), resumen()],
+      plantilla: { success: false, error: 'Meta no responde' },
+    });
+    await a.s.programar(AHORA);
+    expect(a.alertas.avisar).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'RESUMEN_AVISOS_FALLIDOS' }),
+    );
   });
 });

@@ -2,7 +2,13 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { LIMITES_DOCUMENTOS_RESUMEN, PIE_RESUMEN_POR_DEFECTO, type ConfigDocumentosResumen } from '@agenia/shared';
+import {
+    CODIGOS_PRIORIDAD_REMISION,
+    LIMITES_DOCUMENTOS_RESUMEN,
+    PIE_RESUMEN_POR_DEFECTO,
+    type CodigoPrioridadRemision,
+    type ConfigDocumentosResumen,
+} from '@agenia/shared';
 import { updateDocumentosResumenAction } from '@/app/actions/resumen-atencion';
 
 const MAX_LOGO_BYTES = 150 * 1024;
@@ -38,6 +44,12 @@ export default function EncabezadoDocumentos({
     const [pie, setPie] = useState(documentos.pie ?? '');
     const [logo, setLogo] = useState<string | null>(documentos.logo);
     const [frecuenciaDelHis, setFrecuenciaDelHis] = useState(documentos.frecuenciaDelHis);
+    const [prioridades, setPrioridades] = useState<Record<CodigoPrioridadRemision, string>>(
+        () =>
+            Object.fromEntries(
+                CODIGOS_PRIORIDAD_REMISION.map((c) => [c, documentos.prioridadesRemision?.[c] ?? '']),
+            ) as Record<CodigoPrioridadRemision, string>,
+    );
     const [error, setError] = useState<string | null>(null);
     const [aviso, setAviso] = useState<string | null>(null);
     const [guardando, startGuardar] = useTransition();
@@ -69,6 +81,7 @@ export default function EncabezadoDocumentos({
                 pie,
                 logo: logo ?? '',
                 frecuenciaDelHis,
+                prioridadesRemision: prioridades,
             });
             if (!r.success) {
                 setError(r.error);
@@ -160,6 +173,28 @@ export default function EncabezadoDocumentos({
                     </span>
                 </span>
             </label>
+            <fieldset className="space-y-2">
+                <legend className="text-sm text-zinc-700 dark:text-zinc-300">Prioridad de la remisión</legend>
+                <p className="text-xs text-zinc-500">
+                    El sistema del hospital guarda la prioridad como un número del 0 al 3 y el nombre lo pone su aplicación.
+                    Escriba el nombre de cada número tal como sale en la remisión impresa (lo confirma la comparación con el
+                    papel). Mientras un número no tenga nombre, la remisión no muestra la prioridad.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-4">
+                    {CODIGOS_PRIORIDAD_REMISION.map((c) => (
+                        <label key={c} className="block text-xs text-zinc-600 dark:text-zinc-400">
+                            Código {c}
+                            <input
+                                value={prioridades[c]}
+                                onChange={(ev) => setPrioridades((p) => ({ ...p, [c]: ev.target.value }))}
+                                maxLength={L.prioridadRemision}
+                                aria-label={`Prioridad ${c} de la remisión`}
+                                className="mt-1 block w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                            />
+                        </label>
+                    ))}
+                </div>
+            </fieldset>
             <p className="text-xs text-zinc-500">
                 Marca de agua: «{documentos.marcaDeAgua}». Se quita cuando el hospital apruebe los documentos para reclamar
                 medicamentos y exámenes (decisión D21 del plan).

@@ -8,6 +8,7 @@ import {
   fuenteDelDocumento,
   hastaDeIncapacidad,
   leerConfigDocumentos,
+  textoPrioridadRemision,
   MARCA_DE_AGUA_POR_DEFECTO,
   SIN_INDICACION,
 } from './resumen-documentos';
@@ -212,9 +213,31 @@ describe('configuración de los documentos', () => {
       marcaDeAgua: MARCA_DE_AGUA_POR_DEFECTO,
       pie: null,
       frecuenciaDelHis: false,
+      prioridadesRemision: { '0': null, '1': null, '2': null, '3': null },
     });
     // Una marca vacía guardada a mano no la quita.
     expect(leerConfigDocumentos({ documentos: { marcaDeAgua: '  ' } }).marcaDeAgua).toBe(MARCA_DE_AGUA_POR_DEFECTO);
+  });
+
+  it('la prioridad de la remisión: el nombre de cada código, que se guarda y se audita; sin nombre, nada', () => {
+    const r = aplicarCambioDeDocumentos(null, { prioridadesRemision: { '1': ' Prioritaria ', '3': 'No prioritaria' } });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.cambios).toEqual([
+      'Prioridad 1 de la remisión: «» → «Prioritaria»',
+      'Prioridad 3 de la remisión: «» → «No prioritaria»',
+    ]);
+    const c = leerConfigDocumentos(r.config);
+    expect(textoPrioridadRemision('1', c)).toBe('Prioritaria');
+    expect(textoPrioridadRemision(' 3 ', c)).toBe('No prioritaria');
+    expect(textoPrioridadRemision('2', c)).toBeNull();
+    expect(textoPrioridadRemision('7', c)).toBeNull();
+    expect(textoPrioridadRemision(null, c)).toBeNull();
+    // Vaciar un nombre lo quita; un código que no existe o un texto largo, no.
+    const vaciado = aplicarCambioDeDocumentos(r.config, { prioridadesRemision: { '1': '' } });
+    if (!vaciado.ok) throw new Error(vaciado.error);
+    expect(leerConfigDocumentos(vaciado.config).prioridadesRemision).toEqual({ '0': null, '1': null, '2': null, '3': 'No prioritaria' });
+    expect(aplicarCambioDeDocumentos(null, { prioridadesRemision: { '9': 'x' } as never }).ok).toBe(false);
+    expect(aplicarCambioDeDocumentos(null, { prioridadesRemision: { '0': 'x'.repeat(41) } }).ok).toBe(false);
   });
 
   it('guarda el encabezado, el logo y el pie sin tocar lo demás, y dice qué cambió', () => {

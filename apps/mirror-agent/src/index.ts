@@ -320,10 +320,18 @@ async function main() {
     for (;;) {
       try {
         const r = await engine.syncAttentionSummaries();
-        if (!r.skipped && !r.apagado && (r.leidos > 0 || r.rechazados > 0)) {
+        engine.anotarResultadoDelResumen(null);
+        if (
+          !r.skipped &&
+          !r.apagado &&
+          (r.leidos > 0 || r.rechazados > 0 || r.releidos > 0)
+        ) {
           console.log(
             `[mirror-agent] resumen de la atención: ${r.leidos} leído(s), ` +
               `${r.nuevos} nuevo(s), ${r.actualizados} actualizado(s)` +
+              (r.releidos > 0
+                ? `, ${r.releidos} releído(s) (${r.releidosConCambios} con cambios)`
+                : '') +
               (r.rechazados > 0 ? `, ${r.rechazados} rechazado(s)` : '') +
               '.',
           );
@@ -337,6 +345,8 @@ async function main() {
           reporter.reset('resumen de la atención');
         }
       } catch (error) {
+        // También va en el latido: la alerta «la lectura se detuvo» dice por qué.
+        engine.anotarResultadoDelResumen(mensajeDeError(error));
         reporter.report('resumen de la atención', mensajeDeError(error));
       }
       await dormir(config.attentionSummaryIntervalMs);

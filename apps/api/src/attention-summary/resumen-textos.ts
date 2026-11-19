@@ -5,10 +5,40 @@
 export const BOTON_RECIBIR = 'Recibir documentos';
 /** En Telegram el botón manda este texto como un mensaje: lo entiende `pideSusDocumentos`. */
 export const BOTON_RECIBIR_TELEGRAM = 'Recibir mis documentos';
+/** El pie de la plantilla aprobada en Meta, igual en el aviso dentro de la ventana (60 letras máximo). */
+export const PIE_BAJA_RESUMEN =
+  'Para no recibirlos más, escriba «no quiero resúmenes»';
+
+/** «Hospital San Vicente de Paúl» → «el Hospital San Vicente de Paúl», como en la plantilla. */
+export function conArticulo(nombre: string): string {
+  const n = nombre.trim();
+  if (!n) return 'el hospital';
+  if (/^(hospital|centro|instituto|consultorio)\b/i.test(n)) return `el ${n}`;
+  if (
+    /^(cl[ií]nica|e\.?\s?s\.?\s?e\b|ips\b|unidad|fundaci[oó]n|empresa)/i.test(n)
+  )
+    return `la ${n}`;
+  return n;
+}
 
 export const TEXTOS_RESUMEN = {
-  avisoEnVentana: (nombre: string, fecha: string) =>
-    `Hola ${nombre}, el hospital tiene listos los documentos de su consulta del ${fecha}: resumen, fórmula y órdenes. Toque el botón para recibirlos aquí.`,
+  /**
+   * El aviso dentro de la ventana de 24 h, con el mismo texto de la plantilla
+   * «Documentos de la consulta» aprobada en Meta (`documentos_consulta`, 2026-11-11).
+   * Cambia solo el nombre del botón: en un mensaje con botones de WhatsApp caben
+   * 20 letras («Recibir documentos»); en la plantilla y en Telegram, «Recibir mis
+   * documentos».
+   */
+  avisoEnVentana: (
+    nombre: string,
+    fecha: string,
+    hospital: string,
+    boton: string,
+  ) =>
+    `Hola ${nombre}. Los documentos de su consulta del ${fecha} en ${conArticulo(hospital)} ya están listos: el resumen de la atención y, si se los ordenaron, la fórmula, las órdenes de exámenes, la remisión o la incapacidad. Toque «${boton}» para recibirlos en este chat.`,
+  /** Se dice cuando una relectura dejó la atención en «No se envía» (D7 sobre la versión nueva). */
+  yaNoSeEnvia:
+    'Los documentos de esa consulta no se pueden enviar por este medio. Por favor pídalos en el hospital.',
   pedirFecha:
     'Para proteger su información, escriba la fecha de nacimiento del paciente (por ejemplo: 17/05/1963).',
   fechaIncorrecta: (restantes: number) =>

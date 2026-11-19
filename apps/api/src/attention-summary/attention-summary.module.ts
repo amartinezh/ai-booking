@@ -8,6 +8,7 @@ import { ResumenEnvioService } from './resumen-envio.service';
 import { ResumenChatService } from './resumen-chat.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
 import { ResumenCorreoService } from './resumen-correo.service';
+import { ResumenVigiaService } from './resumen-vigia.service';
 import {
   ResumenDocumentosController,
   ResumenPublicoController,
@@ -34,6 +35,7 @@ import {
     ResumenCorreoService,
     ResumenEnvioService,
     ResumenChatService,
+    ResumenVigiaService,
   ],
   exports: [ResumenChatService],
 })

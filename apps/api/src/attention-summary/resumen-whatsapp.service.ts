@@ -190,6 +190,8 @@ export class ResumenWhatsappService {
     cuerpo: string,
     botones: { id: string; titulo: string }[],
     entrega: string | null = null,
+    /** El pie gris del mensaje (60 letras máximo en WhatsApp). */
+    pie: string | null = null,
   ): Promise<ResultadoWhatsapp> {
     return this.enviar(
       organizationId,
@@ -200,6 +202,7 @@ export class ResumenWhatsappService {
         interactive: {
           type: 'button',
           body: { text: cuerpo },
+          ...(pie ? { footer: { text: pie.slice(0, 60) } } : {}),
           action: {
             buttons: botones.map((b) => ({
               type: 'reply',

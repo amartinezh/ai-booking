@@ -7,6 +7,7 @@ import {
   formatDateShort,
   fuenteDelDocumento,
   hastaDeIncapacidad,
+  textoPrioridadRemision,
 } from '@agenia/shared';
 import type {
   ConfigDocumentosResumen,
@@ -346,7 +347,8 @@ function cuerpoRemision(
       ['Remite a', x.remiteA],
       ['Servicio pedido', x.servicioPedido],
       ['Código (CUPS)', x.cups],
-      ['Prioridad', x.prioridad],
+      // Solo con el nombre que el hospital confirme (E7): un «1» suelto no dice nada.
+      ['Prioridad', textoPrioridadRemision(x.prioridad, ctx.documentos)],
       ['Diagnóstico principal', diagnosticoPrincipal(r)],
       ['Motivo', x.motivo],
       ['Observaciones', x.observaciones],

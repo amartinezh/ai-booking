@@ -83,7 +83,7 @@ export default async function ResumenPage(props: { params: Promise<{ token: stri
             <Marco>
                 <header className="space-y-1">
                     <p className="text-sm uppercase tracking-wider text-[#586378]">{c.hospital}</p>
-                    <h1 className="text-3xl font-semibold">Resumen de su atención</h1>
+                    <h1 className="text-3xl font-semibold">Historia clínica · Resumen de su atención</h1>
                     <p className="text-lg text-[#38445a]">
                         {c.paciente} · consulta del {c.fechaConsulta}
                         {c.medico ? ` · ${c.medico}` : ''}
