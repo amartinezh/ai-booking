@@ -1,13 +1,20 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import CanalesEnVivo from '@/app/components/canales/CanalesEnVivo';
+import AutorizacionDatosCifras from './AutorizacionDatosCifras';
+import { periodoAutorizacion } from '@/lib/autorizacion-datos/cifras';
 
 export const dynamic = 'force-dynamic';
 
-export default async function CanalesPage() {
+export default async function CanalesPage({
+    searchParams,
+}: {
+    searchParams?: Promise<{ autorizacion?: string | string[] }>;
+}) {
     const session = await getSession();
     if (!session) redirect('/login');
     if (session.role !== 'ORG_ADMIN' && session.role !== 'GENERAL_OBSERVER') redirect('/dashboard');
+    const sp = (await searchParams) ?? {};
 
     return (
         <div className="max-w-7xl mx-auto animate-fade-in pb-10">
@@ -21,6 +28,13 @@ export default async function CanalesPage() {
                 </p>
             </header>
             <CanalesEnVivo />
+            {/* 🔒 Autorización de datos: sección aparte, con su propio período. */}
+            {session.organizationId && (
+                <AutorizacionDatosCifras
+                    organizationId={session.organizationId}
+                    dias={periodoAutorizacion(sp.autorizacion)}
+                />
+            )}
         </div>
     );
 }

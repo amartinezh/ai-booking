@@ -36,7 +36,15 @@ export default async function SolicitudCitasPage(props: { params: Promise<{ requ
                   serviceName: true,
                   operation: true,
                   extraGranted: true,
-                  organization: { select: { name: true, isActive: true, supportPhone: true, timezone: true } },
+                  organization: {
+                      select: {
+                          name: true,
+                          isActive: true,
+                          supportPhone: true,
+                          timezone: true,
+                          settings: { select: { dataPolicyUrl: true } },
+                      },
+                  },
               },
           })
         : null;
@@ -69,6 +77,7 @@ export default async function SolicitudCitasPage(props: { params: Promise<{ requ
             esCambio={solicitud.operation === 'RESCHEDULE'}
             telefonoInicial={solicitud.phone ?? ''}
             adicionalesConcedidas={solicitud.extraGranted}
+            urlPolitica={org.settings?.dataPolicyUrl ?? null}
         />
     );
 }

@@ -446,6 +446,34 @@ export default function Informe({
                     </Seccion>
                 )}
 
+                {d.autorizaciones && (
+                    <Seccion titulo="Autorización de datos por chat">
+                        <Tarjeta
+                            titulo="Personas que autorizaron el tratamiento de sus datos"
+                            nota="Antes de agendar, el asistente explica la política de tratamiento de datos del hospital (Ley 1581 de 2012) y pregunta si la persona la autoriza. Cada persona cuenta una vez, por lo último que respondió. A quien no autoriza se le indica cómo pedir su cita por teléfono o en la ventanilla."
+                        >
+                            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-4">
+                                <div>
+                                    <p className="m-0 font-serif text-3xl tabular-nums">{ent(d.autorizaciones.aceptaron)}</p>
+                                    <p className="m-0 text-[13px] text-[#586378]">
+                                        autorizaron (
+                                        {pct(d.autorizaciones.aceptaron, d.autorizaciones.aceptaron + d.autorizaciones.noAceptaron)} de
+                                        quienes respondieron)
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="m-0 font-serif text-3xl tabular-nums">{ent(d.autorizaciones.noAceptaron)}</p>
+                                    <p className="m-0 text-[13px] text-[#586378]">prefirieron no autorizar</p>
+                                </div>
+                                <div>
+                                    <p className="m-0 font-serif text-3xl tabular-nums">{ent(d.autorizaciones.retiraron)}</p>
+                                    <p className="m-0 text-[13px] text-[#586378]">retiraron su autorización después</p>
+                                </div>
+                            </div>
+                        </Tarjeta>
+                    </Seccion>
+                )}
+
                 {d.asistencia.length > 0 && (
                     <Seccion titulo="Asistencia a las citas">
                         <Tarjeta

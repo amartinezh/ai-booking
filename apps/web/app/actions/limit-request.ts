@@ -11,6 +11,7 @@
 // radicar dos veces la misma o radicar con el enlace vencido.
 // ─────────────────────────────────────────────────────────────
 
+import { ERROR_CASILLA_AUTORIZACION, normalizarVersionPolitica } from '@agenia/shared';
 import { prisma } from '@/lib/prisma';
 import { esIdDeSolicitud, validarRadicacion } from '@/lib/limite-citas/validacion';
 
@@ -19,6 +20,8 @@ export interface LimitRequestPayload {
     argumento: string;
     adicionales: number;
     telefono?: string;
+    /** 🔒 La casilla de autorización de datos (obligatoria). */
+    autorizaDatos?: boolean;
 }
 
 export async function submitLimitRequest(
@@ -30,7 +33,14 @@ export async function submitLimitRequest(
 
         const v = validarRadicacion(payload ?? {});
         if (!v.ok) return { success: false, error: v.error };
+        // 🔒 Sin la autorización de datos no se radica (Ley 1581).
+        if (payload?.autorizaDatos !== true) return { success: false, error: ERROR_CASILLA_AUTORIZACION };
 
+        // La versión de la política que aceptó (la de su clínica).
+        const delEnlace = await prisma.appointmentLimitRequest.findUnique({
+            where: { id },
+            select: { organization: { select: { settings: { select: { dataPolicyVersion: true } } } } },
+        });
         const ahora = new Date();
         const { count } = await prisma.appointmentLimitRequest.updateMany({
             where: {
@@ -46,6 +56,10 @@ export async function submitLimitRequest(
                 message: v.datos.argumento,
                 extraRequested: v.datos.adicionales,
                 ...(v.datos.telefono ? { phone: v.datos.telefono } : {}),
+                dataConsentAt: ahora,
+                dataConsentPolicyVersion: normalizarVersionPolitica(
+                    delEnlace?.organization.settings?.dataPolicyVersion,
+                ),
             },
         });
         if (count === 0) {

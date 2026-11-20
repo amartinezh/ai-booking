@@ -212,4 +212,17 @@ describe('estadísticas — de las cifras a la página', () => {
         expect(i.desde).toBe('2026-10-22');
         expect(i.dias).toBe(3);
     });
+
+    it('🔒 autorización de datos: solo aparece cuando alguien ya respondió', () => {
+        const c = corte('2026-10-24', '2026-10-25');
+        expect(armarInforme(datosDel24(), c, { conHospital: true })!.autorizaciones).toBeNull();
+        expect(
+            armarInforme({ ...datosDel24(), autorizaciones: { aceptaron: 0, noAceptaron: 0, retiraron: 1 } }, c, { conHospital: true })!
+                .autorizaciones,
+        ).toBeNull();
+        expect(
+            armarInforme({ ...datosDel24(), autorizaciones: { aceptaron: 40, noAceptaron: 2, retiraron: 1 } }, c, { conHospital: true })!
+                .autorizaciones,
+        ).toEqual({ aceptaron: 40, noAceptaron: 2, retiraron: 1 });
+    });
 });

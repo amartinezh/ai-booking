@@ -59,6 +59,23 @@ const datos: DatosDeEstadisticas = {
 describe('estadísticas — la página', () => {
     beforeEach(() => jest.clearAllMocks());
 
+    it('🔒 la autorización de datos por chat: solo conteos, y solo si alguien respondió', () => {
+        const sin = armarInforme(datos, corte, { conHospital: true })!;
+        const { unmount } = render(<Informe informe={sin} clinica="Clínica" organizationId={ORG} />);
+        expect(screen.queryByRole('heading', { name: 'Autorización de datos por chat' })).not.toBeInTheDocument();
+        unmount();
+
+        const con = armarInforme({ ...datos, autorizaciones: { aceptaron: 40, noAceptaron: 2, retiraron: 1 } }, corte, {
+            conHospital: true,
+        })!;
+        render(<Informe informe={con} clinica="Clínica" organizationId={ORG} />);
+        const seccion = screen.getByRole('heading', { name: 'Autorización de datos por chat' }).closest('section')!;
+        expect(seccion).toHaveTextContent('40autorizaron (95,2 % de quienes respondieron)');
+        expect(seccion).toHaveTextContent('2prefirieron no autorizar');
+        expect(seccion).toHaveTextContent('1retiraron su autorización después');
+        expect(seccion).toHaveTextContent('Ley 1581 de 2012');
+    });
+
     it('arriba, la conclusión y las seis cifras con el período completo', () => {
         const informe = armarInforme(datos, corte, { conHospital: true })!;
         render(<Informe informe={informe} clinica="Hospital San Vicente de Paúl" organizationId={ORG} />);

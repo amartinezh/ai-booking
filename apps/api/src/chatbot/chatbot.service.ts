@@ -173,6 +173,20 @@ import {
   severidadPorCercania,
   TITULO_EXCEPCION,
 } from '@agenia/shared';
+import {
+  AUTORIZACION_DATOS,
+  autorizacionAceptada,
+  autorizacionRechazada,
+  autorizacionRetirada,
+  autorizacionSinRespuesta,
+  avisoAutorizacionDatos,
+  avisoAutorizacionDatosHablado,
+  pideRetirarAutorizacion,
+  recordatorioAutorizacionDatos,
+  respuestaAutorizacion,
+  type RespuestaAutorizacion,
+} from '@agenia/shared';
+import { AutorizacionDatosService } from './autorizacion-datos.service';
 import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
 import {
@@ -569,6 +583,10 @@ export class ChatbotService implements OnModuleInit {
     @Optional() private readonly resumenChat?: ResumenChatService,
     // 📢 «No más comunicados» (docs/PLAN_MENSAJES_MASIVOS.md §9). Opcional: sin él (tests), el turno sigue igual.
     @Optional() private readonly comunicados?: MassMessageOptOutService,
+    // 🔒 Autorización de tratamiento de datos antes de agendar
+    // (docs/PLAN_AUTORIZACION_DATOS.md). Opcional: sin él (tests), o con el
+    // interruptor de la clínica apagado, el chat sigue exactamente igual.
+    @Optional() private readonly autorizacionDatos?: AutorizacionDatosService,
   ) {}
 
   async onModuleInit() {
@@ -1368,12 +1386,18 @@ export class ChatbotService implements OnModuleInit {
     nombre: string | null | undefined,
     servicio: string,
     fechaIso: string | null | undefined,
+    sinAvisoLegal = false,
   ): string {
     const nombreHablado = nombre && nombre !== 'Paciente' ? nombre : '';
     const fechaHablada = fechaIso
       ? formatAppointmentSpoken(fechaIso)
       : 'la fecha que eligió';
-    return MSGS.resumenCitaAudio(nombreHablado, servicio, fechaHablada);
+    return MSGS.resumenCitaAudio(
+      nombreHablado,
+      servicio,
+      fechaHablada,
+      sinAvisoLegal,
+    );
   }
 
   /**
@@ -2797,6 +2821,12 @@ export class ChatbotService implements OnModuleInit {
           );
         }
       }
+      // 🔒 Su autorización de datos (si la dio por este chat) queda enlazada a él.
+      await this.autorizacionDatos?.enlazarPaciente(
+        organizationId,
+        identity,
+        patient.id,
+      );
       return patient;
     }
 
@@ -2834,6 +2864,12 @@ export class ChatbotService implements OnModuleInit {
       });
       this.logger.log(
         `✅ Paciente persistido: ${nombre} (cédula ${cedula}, WA ${identity.senderId})`,
+      );
+      // 🔒 Su autorización de datos (si la dio por este chat) queda enlazada a él.
+      await this.autorizacionDatos?.enlazarPaciente(
+        organizationId,
+        identity,
+        patient.id,
       );
       return patient;
     } catch (error: unknown) {
@@ -4646,6 +4682,336 @@ export class ChatbotService implements OnModuleInit {
 
   private presentadoKey(organizationId: string, senderId: string): string {
     return `bot_presentado:${organizationId}:${senderId}`;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 🔒 AUTORIZACIÓN DE TRATAMIENTO DE DATOS (docs/PLAN_AUTORIZACION_DATOS.md)
+  // ══════════════════════════════════════════════════════════════
+
+  /** La pregunta abierta de esta conversación: su fila, cuántas veces se hizo y qué retomar. */
+  private autorizacionKey(organizationId: string, senderId: string): string {
+    return `autorizacion_datos:${organizationId}:${senderId}`;
+  }
+
+  private async pendienteDeAutorizacion(
+    organizationId: string,
+    senderId: string,
+  ): Promise<{
+    filaId: string | null;
+    veces: number;
+    retomar: string | null;
+  } | null> {
+    const raw = await this.redis.get(
+      this.autorizacionKey(organizationId, senderId),
+    );
+    if (!raw) return null;
+    try {
+      const v = JSON.parse(raw) as {
+        filaId?: unknown;
+        veces?: unknown;
+        retomar?: unknown;
+      };
+      return {
+        filaId: typeof v.filaId === 'string' ? v.filaId : null,
+        veces: Number(v.veces) || 0,
+        retomar: typeof v.retomar === 'string' ? v.retomar : null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 🔒 Antes de agendar: si la clínica pide la autorización de datos y quien
+   * escribe aún no la dio, saluda, explica y pregunta SÍ/NO (o se lo recuerda en
+   * corto) y devuelve true: el caller hace return. Si no hace falta —apagada, ya
+   * autorizó o la base falló—, false y todo sigue como siempre.
+   *
+   * `retomar`: el mensaje que ya traía datos para agendar («cita de medicina
+   * general para mañana»), para seguir con él tras el SÍ sin volver a pedirlos.
+   */
+  private async pedirAutorizacionSiFalta(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string | null | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+    org: Organization | null;
+    orgName: string;
+    botName: string;
+    retomar?: string | null;
+  }): Promise<boolean> {
+    if (!this.autorizacionDatos) return false;
+    const cfg = await this.autorizacionDatos.necesitaPreguntar(
+      p.organizationId,
+      p.identity,
+    );
+    if (!cfg) return false;
+
+    const estilo = await this.organizationSettings.getCommunicationStyle(
+      p.organizationId,
+    );
+    const key = this.autorizacionKey(p.organizationId, p.senderId);
+    const previa = await this.pendienteDeAutorizacion(
+      p.organizationId,
+      p.senderId,
+    );
+    const veces = (previa?.veces ?? 0) + 1;
+
+    // Ya se le recordó varias veces sin un SÍ ni un NO: se cierra, con la salida.
+    if (veces > 1 + AUTORIZACION_DATOS.RECORDATORIOS) {
+      const reply = autorizacionSinRespuesta(
+        estilo,
+        this.contactoDe(p.MSGS, p.org),
+      );
+      await this.smartReply(p.organizationId, p.senderId, reply);
+      await this.cleanUpSession(p.organizationId, p.senderId);
+      await this.redis.del(
+        key,
+        this.presentadoKey(p.organizationId, p.senderId),
+      );
+      await this.auditSuccess(p.senderId, p.organizationId, {
+        userMessage: p.text || '[audio]',
+        botReply: reply,
+        metadata: {
+          step: 'AUTORIZACION_DATOS_SIN_RESPUESTA',
+          veces: veces - 1,
+          version: cfg.version,
+        },
+      });
+      return true;
+    }
+
+    const datos = {
+      estilo,
+      asistente: p.botName,
+      clinica: p.orgName,
+      urlPolitica: cfg.urlPolitica,
+    };
+    const aviso = avisoAutorizacionDatos(datos);
+    const reply =
+      veces === 1
+        ? aviso
+        : recordatorioAutorizacionDatos(estilo, cfg.urlPolitica);
+    let filaId = previa?.filaId ?? null;
+    try {
+      filaId = await this.autorizacionDatos.registrarPregunta(
+        p.organizationId,
+        p.identity,
+        { filaId, version: cfg.version, urlPolitica: cfg.urlPolitica, aviso },
+      );
+    } catch (error: unknown) {
+      // Se pregunta igual: la respuesta crea su propia fila completa.
+      this.logger.error(
+        `No se pudo guardar la pregunta de autorización (org ${p.organizationId}): ${getErrorMessage(error)}`,
+      );
+    }
+    await this.redis.set(
+      key,
+      JSON.stringify({
+        filaId,
+        veces,
+        retomar: p.retomar ?? previa?.retomar ?? null,
+      }),
+      'EX',
+      SESSION_TTL,
+    );
+    // En voz, el audio dice lo esencial; el texto completo y el enlace van escritos.
+    await this.smartReply(
+      p.organizationId,
+      p.senderId,
+      reply,
+      avisoAutorizacionDatosHablado(datos),
+    );
+    await this.setUserState(
+      p.organizationId,
+      p.senderId,
+      ChatState.AWAITING_DATA_CONSENT,
+    );
+    // El aviso ya se presenta («Le saluda…»): lo que siga no repite la bienvenida.
+    await this.redis.set(
+      this.presentadoKey(p.organizationId, p.senderId),
+      '1',
+      'EX',
+      PRESENTACION_TTL,
+    );
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: {
+        step:
+          veces === 1
+            ? 'AUTORIZACION_DATOS_PEDIDA'
+            : 'AUTORIZACION_DATOS_RECORDADA',
+        veces,
+        version: cfg.version,
+      },
+    });
+    return true;
+  }
+
+  /**
+   * 🔒 El SÍ o el NO a la autorización. Lo guarda (la prueba) y:
+   *  - NO: se despide con el teléfono y la ventanilla, y cierra.
+   *  - SÍ: «¡Gracias!» y el menú de servicios; o, si su primer mensaje ya traía
+   *    lo que quería y `puedeRetomar`, «¡Gracias!» y el turno sigue con ese
+   *    mensaje (sin volver a pedirle los datos).
+   * `seguir: true` = el turno continúa con `texto`; si la clínica apagó la
+   * autorización mientras respondía, con su propio mensaje, como siempre.
+   */
+  private async responderAutorizacion(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string | undefined;
+    respuesta: RespuestaAutorizacion;
+    via: 'TEXT' | 'VOICE';
+    MSGS: ReturnType<typeof buildMessages>;
+    org: Organization | null;
+    orgName: string;
+    botName: string;
+    operaciones: OperacionesBot;
+    puedeRetomar: boolean;
+  }): Promise<{ seguir: false } | { seguir: true; texto: string | undefined }> {
+    const { organizationId, senderId } = p;
+    const previa = await this.pendienteDeAutorizacion(organizationId, senderId);
+    await this.redis.del(this.autorizacionKey(organizationId, senderId));
+    const cfg = this.autorizacionDatos
+      ? await this.autorizacionDatos.configuracion(organizationId)
+      : null;
+    if (!cfg || !this.autorizacionDatos) return { seguir: true, texto: p.text };
+
+    const estilo =
+      await this.organizationSettings.getCommunicationStyle(organizationId);
+    const aviso = avisoAutorizacionDatos({
+      estilo,
+      asistente: p.botName,
+      clinica: p.orgName,
+      urlPolitica: cfg.urlPolitica,
+    });
+    try {
+      await this.autorizacionDatos.registrarRespuesta(
+        organizationId,
+        p.identity,
+        {
+          filaId: previa?.filaId ?? null,
+          version: cfg.version,
+          urlPolitica: cfg.urlPolitica,
+          aviso,
+          respuesta: p.respuesta,
+          texto: p.text,
+          via: p.via,
+        },
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo guardar la respuesta de autorización (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+    }
+
+    if (p.respuesta === 'NO') {
+      const reply = autorizacionRechazada(
+        estilo,
+        this.contactoDe(p.MSGS, p.org),
+      );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpSession(organizationId, senderId);
+      await this.redis.del(this.presentadoKey(organizationId, senderId));
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: p.text || '[audio]',
+        botReply: reply,
+        metadata: {
+          step: 'AUTORIZACION_DATOS_RECHAZADA',
+          version: cfg.version,
+          via: p.via,
+        },
+      });
+      return { seguir: false };
+    }
+
+    const gracias = autorizacionAceptada(estilo);
+    const auditarSi = (botReply: string, extra: Record<string, unknown> = {}) =>
+      this.auditSuccess(senderId, organizationId, {
+        userMessage: p.text || '[audio]',
+        botReply,
+        metadata: {
+          step: 'AUTORIZACION_DATOS_ACEPTADA',
+          version: cfg.version,
+          via: p.via,
+          ...extra,
+        },
+      });
+
+    // La clínica apagó «agendar» mientras respondía: queda guardado y se le dice
+    // qué sí se puede por aquí.
+    if (!p.operaciones.agendar) {
+      await this.smartReply(organizationId, senderId, gracias);
+      await auditarSi(gracias);
+      await this.cleanUpSession(organizationId, senderId);
+      await this.responderOperacionNoDisponible({
+        organizationId,
+        senderId,
+        text: p.text,
+        org: p.org,
+        orgName: p.orgName,
+        botName: p.botName,
+        MSGS: p.MSGS,
+        motivo: 'AGENDAR',
+        operaciones: p.operaciones,
+      });
+      return { seguir: false };
+    }
+
+    if (p.puedeRetomar && previa?.retomar) {
+      await this.smartReply(organizationId, senderId, gracias);
+      await auditarSi(gracias, { retoma: true });
+      await this.setUserState(organizationId, senderId, ChatState.IDLE);
+      return { seguir: true, texto: previa.retomar };
+    }
+
+    const { lineas, count } = await this.buildServiceMenu(
+      organizationId,
+      senderId,
+    );
+    const reply = `${gracias}\n\n${
+      count > 0
+        ? p.MSGS.menuServiciosSinPresentacion(lineas)
+        : p.MSGS.bienvenida(
+            p.orgName,
+            'Ej: Medicina General, Odontología',
+            p.botName,
+          )
+    }`;
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_SPECIALTY,
+    );
+    await auditarSi(reply, { servicesCount: count });
+    return { seguir: false };
+  }
+
+  /**
+   * El enlace de la política para el aviso del resumen de la cita y si ya
+   * autorizó al comenzar (entonces no se le repite el párrafo legal). Sin el
+   * servicio, lo de siempre.
+   */
+  private async avisoLegalDelResumen(
+    organizationId: string,
+    identity: SenderIdentity,
+  ): Promise<{ url: string | undefined; yaAutorizo: boolean }> {
+    if (!this.autorizacionDatos) {
+      return {
+        url: this.configService.get<string>('PRIVACY_POLICY_URL'),
+        yaAutorizo: false,
+      };
+    }
+    const [url, yaAutorizo] = await Promise.all([
+      this.autorizacionDatos.urlPolitica(organizationId),
+      this.autorizacionDatos.autorizoYa(organizationId, identity),
+    ]);
+    return { url, yaAutorizo };
   }
 
   /**
@@ -6722,6 +7088,8 @@ export class ChatbotService implements OnModuleInit {
     botName: string;
     org: Organization | null;
     operaciones: OperacionesBot;
+    /** Para pedir la autorización de datos antes del menú. */
+    identity?: SenderIdentity;
   }): Promise<void> {
     const {
       organizationId,
@@ -6750,6 +7118,25 @@ export class ChatbotService implements OnModuleInit {
         motivo: 'AGENDAR',
         operaciones: p.operaciones,
       });
+      return;
+    }
+
+    // 🔒 Antes del menú: la autorización de datos, si la clínica la pide y quien
+    // escribe aún no la dio.
+    if (
+      isGreeting &&
+      p.identity &&
+      (await this.pedirAutorizacionSiFalta({
+        organizationId,
+        senderId,
+        identity: p.identity,
+        text,
+        MSGS,
+        org: p.org,
+        orgName,
+        botName,
+      }))
+    ) {
       return;
     }
 
@@ -7113,6 +7500,49 @@ export class ChatbotService implements OnModuleInit {
       }
     }
 
+    // 🔒 «Retiro mi autorización» / «borren mis datos» (frases fijas, sin IA: es
+    // una decisión sobre sus datos). Solo con la autorización de datos encendida;
+    // corta lo que estuviera haciendo. En la pregunta misma, «no autorizo» es su
+    // NO (lo atiende el paso de la autorización).
+    if (
+      messageType === 'text' &&
+      this.autorizacionDatos &&
+      currentState !== ChatState.AWAITING_DATA_CONSENT &&
+      pideRetirarAutorizacion(text)
+    ) {
+      const cfg = await this.autorizacionDatos.configuracion(organizationId);
+      if (cfg) {
+        const reply = autorizacionRetirada(
+          communicationStyle,
+          this.contactoDe(MSGS, org),
+        );
+        try {
+          await this.autorizacionDatos.retirar(organizationId, identity, {
+            version: cfg.version,
+            urlPolitica: cfg.urlPolitica,
+            texto: text,
+            respuesta: reply,
+          });
+        } catch (error: unknown) {
+          this.logger.error(
+            `No se pudo guardar el retiro de la autorización (org ${organizationId}): ${getErrorMessage(error)}`,
+          );
+        }
+        await this.cleanUpSession(organizationId, senderId);
+        await this.redis.del(this.autorizacionKey(organizationId, senderId));
+        await this.smartReply(organizationId, senderId, reply);
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            step: 'AUTORIZACION_DATOS_RETIRADA',
+            version: cfg.version,
+          },
+        });
+        return;
+      }
+    }
+
     // 🛡️ GUARDRAIL: INSULTO → DERIVACIÓN INMEDIATA ───────────────
     // Se evalúa lo más temprano posible, antes de cualquier procesamiento
     // (Gemini, reintentos, estados). El audio no se inspecciona aquí (irá
@@ -7195,6 +7625,39 @@ export class ChatbotService implements OnModuleInit {
       );
       await this.cleanUpSession(organizationId, senderId);
       currentState = ChatState.IDLE;
+    }
+
+    // 🔒 AUTORIZACIÓN DE DATOS (docs/PLAN_AUTORIZACION_DATOS.md): se le preguntó
+    // SÍ/NO antes de agendar. Un SÍ o un NO claros, por escrito, se atienden
+    // aquí. Lo demás —cancelar, consultar, una pregunta, otra frase— se atiende
+    // como un mensaje nuevo, en reposo; si vuelve a pedir agendar, se le vuelve a
+    // preguntar. La voz se lee tras transcribirla (más abajo).
+    const enPasoDeAutorizacion =
+      currentState === ChatState.AWAITING_DATA_CONSENT;
+    if (enPasoDeAutorizacion) {
+      currentState = ChatState.IDLE;
+      const respuesta =
+        messageType === 'text' ? respuestaAutorizacion(text) : null;
+      if (respuesta) {
+        const r = await this.responderAutorizacion({
+          organizationId,
+          senderId,
+          identity,
+          text,
+          respuesta,
+          via: 'TEXT',
+          MSGS,
+          org,
+          orgName,
+          botName,
+          operaciones,
+          puedeRetomar: true,
+        });
+        if (!r.seguir) return;
+        // Su primer mensaje ya decía qué quería: el turno sigue con él, como si
+        // lo acabara de escribir (ya con la autorización guardada).
+        text = r.texto;
+      }
     }
 
     const isStrictStep =
@@ -7546,6 +8009,30 @@ export class ChatbotService implements OnModuleInit {
           : 'EMERGENCY_TRANSCRIPT_REGEX',
       });
       return;
+    }
+
+    // 🔒 AUTORIZACIÓN DE DATOS POR VOZ: el «sí, acepto» de una nota de voz, ya
+    // transcrito. Tras el SÍ se muestra el menú (por voz no se retoma el primer
+    // mensaje). Lo demás sigue como un mensaje nuevo (ver arriba).
+    if (enPasoDeAutorizacion && isAudio) {
+      const respuesta = respuestaAutorizacion(text);
+      if (respuesta) {
+        const r = await this.responderAutorizacion({
+          organizationId,
+          senderId,
+          identity,
+          text,
+          respuesta,
+          via: 'VOICE',
+          MSGS,
+          org,
+          orgName,
+          botName,
+          operaciones,
+          puedeRetomar: false,
+        });
+        if (!r.seguir) return;
+      }
     }
 
     // 💬 Respuesta al recordatorio POR VOZ (2026-10-16): «confirmo mi asistencia»,
@@ -7944,6 +8431,7 @@ export class ChatbotService implements OnModuleInit {
         botName,
         org,
         operaciones,
+        identity,
       });
       return;
     }
@@ -8110,6 +8598,36 @@ export class ChatbotService implements OnModuleInit {
         operaciones,
       });
       return;
+    }
+
+    // 🔒 AUTORIZACIÓN DE DATOS: lo que llega aquí en reposo va a agendar. Si la
+    // clínica pide la autorización y quien escribe aún no la dio, se le pregunta
+    // ANTES de guardar ningún dato. Si su mensaje ya traía lo que quería
+    // (servicio, EPS, fecha, documento…), se guarda para seguir con él tras el SÍ.
+    if (currentState === ChatState.IDLE) {
+      const traeDatos = !!(
+        aiData.cedula ||
+        aiData.nombre ||
+        aiData.eps ||
+        aiData.especialidad ||
+        aiData.doctor ||
+        aiData.fechaSolicitada
+      );
+      if (
+        await this.pedirAutorizacionSiFalta({
+          organizationId,
+          senderId,
+          identity,
+          text,
+          MSGS,
+          org,
+          orgName,
+          botName,
+          retomar: traeDatos && text ? text : null,
+        })
+      ) {
+        return;
+      }
     }
 
     if (currentState === ChatState.AWAITING_WAITLIST_CONFIRM) {
@@ -9523,13 +10041,19 @@ export class ChatbotService implements OnModuleInit {
       const fechaFormateadaResumen = fechaVistaFinal
         ? formatAppointmentLong(fechaVistaFinal)
         : '';
+      // 🔒 A quien ya autorizó al comenzar no se le repite el párrafo legal.
+      const avisoLegal = await this.avisoLegalDelResumen(
+        organizationId,
+        identity,
+      );
       const replyResumen = MSGS.resumenCita(
         nombreAgend,
         finalCedula,
         resolvedEpsName,
         resolvedServiceName as string,
         fechaFormateadaResumen,
-        this.configService.get<string>('PRIVACY_POLICY_URL'),
+        avisoLegal.url,
+        avisoLegal.yaAutorizo,
       );
       // smartReply y no texto directo: en flujo de voz el resumen también se
       // ESCUCHA (el paciente lo recibía solo escrito, retroalimentación del
@@ -9544,6 +10068,7 @@ export class ChatbotService implements OnModuleInit {
           nombreAgend,
           resolvedServiceName as string,
           fechaVistaFinal,
+          avisoLegal.yaAutorizo,
         ),
       );
       await this.setUserState(
@@ -10797,19 +11322,33 @@ export class ChatbotService implements OnModuleInit {
         (await this.redis.get(
           `temp_eps_query:${organizationId}:${senderId}`,
         )) || 'EPS';
+      // 🔒 A quien ya autorizó al comenzar no se le repite el párrafo legal. Aquí
+      // solo se tiene la clave del remitente, que es con la que se guardó.
+      const avisoLegal = await this.avisoLegalDelResumen(organizationId, {
+        senderId,
+        bsuid: null,
+        phone: null,
+      });
       const reply = MSGS.resumenCita(
         nombrePrevio || 'Paciente',
         cedulaPrevia,
         epsAgend,
         specAgend,
         fechaFormateada,
-        this.configService.get<string>('PRIVACY_POLICY_URL'),
+        avisoLegal.url,
+        avisoLegal.yaAutorizo,
       );
       await this.smartReply(
         organizationId,
         senderId,
         reply,
-        this.resumenCitaHablado(MSGS, nombrePrevio, specAgend, slotFechaStr),
+        this.resumenCitaHablado(
+          MSGS,
+          nombrePrevio,
+          specAgend,
+          slotFechaStr,
+          avisoLegal.yaAutorizo,
+        ),
       );
       await this.setUserState(
         organizationId,
@@ -11518,19 +12057,31 @@ export class ChatbotService implements OnModuleInit {
     // Solo para MOSTRAR su nombre en el resumen. La traducción de "Particular"
     // a `null` —que no es una afiliación y no debe quedar ligada al paciente ni
     // a la cita— la hace ahora la confirmación, que es donde se guarda.
+    // 🔒 A quien ya autorizó al comenzar no se le repite el párrafo legal.
+    const avisoLegal = await this.avisoLegalDelResumen(
+      organizationId,
+      ctx.identity,
+    );
     const reply = MSGS.resumenCita(
       nombre || 'Paciente',
       cedula,
       eps?.name ?? PARTICULAR_EPS_NAME,
       servicio ?? '',
       fechaVista ? formatAppointmentLong(fechaVista) : '',
-      this.configService.get<string>('PRIVACY_POLICY_URL'),
+      avisoLegal.url,
+      avisoLegal.yaAutorizo,
     );
     await this.smartReply(
       organizationId,
       senderId,
       reply,
-      this.resumenCitaHablado(MSGS, nombre, servicio ?? '', fechaVista),
+      this.resumenCitaHablado(
+        MSGS,
+        nombre,
+        servicio ?? '',
+        fechaVista,
+        avisoLegal.yaAutorizo,
+      ),
     );
     await this.setUserState(
       organizationId,
@@ -12770,6 +13321,21 @@ export class ChatbotService implements OnModuleInit {
     const decision = this.interpretYesNo(text);
 
     if (decision === 'SI') {
+      // 🔒 Quiere agendar otra: antes, la autorización de datos si hace falta.
+      if (
+        await this.pedirAutorizacionSiFalta({
+          organizationId,
+          senderId,
+          identity: ctx.identity,
+          text,
+          MSGS,
+          org: await this.organizacionDe(organizationId),
+          orgName,
+          botName,
+        })
+      ) {
+        return;
+      }
       // Tras cancelar, ofrecer menú con letras (Paso 1 del nuevo protocolo).
       const { lineas, count } = await this.buildServiceMenu(
         organizationId,
@@ -15624,6 +16190,21 @@ export class ChatbotService implements OnModuleInit {
 
     if (elegida === 'AGENDAR') {
       await this.cleanUpSession(organizationId, senderId);
+      // 🔒 Antes del menú: la autorización de datos, si hace falta.
+      if (
+        await this.pedirAutorizacionSiFalta({
+          organizationId,
+          senderId,
+          identity: ctx.identity,
+          text,
+          MSGS,
+          org: await this.organizacionDe(organizationId),
+          orgName,
+          botName,
+        })
+      ) {
+        return;
+      }
       const { lineas, count } = await this.buildServiceMenu(
         organizationId,
         senderId,

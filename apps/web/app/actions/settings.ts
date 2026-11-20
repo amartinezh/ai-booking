@@ -13,6 +13,7 @@ import {
     normalizarParteDelChat,
     normalizarPlazoAgendar,
     normalizarSabadoRural,
+    normalizarVersionPolitica,
     operacionHisDelEvento,
     textoParteDelChat,
     textoPlazoAgendar,
@@ -20,6 +21,8 @@ import {
     validarParteDelChat,
     validarSabadoRural,
     validarPlazoAgendar,
+    validarUrlPolitica,
+    validarVersionPolitica,
 } from '@agenia/shared';
 import { OP_CAMBIO_RESERVA, cargarResumenDeLaReserva } from '@/lib/reserva-presencial/resumen';
 import { OP_CAMBIO_SABADO_RURAL, cargarEstadoSabadoRural } from '@/lib/sabado-rural/estado';
@@ -72,7 +75,12 @@ export async function getMyOrgSettings() {
             bookingMaxDaysAhead: true,
             botAgendaSharePercent: true,
             saturdayRuralSharePercent: true,
-            organization: { select: { timezone: true } },
+            dataConsentEnabled: true,
+            dataPolicyUrl: true,
+            dataPolicyVersion: true,
+            dataConsentUpdatedAt: true,
+            dataConsentUpdatedBy: true,
+            organization: { select: { timezone: true, name: true } },
         },
     });
     return {
@@ -99,7 +107,110 @@ export async function getMyOrgSettings() {
         // «Hoy» en la zona de la clínica: el panel muestra con fechas reales
         // hasta qué día ofrece citas el asistente.
         hoyEnLaClinica: diaLocal(new Date(), s?.organization?.timezone || undefined),
+        // 🔒 Autorización de datos: sin fila = apagada, versión 1 (los defaults de las columnas).
+        autorizacionDatos: autorizacionDatosDe(s),
+        // Para la vista previa del aviso (la clínica es la responsable de los datos).
+        nombreClinica: s?.organization?.name ?? '',
     };
+}
+
+type FilaAutorizacionDatos = {
+    dataConsentEnabled: boolean;
+    dataPolicyUrl: string | null;
+    dataPolicyVersion: string;
+    dataConsentUpdatedAt: Date | null;
+    dataConsentUpdatedBy: string | null;
+} | null;
+
+/** La autorización de datos de la clínica, como la muestra el panel. */
+function autorizacionDatosDe(s: FilaAutorizacionDatos) {
+    return {
+        encendida: s?.dataConsentEnabled ?? false,
+        urlPolitica: s?.dataPolicyUrl ?? '',
+        version: normalizarVersionPolitica(s?.dataPolicyVersion),
+        ultimoCambio: s?.dataConsentUpdatedAt
+            ? { en: s.dataConsentUpdatedAt.toISOString(), por: s.dataConsentUpdatedBy ?? '' }
+            : null,
+    };
+}
+
+/**
+ * 🔒 Autorización de datos (docs/PLAN_AUTORIZACION_DATOS.md): encenderla o
+ * apagarla, el enlace de la política y su versión. Encendida, el asistente pide
+ * la autorización (SÍ/NO) antes de agendar. Para encenderla hace falta el enlace.
+ * Cambiar la versión hace que a todos se les vuelva a preguntar. Guarda con su
+ * botón y queda en la Actividad de usuarios.
+ */
+export async function setMyAutorizacionDatos(entrada: { encendida: boolean; urlPolitica: string; version: string }) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false as const, error: 'Acceso denegado' };
+
+    const url = validarUrlPolitica(entrada?.urlPolitica);
+    if (!url.ok) return { success: false as const, error: url.error };
+    const version = validarVersionPolitica(entrada?.version);
+    if (!version.ok) return { success: false as const, error: version.error };
+    const encendida = entrada?.encendida === true;
+    if (encendida && !url.url) {
+        return {
+            success: false as const,
+            error: 'Para encenderla, escriba el enlace de la política de tratamiento de datos de la clínica.',
+        };
+    }
+    const organizationId = session.organizationId!;
+    try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId },
+            select: { dataConsentEnabled: true, dataPolicyUrl: true, dataPolicyVersion: true },
+        });
+        const anterior = {
+            encendida: antes?.dataConsentEnabled ?? false,
+            urlPolitica: antes?.dataPolicyUrl ?? null,
+            version: normalizarVersionPolitica(antes?.dataPolicyVersion),
+        };
+        const cambios: string[] = [];
+        if (anterior.encendida !== encendida) cambios.push(`«Autorización de datos» ${encendida ? 'encendida' : 'apagada'}`);
+        if (anterior.urlPolitica !== url.url) cambios.push(`enlace de la política: ${url.url ?? '(sin enlace)'}`);
+        if (anterior.version !== version.version) {
+            cambios.push(`versión de la política: ${anterior.version} → ${version.version} (se les vuelve a preguntar a todos)`);
+        }
+        const ahora = new Date();
+        const actor = session.email ?? session.userId ?? 'desconocido';
+        const data = {
+            dataConsentEnabled: encendida,
+            dataPolicyUrl: url.url,
+            dataPolicyVersion: version.version,
+            ...(cambios.length ? { dataConsentUpdatedAt: ahora, dataConsentUpdatedBy: actor } : {}),
+        };
+        const guardado = await prisma.organizationSettings.upsert({
+            where: { organizationId },
+            create: { organizationId, ...data },
+            update: data,
+            select: {
+                dataConsentEnabled: true,
+                dataPolicyUrl: true,
+                dataPolicyVersion: true,
+                dataConsentUpdatedAt: true,
+                dataConsentUpdatedBy: true,
+            },
+        });
+        if (cambios.length) {
+            // Si la anotación falla, no deshace el cambio: solo queda en el log.
+            try {
+                await anotarAjuste(session, 'DATA_CONSENT_CHANGED', `Asistente: ${cambios.join(' · ')}`, {
+                    anterior,
+                    nuevo: { encendida, urlPolitica: url.url, version: version.version },
+                });
+            } catch (e) {
+                console.error('[configuración] no se pudo anotar el cambio de la autorización de datos', {
+                    error: getErrorMessage(e),
+                });
+            }
+        }
+        revalidatePath('/dashboard/configuracion');
+        return { success: true as const, autorizacionDatos: autorizacionDatosDe(guardado) };
+    } catch (e) {
+        return { success: false as const, error: getErrorMessage(e) };
+    }
 }
 
 /**

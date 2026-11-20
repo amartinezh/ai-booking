@@ -10,6 +10,7 @@
 // pendientes por cédula para evitar abuso.
 // ─────────────────────────────────────────────────────────────
 
+import { ERROR_CASILLA_AUTORIZACION, normalizarVersionPolitica } from '@agenia/shared';
 import { prisma } from '@/lib/prisma';
 
 const MAX_PENDING_PER_CEDULA = 3;
@@ -20,6 +21,8 @@ export interface EnrollmentRequestPayload {
     phone?: string;
     epsName?: string;
     message: string;
+    /** 🔒 La casilla de autorización de datos (obligatoria). */
+    autorizaDatos?: boolean;
 }
 
 export async function submitEnrollmentRequest(
@@ -29,7 +32,7 @@ export async function submitEnrollmentRequest(
     try {
         const organization = await prisma.organization.findUnique({
             where: { id: orgId },
-            select: { id: true, isActive: true },
+            select: { id: true, isActive: true, settings: { select: { dataPolicyVersion: true } } },
         });
         if (!organization || !organization.isActive) {
             return { success: false, error: 'La institución no está disponible.' };
@@ -56,6 +59,10 @@ export async function submitEnrollmentRequest(
                 error: 'Cuéntanos brevemente por qué deberías estar dado de alta (mínimo 10 caracteres).',
             };
         }
+        // 🔒 Sin la autorización de datos no se guarda nada (Ley 1581).
+        if (payload.autorizaDatos !== true) {
+            return { success: false, error: ERROR_CASILLA_AUTORIZACION };
+        }
 
         const pending = await prisma.epsEnrollmentRequest.count({
             where: { organizationId: orgId, cedula, status: 'PENDING' },
@@ -75,6 +82,8 @@ export async function submitEnrollmentRequest(
                 phone: phone || null,
                 epsName: epsName.slice(0, 120) || null,
                 message,
+                dataConsentAt: new Date(),
+                dataConsentPolicyVersion: normalizarVersionPolitica(organization.settings?.dataPolicyVersion),
             },
         });
 

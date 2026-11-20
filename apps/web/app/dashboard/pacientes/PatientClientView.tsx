@@ -4,10 +4,19 @@ import { useState, useTransition } from 'react';
 import PatientModal from './PatientModal';
 import { deletePatientAction } from './actions';
 import { Prisma } from '@agenia/database';
+import { formatDateShort } from '@/lib/date';
+import type { AutorizacionDelPaciente } from '@/lib/autorizacion-datos/pacientes';
 
 type PatientWithUser = Prisma.PatientProfileGetPayload<{ include: { user: true } }>;
 
-export default function PatientClientView({ patients }: { patients: PatientWithUser[] }) {
+export default function PatientClientView({
+    patients,
+    autorizaciones = {},
+}: {
+    patients: PatientWithUser[];
+    /** 🔒 Por paciente, la autorización de datos con que se registró por el chat. */
+    autorizaciones?: Record<string, AutorizacionDelPaciente>;
+}) {
     const [editingPatient, setEditingPatient] = useState<PatientWithUser | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [isPending, startTransition] = useTransition();
@@ -55,6 +64,7 @@ export default function PatientClientView({ patients }: { patients: PatientWithU
                                 <th scope="col" className="px-6 py-5 text-left text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Cédula</th>
                                 <th scope="col" className="px-6 py-5 text-left text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Contacto (WA)</th>
                                 <th scope="col" className="px-6 py-5 text-left text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Correo (Login)</th>
+                                <th scope="col" className="px-6 py-5 text-left text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Autorización de datos</th>
                                 <th scope="col" className="relative px-6 py-5"><span className="sr-only">Acciones</span></th>
                             </tr>
                         </thead>
@@ -106,6 +116,9 @@ export default function PatientClientView({ patients }: { patients: PatientWithU
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
                                         {patient.user?.email || 'N/A'}
                                     </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-xs">
+                                        <EtiquetaAutorizacion a={autorizaciones[patient.id]} />
+                                    </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex justify-end gap-2">
                                             <button
@@ -137,5 +150,27 @@ export default function PatientClientView({ patients }: { patients: PatientWithU
                 </div>
             </div>
         </div>
+    );
+}
+
+/** 🔒 Cómo quedó la autorización de datos del paciente (o «—» si no se registró por el chat con ella). */
+function EtiquetaAutorizacion({ a }: { a?: AutorizacionDelPaciente }) {
+    if (!a) return <span className="text-zinc-400" title="No se registró por el chat con la autorización encendida">—</span>;
+    const canal = a.canal === 'WHATSAPP' ? 'WhatsApp' : 'Telegram';
+    const fecha = formatDateShort(new Date(a.fecha));
+    return a.estado === 'AUTORIZO' ? (
+        <span
+            title={`Autorizó por ${canal}, versión ${a.version} de la política`}
+            className="px-3 py-1 inline-flex font-bold rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/40"
+        >
+            ✓ Autorizó · {fecha}
+        </span>
+    ) : (
+        <span
+            title={`La retiró por ${canal}`}
+            className="px-3 py-1 inline-flex font-bold rounded-lg bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800/40"
+        >
+            Retiró · {fecha}
+        </span>
     );
 }

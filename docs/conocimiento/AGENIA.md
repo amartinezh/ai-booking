@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-11-19
+**Última actualización:** 2026-11-20
 
 ## Contenido
 
@@ -375,6 +375,10 @@ No. Si necesitas responderle, usa el teléfono que dejó en la solicitud.
 
 Del formulario público de alta de la clínica, al que el asistente remite a quien no figura en el padrón de su EPS.
 
+##### ¿El formulario pide autorización de datos?
+
+Sí. Desde el 20 de noviembre de 2026, para enviar la solicitud la persona debe marcar la casilla en la que autoriza a la clínica a tratar sus datos, incluidos los de salud que escriba, para revisar la solicitud y contactarla (Ley 1581 de 2012). Si la clínica escribió el enlace de su política en Configuración, la casilla lo trae. Queda guardado cuándo la marcó y con qué versión de la política.
+
 ##### ¿Qué le dice el asistente a quien no está en el padrón?
 
 La primera vez le muestra el número que escribió, le pregunta si lo escribió bien y le deja escribir el correcto ahí mismo, sin perder el horario que eligió ni la lista de espera. Si el número está bien, le da el enlace del formulario. Si el segundo número tampoco está en el padrón, o si escribe el mismo, cierra la conversación con el enlace del formulario y el teléfono del hospital. Desde el 17 de noviembre de 2026 ya no le ofrece agendar como particular: quien sí tenía derechos y el padrón estaba atrasado llegaba a recepción con una cita de pago directo que había que pasar a su EPS.
@@ -447,6 +451,10 @@ No. Mientras tenga una pendiente para ese día o mes, el asistente no le envía 
 ##### ¿Quién puede aprobar?
 
 El administrador y el agente de reservas de la clínica. Si dos personas la abren a la vez, solo cuenta la primera decisión.
+
+##### ¿El formulario pide autorización de datos?
+
+Sí. Desde el 20 de noviembre de 2026, para radicar la solicitud el paciente debe marcar la casilla en la que autoriza a la clínica a tratar sus datos, incluidos los de salud que escriba, para revisarla y contactarlo (Ley 1581 de 2012). Queda guardado cuándo la marcó y con qué versión de la política.
 
 #### Si algo no sale bien
 
@@ -1056,7 +1064,7 @@ No hay citas en ese periodo. Amplía las fechas.
 - **Ruta:** `/dashboard/canales`
 - **Resumen:** WhatsApp y Telegram en cifras, actualizadas cada 30 segundos: quién escribe, cuántos agendan y dónde se pierden.
 - **Relacionados:** [Caja Negra (Auditoría)](#auditoria), [Analíticas de Negocio](#analiticas), [Configuración](#configuracion)
-- **Palabras clave:** conversaciones, mensajes, tiempo real, monitor, conversión, embudo, horas pico, whatsapp, telegram, estadísticas del bot
+- **Palabras clave:** conversaciones, mensajes, tiempo real, monitor, conversión, embudo, horas pico, whatsapp, telegram, estadísticas del bot, autorización de datos, habeas data, ley 1581, consentimiento
 
 #### Para qué sirve
 
@@ -1081,6 +1089,12 @@ Muestra lo que está pasando en las conversaciones del asistente. Te sirve para 
 2. Haz clic en un nombre de la leyenda para ocultar o mostrar su línea.
 3. Pulsa «Ver tabla» para ver los números exactos de cada tramo.
 
+##### Ver quién autorizó el tratamiento de sus datos
+
+1. Baja hasta «Autorización de datos», al final de la página.
+2. Elige «7 días», «30 días» o «90 días».
+3. Lee las cifras: a cuántas personas se les preguntó, cuántas aceptaron, cuántas no, cuántas no respondieron y el porcentaje de aceptación; debajo, por canal y por día.
+
 #### Qué ves en la pantalla
 
 - **Personas escribiendo:** Personas distintas que le escribieron al bot. Debajo, el total de mensajes.
@@ -1092,6 +1106,7 @@ Muestra lo que está pasando en las conversaciones del asistente. Te sirve para 
 - **¿Qué pasó con las citas pedidas?:** Su estado actual: vigentes, atendidas, canceladas o no asistió.
 - **Principales motivos de fallo:** Los 8 motivos más frecuentes, por canal.
 - **Horas pico:** Mensajes por día de la semana y hora, de los dos canales juntos.
+- **Autorización de datos:** Con su propio periodo (7, 30 o 90 días), si está encendida y con qué versión de la política, y cuántas personas aceptaron, no aceptaron, no respondieron o siguen con la pregunta abierta; cuántas dijeron que no y después que sí, y cuántas la retiraron. Cada persona cuenta una vez, por lo último que respondió. No se actualiza sola: vuelve a abrir la página para ver lo nuevo.
 
 #### Preguntas frecuentes
 
@@ -1102,6 +1117,10 @@ Vienen de la Caja Negra del bot, que guarda un número limitado de días. La not
 ##### ¿Qué diferencia hay con la Caja Negra?
 
 Canales en vivo cuenta. La Caja Negra te muestra cada caso para que puedas contactar al paciente.
+
+##### ¿Qué quiere decir «No respondieron» en la autorización de datos?
+
+Que el asistente le pidió la autorización y la conversación se cerró sin un sí ni un no (dejó de escribir o, tras varios recordatorios, el asistente cerró). «Esperando respuesta» son las conversaciones que siguen abiertas. Si la sección dice que está apagada, se enciende en Configuración › Asistente Virtual.
 
 #### Si algo no sale bien
 
@@ -1298,11 +1317,11 @@ No hay cambios por guardar: modifica un valor o un interruptor primero.
 - **Ruta:** `/dashboard/configuracion`
 - **Resumen:** El asistente virtual (nombre, tono, voz y qué puede hacer el paciente), sus canales, la información que comparte y la página de estadísticas para compartir.
 - **Relacionados:** [Canales en vivo](#canales), [Encuestas (CSAT)](#encuestas), [Visión General](#vision-general), [Espejo con el HIS](#espejo), [Analíticas de Negocio](#analiticas)
-- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días, médicos nuevos, homologar automáticamente, agregar médicos, estadísticas, cifras, informe, gerencia, compartir resultados, enlace público, subdominio
+- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días, médicos nuevos, homologar automáticamente, agregar médicos, estadísticas, cifras, informe, gerencia, compartir resultados, enlace público, subdominio, habeas data, ley 1581, autorización de datos, consentimiento, política de privacidad, tratamiento de datos
 
 #### Para qué sirve
 
-Tiene cinco pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, hasta cuántos días adelante le ofrece citas, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Días sin citas»: un calendario para elegir los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados). «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica. «Estadísticas»: abre, con una clave sencilla, una página con las cifras de AgenIA para compartir con la gerencia o con quien decidas.
+Tiene cinco pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, si le pide la autorización de datos antes de agendar, hasta cuántos días adelante le ofrece citas, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Días sin citas»: un calendario para elegir los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados). «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica. «Estadísticas»: abre, con una clave sencilla, una página con las cifras de AgenIA para compartir con la gerencia o con quien decidas.
 
 #### Paso a paso
 
@@ -1313,6 +1332,18 @@ Tiene cinco pestañas. «Asistente Virtual»: qué puede hacer el paciente por W
 3. Cada interruptor se guarda al instante y aplica desde el siguiente mensaje del paciente.
 
 > 💡 Con una operación apagada, el asistente le dice al paciente que se comunique con el hospital y qué sí puede hacer por ahí. Con las tres apagadas, solo consulta citas. Si la clínica está conectada al hospital, cada interruptor manda en todo: encendido, la operación se hace por el asistente y desde el panel y llega al sistema del hospital (el asistente solo le confirma al paciente cuando el hospital lo registró); apagado, no se puede hacer en AgenIA —ni por el asistente ni desde el panel— y se hace directamente en el sistema del hospital. Cada cambio queda en la auditoría del espejo. Sin conexión al hospital, el personal sigue haciendo todo desde el panel.
+
+##### Pedir la autorización de datos antes de agendar
+
+1. En «Asistente Virtual», busca «Autorización de datos (Ley 1581)».
+2. Escribe el enlace de la política de tratamiento de datos de la clínica (por ejemplo, la página de protección de datos de su sitio web). Sin el enlace no se puede encender.
+3. Deja la versión de la política en 1, o escribe la que use la clínica.
+4. Enciende el interruptor y pulsa «Guardar». Aplica desde el siguiente mensaje de cada paciente.
+5. Pulsa «Ver el mensaje que recibe el paciente» para leer el texto exacto: saludo, para qué se usan los datos, que los de salud son sensibles y no está obligado a autorizarlos, sus derechos, la ley, el enlace y la pregunta SÍ o NO.
+6. Al pie aparece el último cambio: quién lo hizo y cuándo. El cambio también queda en la Actividad de usuarios.
+7. Si la política cambia de fondo, cambia la versión (por ejemplo, de 1 a 2) y guarda: a todos los que ya habían autorizado se les volverá a preguntar la próxima vez que quieran agendar.
+
+> 💡 El texto lo debe aprobar la oficina jurídica o el oficial de protección de datos de la clínica, que es la responsable de los datos. Las cifras de quién aceptó, quién no y quién no respondió están en Canales en vivo, y en Pacientes se ve con qué autorización se registró cada paciente por el chat.
 
 ##### Limitar hasta qué día ofrece citas el asistente
 
@@ -1546,7 +1577,35 @@ No se puede ver: se guarda cifrada. Pon una nueva en la pestaña «Estadísticas
 
 No. Apagar «Agendar» detiene todas las citas nuevas por el asistente, de cualquier día. «Días sin citas» solo quita los días u horas elegidos; el resto se sigue ofreciendo.
 
+##### ¿Cuándo pide el asistente la autorización de datos?
+
+Con la autorización encendida, cuando alguien quiere agendar y todavía no la ha dado desde ese número (o ese chat de Telegram): al saludar, al pedir una cita, al querer agendar otra después de cancelar o desde «¿qué citas tengo?». Se pregunta una vez por número y por canal, y otra vez solo si la clínica cambia la versión de la política. No se pregunta para cancelar, cambiar la fecha o consultar una cita, ni al responder un recordatorio, una oferta de la lista de espera o los documentos de la consulta, y una posible emergencia siempre se atiende primero.
+
+##### ¿Qué pasa si el paciente no da la autorización?
+
+El asistente le dice que respeta su decisión, que sin su autorización no puede atenderle por el chat y que puede pedir su cita al teléfono del hospital o en la ventanilla, y cierra la conversación. Su respuesta queda guardada. Si vuelve a escribir para agendar, se le vuelve a preguntar.
+
+##### ¿Y si contesta otra cosa en vez de sí o no?
+
+Si escribe algo que no es un sí ni un no (por ejemplo, «no entiendo» o «quiero una cita»), el asistente atiende ese mensaje como siempre y, si sigue queriendo agendar, le recuerda la pregunta en corto. Después de tres recordatorios sin respuesta, cierra la conversación con el teléfono y la ventanilla. Si lo que escribe es «cancelar cita» o una pregunta, se atiende sin pedirle la autorización.
+
+##### Si el primer mensaje ya decía qué cita quería, ¿tiene que repetirlo?
+
+No. Si escribió, por ejemplo, «necesito cita de medicina general para mañana», después del sí el asistente sigue con eso, sin volver a preguntarle el servicio. Si el sí llega en una nota de voz, sigue desde el menú de servicios.
+
+##### ¿Cómo retira un paciente su autorización?
+
+Escribiendo, por ejemplo, «Retiro mi autorización» o «Quiero que borren mis datos». El asistente lo registra, le dice que sus citas ya agendadas no cambian y que, para que el hospital corrija o borre sus datos, se comunique con el hospital. Si después quiere agendar por el chat, se le vuelve a pedir la autorización. La solicitud de borrar los datos la atiende el hospital, no el asistente.
+
+##### Con la autorización encendida, ¿el resumen de la cita sigue diciendo lo de la Ley 1581?
+
+No a quien ya autorizó al empezar: el resumen va sin ese párrafo, porque ya respondió. Con la autorización apagada, el resumen sigue con el aviso de siempre (al responder sí autoriza el tratamiento de sus datos), con el enlace de la política de la clínica si lo escribiste.
+
 #### Si algo no sale bien
+
+##### Al guardar la autorización de datos sale «Para encenderla, escriba el enlace de la política…».
+
+Escribe el enlace completo de la política de tratamiento de datos de la clínica, empezando por https://, y vuelve a guardar.
 
 ##### La prueba de IA falla.
 
@@ -2302,6 +2361,9 @@ Trajo más citas de las que caben en un lote. Reduce el rango de fechas.
 
 ## Glosario {#glosario}
 
+- **Autorización de datos:** El sí que da el paciente, antes de agendar por el chat, para que la clínica trate sus datos personales y de salud según su política (Ley 1581 de 2012). Se puede retirar escribiendo «Retiro mi autorización».
+  - También se dice: habeas data, consentimiento, política de privacidad, tratamiento de datos
+  - Se ve en: [Configuración](#configuracion)
 - **Comunicado:** Un mensaje de la clínica que se envía por WhatsApp a muchas personas a la vez desde Mensajes masivos.
   - También se dice: mensaje masivo, campaña, difusión
   - Se ve en: [Mensajes masivos](#mensajes-masivos)
@@ -2575,6 +2637,19 @@ AgenIA solo trabaja con las citas de **médicos con «Reservas por WhatsApp» en
 
 **Las citas que agendó el asistente siguen siendo suyas** (2026-11-09): una cita de origen WHATSAPP o TELEGRAM sigue en alcance aunque el servicio de su cupo ya no esté activo, siempre que su médico siga en WhatsApp ON. Recibe recordatorio (cron y manual), el asistente la confirma, la cancela o le cambia la fecha, y la base permite cancelarla o moverla desde ese cupo (nunca agendar ni mover HACIA un cupo de un servicio inactivo). Al cambiarle la fecha se buscan cupos del servicio de su médico, si está activo (`servicioParaMover`). Filtros `CITA_EN_ALCANCE_DEL_BOT` / `CITA_FUERA_DEL_ALCANCE_DEL_BOT` en `chatbot.service.ts`, el `AND` de `findEligibleAppointments` en `appointment-reminder.cron.ts` y `fn_interruptores_del_hospital`. Por qué: el hospital registra las citas de un médico con un servicio nuevo (s39141-13) que AgenIA no tiene activo; un servicio del hospital sin homologar se crea inactivo (`servicioHomologado`) y el espejo se lo pone al cupo de la cita (`alinearServicioDelCupo`, reconciliación). El 9 de noviembre, cuatro citas del chat con ese médico se quedaron sin recordatorio y una paciente que pidió por el chat cancelar la suya recibió «se gestiona con el hospital». Las citas del hospital de un servicio inactivo siguen fuera, y los servicios nuevos siguen llegando inactivos hasta que alguien los active en Servicios.
 
+### 3.12 Autorización de tratamiento de datos (Ley 1581)
+
+Desde el 2026-11-20 (`docs/PLAN_AUTORIZACION_DATOS.md`, decisiones TD1-TD10). **Nace apagada** (`OrganizationSettings.dataConsentEnabled`); con ella apagada el asistente funciona como antes: el aviso de la Ley 1581 va en el resumen de la cita y su SÍ confirma la cita y autoriza los datos.
+
+- **Cuándo se pregunta**: con el interruptor encendido, antes de agendar, a quien no tenga un SÍ guardado para la versión vigente de la política. Los puntos donde se pide son cuatro: el saludo que abre el menú (también a mitad de un agendamiento), lo que en reposo va a la cascada de agendar (después de la consulta, las preguntas frecuentes, la despedida, cancelar y cambiar), «agendar otra» tras cancelar y «agendar otra» desde «¿qué citas tengo?». No se pregunta al cancelar, cambiar la fecha o consultar, ni al responder un recordatorio, una oferta de la lista de espera, los documentos de la consulta o un mensaje de la Bandeja; la emergencia, el insulto, la baja de comunicados y la de recordatorios van antes. Con «Agendar» apagado no se pregunta.
+- **El mensaje** (`avisoAutorizacionDatos` en `packages/shared/src/autorizacion-datos.ts`, formal o informal según el tono): saludo con el nombre del asistente y de la clínica (que es la responsable de los datos), para qué se usan los datos —agendar, recordar y gestionar citas y enviar información de la atención—, que incluye a las personas por quienes agenda (hijos menores), que los datos de salud son sensibles y no está obligado a autorizarlos, sus derechos (conocer, actualizar, corregir, suprimir, retirar la autorización), la Ley 1581 de 2012, el enlace de la política y la pregunta SÍ o NO. En voz, el audio dice lo esencial y el texto completo va escrito. El aviso ya presenta al asistente: lo que sigue no repite la bienvenida.
+- **La respuesta** se lee sin IA y más estricta que el resto del chat (`respuestaAutorizacion`): «sí», «acepto», «autorizo», «de acuerdo», «ok», 👍… son SÍ; «no», «no acepto», «no autorizo»… son NO; «quiero una cita» (que en otros pasos cuenta como sí) o «no entiendo» no son ninguna de las dos. Por escrito se lee al comienzo del turno; por voz, después de transcribirla. Lo que no es SÍ ni NO se atiende como un mensaje nuevo en reposo (cancelar, consultar, una pregunta…) y, si vuelve a ir a agendar, se le recuerda la pregunta en corto; tras el aviso y tres recordatorios en la misma conversación (contador en Redis `autorizacion_datos:<org>:<remitente>`, 1 hora) se cierra con el teléfono y la ventanilla.
+- **SÍ**: queda guardado y «¡Gracias! ✅ Quedó registrada su autorización.» con el menú de servicios. Si el mensaje que disparó la pregunta ya traía datos para agendar (servicio, EPS, fecha, médico, documento o nombre), por escrito el turno sigue con ese mensaje como si lo acabara de escribir, sin volver a pedirle nada (por voz, el menú). A quien ya autorizó, el resumen de la cita no le repite el párrafo legal (`resumenCita(..., sinAvisoLegal)`).
+- **NO**: queda guardado; el asistente dice que respeta su decisión, que sin autorización no puede atenderle por el chat y que puede pedir su cita al teléfono del hospital o en la ventanilla, y cierra. La próxima vez que quiera agendar se le vuelve a preguntar.
+- **Retiro**: «Retiro mi autorización», «revoco el consentimiento», «quiero que borren mis datos», «no autorizo el tratamiento de mis datos»… (frases fijas, `pideRetirarAutorizacion`; solo con el interruptor encendido) dejan una fila de retiro, cortan lo que estuviera haciendo y le dicen que sus citas no cambian y que para corregir o borrar sus datos se comunique con el hospital. Para agendar de nuevo se le vuelve a pedir.
+- **Qué se guarda** (`DataConsent`, migración `20261120180000_autorizacion_datos`, servicio `apps/api/src/chatbot/autorizacion-datos.service.ts`): una fila por pregunta (PENDING) con el canal, la clave del remitente, su teléfono y BSUID, la versión y el enlace de la política, el texto exacto del aviso y cuántas veces se le preguntó; al responder pasa a ACCEPTED o REJECTED con lo que escribió (o la transcripción, hasta 500 caracteres), si fue por texto o voz y cuándo. Una respuesta dada no se vuelve a escribir. Los retiros son filas REVOKED. Va por remitente porque se pregunta antes de saber de quién es la cita; cuando un paciente se registra desde ese chat con la autorización vigente, su id queda en `patientIds`. Es la prueba de la autorización (Decreto 1377 de 2013, art. 8): no entra en la purga de conversaciones de 180 días. «Vigente» = un SÍ de la versión actual sin un retiro posterior, buscado por clave, teléfono o BSUID; WhatsApp y Telegram se preguntan por separado.
+- **Si la base falla** al revisar, el chat sigue como si estuviera apagada (no pregunta y deja el párrafo legal en el resumen); si falla al guardar la pregunta, se pregunta igual y la respuesta crea su fila completa; enlazar el paciente nunca frena la cita.
+
 ## 4. Recordatorios
 
 - **Automáticos**: un proceso de la API corre cada 15 minutos y envía el recordatorio a las citas que están a 24 horas hábiles (sin contar sábados ni domingos) —`REMINDER_BUSINESS_HOURS_BEFORE` y `REMINDER_CRON_MINUTES`—. Cada cita recibe uno solo (`Appointment.reminderSentAt`).
@@ -2772,9 +2847,10 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
 - **Super administradores**: ya no se crea solo `superadmin@sanvicente.com` con la clave `admin123` cuando no hay ninguno (eso estaba en `apps/web/app/actions/auth.ts` y en la documentación de instalación). Se gestionan en el servidor con `agenia superadmin` (`apps/web/scripts/superadmin.mjs`, corre en el contenedor de la web): `listar` (cuántos hay, su último ingreso y si alguno entra con una clave de fábrica), `crear <correo>` y `restablecer <correo>` (generan una clave aleatoria de 24 caracteres, bcrypt de costo 12, y la muestran una sola vez en la terminal), `quitar <correo>` (nunca el último) y `revisar-claves` (cuentas del personal que entran con una clave de fábrica). Cada alta, clave nueva o retiro queda en la bitácora (`SUPER_ADMIN_CREATED`, `SUPER_ADMIN_PASSWORD_RESET`, `SUPER_ADMIN_REMOVED`), sin la clave.
 - **Actividad de usuarios** (`/super-admin/actividad`, solo super administrador): la línea de tiempo de lo que hace cada persona de cada clínica, de lo más nuevo a lo más viejo, con filtros por clínica (o «Plataforma»: super administradores e intentos sin cuenta), usuario, tipo y fechas (días de Bogotá), y «Cargar más» por cursor (no repite ni salta eventos aunque entren nuevos). Arriba, los ingresos de los últimos 30 días: por clínica (personal, cuántos entraron, ingresos, fallidos, último ingreso) o, con una clínica elegida, por persona (último ingreso —«Nunca» si no hay registro—, ingresos y fallidos). No escribe nada: lee lo que cada módulo ya guarda (`apps/web/lib/actividad/fuentes.ts`): la bitácora del sistema (ingresos, intentos fallidos, cierres, cambios de clave, usuarios creados, modificados —con el antes y el después del rol y el correo, y si se le puso clave nueva— o eliminados, días sin citas, avisos masivos enviados, cambios de las clínicas por el super administrador y, desde el 2026-10-27, la asistencia marcada —antes y después—, quién pidió un recordatorio manual y si salió, las citas agendadas, movidas o corregidas desde Agendamiento y los mensajes manuales al paciente, los cupos abiertos, copiados o borrados, y los médicos, fichas de pacientes, servicios y EPS creados, cambiados —qué cambió; de los datos personales solo que cambiaron—, activados, inactivados o eliminados; y también desde el 2026-10-27: los recordatorios automáticos —encendidos, a quién y con qué anticipación—, los interruptores del asistente en clínicas sin espejo, el nombre, el estilo y los cupos del asistente, la base de conocimiento —cuánto texto quedó—, el límite de citas por paciente, la IA, WhatsApp, la voz, Telegram y las plantillas de WhatsApp —qué cambió y si se puso una llave o un token nuevo, nunca la llave ni el token—, la configuración y el envío de los avisos masivos y la lista pedida al hospital, emparejar o desemparejar un médico con el del hospital, vaciar el padrón de una EPS, las solicitudes de alta revisadas, la historia clínica —abrirla, escribirla, corregirla, firmarla o agregarle una nota, con la cita y el paciente enmascarado, nunca su contenido; la firma guarda ahora la IP real de quien firma en vez de «Vía Web»—, cerrar sesiones, las descargas con datos de pacientes (sin celular de un lote de avisos, filas con error del padrón, encuestas de satisfacción) y, del super administrador, la facturación, los tickets atendidos y la limpieza de incidentes del monitor), el rastreo de paciente (`PatientLookupLog`), la Bandeja (`SyncExceptionLog`, solo acciones de personas), los cambios de configuración con espejo (`SyncAudit` `CONFIG` y el reproceso manual; ahí el autor va dentro del texto y la pantalla lo reconoce por su correo si la cuenta es de esa clínica; activar o inactivar un servicio con espejo queda solo ahí, sin espejo en la bitácora del sistema), las cargas del padrón, los lotes de avisos masivos, las solicitudes de más citas revisadas, «Marcar como contactado» de la Caja Negra, los tickets de soporte y lo que se les agregó, los documentos excluidos del espejo, las citas anuladas desde la Visión General (`metaLog` de la cita) y la bitácora legal de la plataforma (`GlobalAuditLog`). Documentos y teléfonos salen enmascarados (últimos 4 dígitos); las citas se nombran por servicio, médico y hora. Las anotaciones que necesitan consultas para describirse (nombres del médico o del servicio) se arman después de la acción y, si fallan, la acción no se da por fallida (`registrarDespues`). Si una de esas fuentes falla, la página sale con las demás y lo dice. **Pantallas abiertas**: cada pantalla del panel que abre una persona queda anotada (`SCREEN_VIEWED`, con el nombre del menú y la ruta sin la consulta, que podría llevar una cédula) una vez cada 30 minutos por pantalla, desde los layouts del panel y del super administrador (`RegistroDePantallas` → `registrarPantalla`); como son muchas, la línea de tiempo las oculta salvo con la casilla «Incluir las pantallas que abrió cada persona» o la categoría «Pantallas abiertas». En la tabla de personas de una clínica se ve cuándo se le cerraron las sesiones por última vez y el botón «Cerrar sesiones»; arriba, «Cerrar las sesiones de toda la clínica». Los cambios de la auditoría del espejo que solo decían «desde el panel» o el rol (modo de agenda, reproceso, avisos al agendador) ahora llevan el correo de quien los hizo. El registro del recordatorio manual que deja la API (`REMINDER_MANUAL_SENT`, sin persona) sigue en Auditoría y Logs, pero ya no en esta línea de tiempo: allí sale el de la web, con quién lo pidió. Índices nuevos en `SystemLog` por clínica y por usuario (migración `20261026180000_actividad_de_usuarios`).
 - **Mensajes del asistente**: el detalle de una cita solo se da al remitente que corresponde al paciente; cancelar o cambiar exige que la ficha sea del remitente. Con el caso «El teléfono de un paciente es de otra persona» abierto en la Bandeja, ese número deja de contar como del paciente para todo eso (confirmar, consultar, cancelar y cambiar), y se vuelve a revisar justo antes de cancelar o mover la cita en el hospital. Por Telegram no aplica: ese chat lo vincula el propio paciente.
+- **Autorización de tratamiento de datos** (2026-11-20, §3.12): con el interruptor encendido, el asistente pide la autorización (SÍ/NO) antes de agendar y la guarda en `DataConsent` con el texto exacto que vio la persona, su respuesta y la hora; los retiros también. Los formularios públicos de solicitud de alta y de más citas exigen una casilla de autorización (la acción la vuelve a exigir en el servidor) y guardan cuándo se marcó y con qué versión de la política (`dataConsentAt`, `dataConsentPolicyVersion`). La clínica es la responsable de los datos y AgenIA quien los trata por encargo; el texto del aviso debe aprobarlo la oficina jurídica de la clínica. La solicitud de suprimir los datos la atiende el hospital.
 - **Avisos y alertas**: los avisos al agendador y las alertas técnicas no llevan datos de pacientes.
 - **Conversaciones del asistente de soporte**: solo el super administrador las lee, completas, en `/super-admin/soporte-bot/conversaciones`; abrir una deja un registro en la bitácora del sistema (`SUPPORT_BOT_CONVERSATION_VIEWED`, con quién y cuál). La lista de lo que el manual no cubrió va con cédulas, teléfonos y correos ocultos.
-- **Retención**: conversaciones 180 días (también las del asistente de soporte con el personal), bitácora del rastreo 365 días, actividad de canales 400 días (seudonimizada), incidentes del monitor 365 días; los códigos del asistente de soporte se borran un día después de vencer. Resumen de la atención: el contenido clínico se guarda cifrado y se borra a los 30 días, con la nota de su revisión, y la fila sin contenido al año, con sus enlaces y su bitácora de visitas. Solo el Administrador lo abre en el panel, y cada apertura queda registrada. En la página del paciente se ve con el enlace más la fecha de nacimiento, y cada visita queda anotada con la IP (§5.8). Por WhatsApp y Telegram, el aviso no lleva datos clínicos; los documentos salen solo tras el toque del botón desde el número al que se envió y, si ese número no está verificado, tras la fecha de nacimiento. Pasan por la nube de Meta o de Telegram (D23). «no quiero resúmenes» corta el envío a ese número o chat. El correo lleva el PDF cifrado con el número de documento y no nombra nada clínico.
+- **Retención**: las autorizaciones de datos (`DataConsent`) no se purgan: son la prueba que exige la ley. Conversaciones 180 días (también las del asistente de soporte con el personal), bitácora del rastreo 365 días, actividad de canales 400 días (seudonimizada), incidentes del monitor 365 días; los códigos del asistente de soporte se borran un día después de vencer. Resumen de la atención: el contenido clínico se guarda cifrado y se borra a los 30 días, con la nota de su revisión, y la fila sin contenido al año, con sus enlaces y su bitácora de visitas. Solo el Administrador lo abre en el panel, y cada apertura queda registrada. En la página del paciente se ve con el enlace más la fecha de nacimiento, y cada visita queda anotada con la IP (§5.8). Por WhatsApp y Telegram, el aviso no lleva datos clínicos; los documentos salen solo tras el toque del botón desde el número al que se envió y, si ese número no está verificado, tras la fecha de nacimiento. Pasan por la nube de Meta o de Telegram (D23). «no quiero resúmenes» corta el envío a ese número o chat. El correo lleva el PDF cifrado con el número de documento y no nombra nada clínico.
 - **Tope por IP en el ingreso** (auditoría 2026-11-07): además de los 5 fallidos por correo+IP, 20 fallidos en 15 minutos desde una misma IP con cualquier correo frenan el ingreso desde esa IP (`INTENTOS_INGRESO.MAX_POR_IP`), con su constancia `LOGIN_BLOCKED` (`alcance: IP`): frena a quien prueba una clave en muchos correos. Un tope solo por correo no existe a propósito (dejaría bloquear al administrador a voluntad).
 - **Endurecimiento de la auditoría del 2026-11-07** (`docs/SEGURIDAD.md`): dependencias al día (`pnpm audit --prod` queda solo con `xlsx`, que lee en el navegador el archivo que el propio administrador elige); imágenes sobre Node 22 y procesos como el usuario `node` (sin root), sin capacidades del kernel ni escalada de privilegios; cabeceras `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `Permissions-Policy` y sin `x-powered-by`; los registros de la API enmascaran cédulas y celulares; Redis exige contraseña si `.env.production` trae `REDIS_PASSWORD`; `KEYS` reemplazado por `SCAN`; la clave por defecto `temporal123` que quedaba en una acción sin uso se eliminó; las notas locales ya no se copian al servidor y ningún `.env` entra a las imágenes (`.dockerignore`). Desplegado y verificado en producción el 2026-11-08. Lo pendiente en el servidor (parches y reinicio, SSH, contraseña de Redis, rol de Postgres sin superusuario, respaldo fuera del servidor) está en `docs/SEGURIDAD.md` §3.
 - **Webhooks**: Meta con firma (`META_REQUIRE_SIGNATURE`) y Telegram con `secret_token`.
@@ -2809,6 +2885,7 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
 | Plazo máximo para agendar (días adelante, contando hoy, sin domingos ni festivos) | Configuración › Asistente Virtual | Sin límite (de 1 a 365 días) |
 | Parte de la agenda para el asistente (tope por médico y día; el resto, para agendar en el hospital) | Configuración › Asistente Virtual | Sin reserva (de 10 a 100 %) |
 | Sábados por el asistente (solo zona rural, con tope por médico) | Configuración › Asistente Virtual | Sin regla especial (de 10 a 100 %; 100 = sin tope) |
+| Autorización de datos antes de agendar, enlace y versión de la política | Configuración › Asistente Virtual | Apagada; sin enlace (el resumen usa `PRIVACY_POLICY_URL` del servidor); versión 1 |
 | Recordatorios automáticos | Configuración › Asistente Virtual | Encendidos |
 | Solo a quien agendó por el chat | Configuración › Asistente Virtual | Apagado |
 | Anticipación mínima del recordatorio | Configuración › Asistente Virtual | 1 hora (0 = sin mínimo, máximo 12 horas) |
@@ -2900,6 +2977,7 @@ Comunicados de la clínica por WhatsApp (`/dashboard/mensajes-masivos`, solo ORG
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-11-20** — Autorización de tratamiento de datos (Ley 1581). En Configuración › Asistente Virtual, «Autorización de datos (Ley 1581)»: encendida, antes de agendar el asistente saluda, explica para qué se usan los datos y pregunta SÍ o NO. Con SÍ queda guardado y sigue (si el primer mensaje ya decía qué cita quería, sigue con eso); con NO se despide con amabilidad y le da el teléfono y la ventanilla. Se pregunta una vez por número y por canal, y otra vez solo si la clínica cambia la versión de la política; no se pregunta para cancelar, cambiar la fecha o consultar, ni al responder un recordatorio, la lista de espera o los documentos. «Retiro mi autorización» la retira. Cada pregunta y respuesta queda guardada como prueba (no se purga). A quien ya autorizó, el resumen de la cita no le repite el párrafo legal. Las cifras están en Canales en vivo («Autorización de datos», 7, 30 o 90 días), en la página de estadísticas para compartir y, por paciente, en Pacientes. Los formularios de solicitud de alta y de más citas exigen ahora una casilla de autorización. Nace apagada: nada cambia hasta encenderla.
 - **2026-11-19** — Sábados por el asistente: el chat ya no dice que los sábados son para la zona rural. Los ofrece a todos, como un día más; al dar el documento revisa la zona en la ficha del hospital y, si no dice rural, le pide a la persona con amabilidad que se comunique con el hospital (con su teléfono) o se acerque a la ventanilla para la cita del sábado, y le muestra los horarios de otros días, ya sin sábados. Se quitaron la opción «Vivo en zona rural: ver citas del sábado», el menú del sábado con su aviso y la invitación a escribir «sábado». El tope del 50 % y la revisión al confirmar, al cambiar la fecha y en la lista de espera siguen igual.
 - **2026-11-19** — Sábados por el asistente: la lista de pacientes de zona rural que manda el agente ya se activa. El primer envío (27.701 documentos, el 19-nov a las 3:07 p. m.) quedó guardado con la hora corrida 5 horas, porque la base de producción trabaja en la hora de Bogotá, y al cerrarlo el servidor no lo reconoció: conservó la lista anterior (vacía) y los sábados siguieron cerrados para el asistente. Ahora la hora se guarda en UTC; el siguiente envío del agente (cada hora, mientras no haya lista) la activa sin hacer nada más. El mismo ajuste corrige el conteo del tope por médico y día para las citas de la noche.
 - **2026-11-19** — Configuración › Asistente Virtual: «Sábados por el asistente». Con «Solo zona rural», el asistente agenda los sábados solo a personas que el hospital tiene con zona de residencia rural (el campo «Zona» de su ficha), y como mucho el porcentaje elegido de la agenda de cada médico ese día (por ejemplo, 50 %); el resto queda para agendar en el hospital. El menú de horarios ya no muestra los sábados: trae la opción «🌾 Vivo en zona rural: ver citas del sábado», y también los muestra si la persona escribe «sábado». Al dar el documento, el asistente revisa la zona; si no dice rural, le explica por qué y le muestra los otros días. Aplica al agendar, al cambiar la fecha y a la lista de espera. El agente del hospital manda una vez al día la lista de documentos con zona rural (solo con la regla encendida; requiere actualizar el agente). Los demás días no cambian, y el personal y el hospital agendan sábados como siempre. Nace en «Sin regla especial»: nada cambia hasta configurarlo, y mientras los sábados sigan en «Días sin citas», siguen cerrados para el asistente.

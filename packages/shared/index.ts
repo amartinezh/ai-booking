@@ -782,6 +782,35 @@ export {
   tramosDeSabado,
   validarSabadoRural,
 } from './src/sabado-rural';
+// 🔒 Autorización de tratamiento de datos (Ley 1581): textos, SÍ/NO, retiro y cifras.
+export {
+  AUTORIZACION_DATOS,
+  ERROR_CASILLA_AUTORIZACION,
+  autorizacionAceptada,
+  autorizacionRechazada,
+  autorizacionRetirada,
+  autorizacionSinRespuesta,
+  avisoAutorizacionDatos,
+  avisoAutorizacionDatosHablado,
+  cifrasDeAutorizaciones,
+  normalizarVersionPolitica,
+  pideRetirarAutorizacion,
+  recordatorioAutorizacionDatos,
+  respuestaAutorizacion,
+  textoCasillaAutorizacion,
+  validarUrlPolitica,
+  validarVersionPolitica,
+} from './src/autorizacion-datos';
+export type {
+  CanalAutorizacion,
+  CifrasDeAutorizaciones,
+  CifrasDeUnCanal,
+  DatosDelAviso,
+  EstadoAutorizacion,
+  EstiloAviso,
+  FilaAutorizacion,
+  RespuestaAutorizacion,
+} from './src/autorizacion-datos';
 // 🇨🇴 Festivos de Colombia, calculados (no cuentan para el plazo para agendar).
 export {
   domingoDePascua,

@@ -22,7 +22,7 @@ export default async function SolicitudAltaPage(props: {
     const organization = orgId
         ? await prisma.organization.findUnique({
               where: { id: orgId },
-              select: { id: true, name: true, isActive: true },
+              select: { id: true, name: true, isActive: true, settings: { select: { dataPolicyUrl: true } } },
           })
         : null;
 
@@ -42,6 +42,7 @@ export default async function SolicitudAltaPage(props: {
             orgId={organization.id}
             clinicName={organization.name}
             epsNames={epsList.map((eps) => eps.name)}
+            urlPolitica={organization.settings?.dataPolicyUrl ?? null}
         />
     );
 }

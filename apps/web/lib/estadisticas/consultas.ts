@@ -51,6 +51,12 @@ export interface DatosDeEstadisticas {
      * uno (los envíos de prueba no cuentan).
      */
     documentos: { desde: string; embudo: EmbudoDelEnvio } | null;
+    /**
+     * 🔒 Autorización de datos por chat (docs/PLAN_AUTORIZACION_DATOS.md): personas
+     * cuya última respuesta fue SÍ o NO, y las que la retiraron. Opcional: un
+     * corte guardado de antes no la trae.
+     */
+    autorizaciones?: { aceptaron: number; noAceptaron: number; retiraron: number };
 }
 
 type Db = Pick<PrismaClient, '$queryRaw'>;
@@ -261,8 +267,23 @@ export async function consultarEstadisticas(
         };
     }
 
+    // 🔒 Autorización de datos por chat: cada persona cuenta una vez, por lo último
+    // que respondió (SÍ o NO); el retiro va aparte.
+    const [autorizaciones] = await db.$queryRaw<[NonNullable<DatosDeEstadisticas['autorizaciones']>]>(Prisma.sql`
+        WITH ultima AS (
+            SELECT DISTINCT ON (channel, "senderKey") status
+              FROM "DataConsent"
+             WHERE "organizationId" = ${org} AND status IN ('ACCEPTED', 'REJECTED') AND "answeredAt" < ${hasta}
+             ORDER BY channel, "senderKey", "answeredAt" DESC)
+        SELECT count(*) FILTER (WHERE status = 'ACCEPTED')::int AS aceptaron,
+               count(*) FILTER (WHERE status = 'REJECTED')::int AS "noAceptaron",
+               (SELECT count(DISTINCT (channel, "senderKey")) FROM "DataConsent"
+                 WHERE "organizationId" = ${org} AND status = 'REVOKED' AND "answeredAt" < ${hasta})::int AS retiraron
+          FROM ultima`);
+
     return {
         documentos,
+        autorizaciones,
         recordatoriosPorDia,
         confirmacionesPorDia,
         confirmaciones,

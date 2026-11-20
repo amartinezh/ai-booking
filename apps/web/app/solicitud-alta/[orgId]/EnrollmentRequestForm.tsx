@@ -3,11 +3,14 @@
 import { useState } from 'react';
 import { CheckCircle2, IdCard } from 'lucide-react';
 import { submitEnrollmentRequest } from '@/app/actions/enrollment-request';
+import CasillaAutorizacionDatos from '@/app/components/CasillaAutorizacionDatos';
 
 interface EnrollmentRequestFormProps {
     orgId: string;
     clinicName: string;
     epsNames: string[];
+    /** 🔒 La política de tratamiento de datos de la clínica, si la configuró. */
+    urlPolitica?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -19,12 +22,14 @@ export default function EnrollmentRequestForm({
     orgId,
     clinicName,
     epsNames,
+    urlPolitica = null,
 }: EnrollmentRequestFormProps) {
     const [cedula, setCedula] = useState('');
     const [fullName, setFullName] = useState('');
     const [phone, setPhone] = useState('');
     const [epsName, setEpsName] = useState('');
     const [message, setMessage] = useState('');
+    const [autorizaDatos, setAutorizaDatos] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [done, setDone] = useState(false);
@@ -40,6 +45,7 @@ export default function EnrollmentRequestForm({
             phone,
             epsName,
             message,
+            autorizaDatos,
         });
         if (result.success) {
             setDone(true);
@@ -128,6 +134,13 @@ export default function EnrollmentRequestForm({
                             rows={4}
                             placeholder="Cuéntanos tu caso: ¿por qué deberías estar dado(a) de alta? *"
                             className={`${inputClass} resize-none`}
+                        />
+
+                        <CasillaAutorizacionDatos
+                            clinica={clinicName}
+                            urlPolitica={urlPolitica}
+                            marcada={autorizaDatos}
+                            onChange={setAutorizaDatos}
                         />
 
                         {error && <p className="text-center text-sm text-red-500">{error}</p>}

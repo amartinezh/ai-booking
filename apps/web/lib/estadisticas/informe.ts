@@ -57,6 +57,15 @@ export interface Informe {
     espera: EsperaPorLaCita | null;
     /** 📄 Documentos de la consulta; null mientras ningún paciente haya recibido un aviso. */
     documentos: DocumentosDeLaConsulta | null;
+    /** 🔒 Autorización de datos por chat; null (o ausente) mientras nadie haya respondido. */
+    autorizaciones?: AutorizacionesPorChat | null;
+}
+
+/** 🔒 Personas que autorizaron (o no) el tratamiento de sus datos por chat. */
+export interface AutorizacionesPorChat {
+    aceptaron: number;
+    noAceptaron: number;
+    retiraron: number;
 }
 
 /** 📄 Lo que pasó con los documentos de la consulta (resumen de la atención). */
@@ -204,6 +213,8 @@ export function armarInforme(
                 : [],
         espera: armarEspera(d.espera),
         documentos: armarDocumentos(d.documentos, corte, desdeGrafica, ventana),
+        autorizaciones:
+            d.autorizaciones && d.autorizaciones.aceptaron + d.autorizaciones.noAceptaron > 0 ? d.autorizaciones : null,
     };
 }
 

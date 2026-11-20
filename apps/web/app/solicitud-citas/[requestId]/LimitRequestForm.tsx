@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { CalendarClock, CheckCircle2, Clock, Phone, XCircle } from 'lucide-react';
 import { MOTIVOS_SOLICITUD_CITAS, SOLICITUD_CITAS } from '@agenia/shared';
 import { submitLimitRequest } from '@/app/actions/limit-request';
+import CasillaAutorizacionDatos from '@/app/components/CasillaAutorizacionDatos';
 
 type Estado = 'FORMULARIO' | 'VENCIDA' | 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -22,6 +23,8 @@ interface Props {
     esCambio: boolean;
     telefonoInicial: string;
     adicionalesConcedidas: number | null;
+    /** 🔒 La política de tratamiento de datos de la clínica, si la configuró. */
+    urlPolitica?: string | null;
 }
 
 const citasTxt = (n: number) => (n === 1 ? 'una cita' : `${n} citas`);
@@ -39,6 +42,7 @@ export default function LimitRequestForm(props: Props) {
     const [argumento, setArgumento] = useState('');
     const [adicionales, setAdicionales] = useState(1);
     const [telefono, setTelefono] = useState(props.telefonoInicial);
+    const [autorizaDatos, setAutorizaDatos] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -46,7 +50,7 @@ export default function LimitRequestForm(props: Props) {
         event.preventDefault();
         setLoading(true);
         setError(null);
-        const result = await submitLimitRequest(requestId, { motivo, argumento, adicionales, telefono });
+        const result = await submitLimitRequest(requestId, { motivo, argumento, adicionales, telefono, autorizaDatos });
         if (result.success) {
             setEstado('PENDING');
         } else {
@@ -140,6 +144,13 @@ export default function LimitRequestForm(props: Props) {
                                 className={inputClass}
                             />
                         </label>
+
+                        <CasillaAutorizacionDatos
+                            clinica={clinicName}
+                            urlPolitica={props.urlPolitica ?? null}
+                            marcada={autorizaDatos}
+                            onChange={setAutorizaDatos}
+                        />
 
                         {error && <p className="text-center text-sm text-red-500">{error}</p>}
 

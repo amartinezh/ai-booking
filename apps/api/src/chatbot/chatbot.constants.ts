@@ -53,6 +53,12 @@ export enum ChatState {
   // cancelar / reprogramar / agendar otra / nada más.
   AWAITING_LOOKUP_CEDULA = 'AWAITING_LOOKUP_CEDULA',
   AWAITING_LOOKUP_CHOICE = 'AWAITING_LOOKUP_CHOICE',
+  // ── AUTORIZACIÓN DE DATOS (Ley 1581, docs/PLAN_AUTORIZACION_DATOS.md) ──
+  // Se le pidió la autorización antes de agendar y esperamos su SÍ o su NO. Lo
+  // atiende el comienzo del turno (no un handler): un SÍ/NO claro se guarda; lo
+  // demás se atiende como un mensaje nuevo (cancelar, consultar, una pregunta…)
+  // y, si vuelve a pedir agendar, se le vuelve a preguntar.
+  AWAITING_DATA_CONSENT = 'AWAITING_DATA_CONSENT',
 }
 
 // Nombre canónico del registro EPS para pago directo (debe existir en BD por org).
@@ -801,6 +807,8 @@ const FORMAL = {
   repromptAgendarEps: (lineas: string) =>
     `Perfecto, continuemos. 📅\n\n*¿Con cuál EPS o entidad desea su cita?*\n\n${lineas}`,
 
+  // `sinAvisoLegal`: ya autorizó al comenzar la conversación (autorización de
+  // datos encendida y guardada): no se le repite el párrafo de la Ley 1581.
   resumenCita: (
     nombre: string,
     cedula: string,
@@ -808,17 +816,18 @@ const FORMAL = {
     especialidad: string,
     fecha: string,
     policyUrl?: string,
+    sinAvisoLegal = false,
   ) =>
     pick([
       `Listo${nombre ? `, ${nombre}` : ''}. Confirmemos los datos de su cita antes de agendarle:\n\n` +
         `👤 *Paciente:* ${nombre}\n🪪 *Cédula:* ${cedula}\n💳 *EPS:* ${eps}\n🏥 *Servicio:* ${especialidad}\n📅 *Fecha y hora:* ${fecha}\n\n` +
-        `¿Está todo correcto? Responda *SÍ* para agendarle definitivamente o *NO* si necesita cambiar algo.\n\n${CONSENT_1581_FORMAL(policyUrl)}`,
+        `¿Está todo correcto? Responda *SÍ* para agendarle definitivamente o *NO* si necesita cambiar algo.${sinAvisoLegal ? '' : `\n\n${CONSENT_1581_FORMAL(policyUrl)}`}`,
       `Perfecto${nombre ? `, ${nombre}` : ''}. Reviso con usted la información antes de cerrar:\n\n` +
         `👤 ${nombre}\n🪪 Cédula ${cedula}\n💳 EPS: ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `Si todo está bien, responda *SÍ* y lo dejo confirmado. Si algo no corresponde, escriba *NO*.\n\n${CONSENT_1581_FORMAL(policyUrl)}`,
+        `Si todo está bien, responda *SÍ* y lo dejo confirmado. Si algo no corresponde, escriba *NO*.${sinAvisoLegal ? '' : `\n\n${CONSENT_1581_FORMAL(policyUrl)}`}`,
       `Ya casi terminamos${nombre ? `, ${nombre}` : ''}. Estos son los datos de su cita:\n\n` +
         `👤 ${nombre}\n🪪 ${cedula}\n💳 ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `¿Lo confirmamos? Responda *SÍ* para agendarle o *NO* si prefiere cancelar.\n\n${CONSENT_1581_FORMAL(policyUrl)}`,
+        `¿Lo confirmamos? Responda *SÍ* para agendarle o *NO* si prefiere cancelar.${sinAvisoLegal ? '' : `\n\n${CONSENT_1581_FORMAL(policyUrl)}`}`,
     ]),
 
   // AUDIO del resumen (solo en flujo de voz). El paciente habló todo el flujo
@@ -832,14 +841,19 @@ const FORMAL = {
     nombre: string,
     especialidad: string,
     fechaHablada: string,
+    sinAvisoLegal = false,
   ) =>
     pick([
       `${nombre ? `${nombre}, ` : ''}antes de agendarle confirmemos los datos: su cita de ${especialidad} quedaría para ${fechaHablada}. ` +
-        `Si todo está correcto, respóndame sí y queda agendada; si necesita cambiar algo, dígame no. ` +
-        `Al responder sí también autoriza el tratamiento de sus datos personales; le dejo los detalles y la política por escrito.`,
+        `Si todo está correcto, respóndame sí y queda agendada; si necesita cambiar algo, dígame no.` +
+        (sinAvisoLegal
+          ? ''
+          : ` Al responder sí también autoriza el tratamiento de sus datos personales; le dejo los detalles y la política por escrito.`),
       `${nombre ? `${nombre}, ` : ''}revisemos antes de cerrar: ${especialidad}, ${fechaHablada}. ` +
-        `¿Está todo bien? Respóndame sí para dejarla confirmada, o no si algo no corresponde. ` +
-        `Con su sí autoriza además el tratamiento de sus datos personales; en el mensaje de texto le dejo el resumen completo y la política.`,
+        `¿Está todo bien? Respóndame sí para dejarla confirmada, o no si algo no corresponde.` +
+        (sinAvisoLegal
+          ? ''
+          : ` Con su sí autoriza además el tratamiento de sus datos personales; en el mensaje de texto le dejo el resumen completo y la política.`),
     ]),
 
   citaConfirmada: (clinicaName: string, fecha: string) =>
@@ -2395,6 +2409,8 @@ const INFORMAL = {
   repromptAgendarEps: (lineas: string) =>
     `¡Listo, sigamos! 🗓️\n\n*¿Con cuál EPS quieres tu cita?*\n\n${lineas}`,
 
+  // `sinAvisoLegal`: ya autorizó al comenzar la conversación (autorización de
+  // datos encendida y guardada): no se le repite el párrafo de la Ley 1581.
   resumenCita: (
     nombre: string,
     cedula: string,
@@ -2402,17 +2418,18 @@ const INFORMAL = {
     especialidad: string,
     fecha: string,
     policyUrl?: string,
+    sinAvisoLegal = false,
   ) =>
     pick([
       `¡Listo${nombre ? `, ${nombre}` : ''}! Revisemos los datos antes de cerrar:\n\n` +
         `👤 *Paciente:* ${nombre}\n🪪 *Cédula:* ${cedula}\n💳 *EPS:* ${eps}\n🏥 *Servicio:* ${especialidad}\n📅 *Fecha y hora:* ${fecha}\n\n` +
-        `¿Todo bien? Responde *SÍ* para confirmar tu cita o *NO* si quieres cambiar algo.\n\n${CONSENT_1581_INFORMAL(policyUrl)}`,
+        `¿Todo bien? Responde *SÍ* para confirmar tu cita o *NO* si quieres cambiar algo.${sinAvisoLegal ? '' : `\n\n${CONSENT_1581_INFORMAL(policyUrl)}`}`,
       `¡Perfecto${nombre ? `, ${nombre}` : ''}! Mira los datos que tengo:\n\n` +
         `👤 ${nombre}\n🪪 Cédula ${cedula}\n💳 EPS ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `Si está bien, responde *SÍ* y te la dejo confirmada; si algo no, dime *NO*.\n\n${CONSENT_1581_INFORMAL(policyUrl)}`,
+        `Si está bien, responde *SÍ* y te la dejo confirmada; si algo no, dime *NO*.${sinAvisoLegal ? '' : `\n\n${CONSENT_1581_INFORMAL(policyUrl)}`}`,
       `Ya casi terminamos${nombre ? `, ${nombre}` : ''} 🌟. Estos son tus datos:\n\n` +
         `👤 ${nombre}\n🪪 ${cedula}\n💳 ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `¿Cerramos? *SÍ* para agendar, *NO* si prefieres cancelar.\n\n${CONSENT_1581_INFORMAL(policyUrl)}`,
+        `¿Cerramos? *SÍ* para agendar, *NO* si prefieres cancelar.${sinAvisoLegal ? '' : `\n\n${CONSENT_1581_INFORMAL(policyUrl)}`}`,
     ]),
 
   // AUDIO del resumen (solo en flujo de voz; ver la versión formal). Tuteo.
@@ -2420,14 +2437,19 @@ const INFORMAL = {
     nombre: string,
     especialidad: string,
     fechaHablada: string,
+    sinAvisoLegal = false,
   ) =>
     pick([
       `${nombre ? `${nombre}, ` : ''}antes de agendarte revisemos los datos: tu cita de ${especialidad} quedaría para ${fechaHablada}. ` +
-        `Si todo está bien, respóndeme sí y queda agendada; si quieres cambiar algo, dime no. ` +
-        `Al responder sí también autorizas el tratamiento de tus datos personales; te dejo los detalles y la política por escrito.`,
+        `Si todo está bien, respóndeme sí y queda agendada; si quieres cambiar algo, dime no.` +
+        (sinAvisoLegal
+          ? ''
+          : ` Al responder sí también autorizas el tratamiento de tus datos personales; te dejo los detalles y la política por escrito.`),
       `${nombre ? `${nombre}, ` : ''}ya casi terminamos: ${especialidad}, ${fechaHablada}. ` +
-        `¿Todo bien? Dime sí para confirmarla, o no si algo no cuadra. ` +
-        `Con tu sí autorizas además el tratamiento de tus datos personales; en el mensaje de texto te dejo el resumen completo y la política.`,
+        `¿Todo bien? Dime sí para confirmarla, o no si algo no cuadra.` +
+        (sinAvisoLegal
+          ? ''
+          : ` Con tu sí autorizas además el tratamiento de tus datos personales; en el mensaje de texto te dejo el resumen completo y la política.`),
     ]),
 
   citaConfirmada: (clinicaName: string, fecha: string) =>

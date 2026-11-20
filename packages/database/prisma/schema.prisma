@@ -117,6 +117,9 @@ model Organization {
   // 📅 Días y horas sin citas por el asistente (Configuración › Días sin citas).
   bookingBlocks BookingBlock[]
 
+  // 🔒 Autorizaciones de tratamiento de datos (docs/PLAN_AUTORIZACION_DATOS.md).
+  dataConsents DataConsent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -244,6 +247,20 @@ model OrganizationSettings {
   publicStatsKeyHash      String?
   publicStatsKeyUpdatedAt DateTime?
   publicStatsKeyUpdatedBy String?
+
+  // 🔒 AUTORIZACIÓN DE TRATAMIENTO DE DATOS (2026-11-20,
+  // docs/PLAN_AUTORIZACION_DATOS.md): encendida, el asistente saluda, explica la
+  // política y pregunta SÍ/NO antes de agendar (no al cancelar, cambiar la fecha
+  // o consultar). La respuesta queda en `DataConsent`. Nace APAGADA: ninguna
+  // clínica cambia al desplegar. `dataPolicyUrl` vacío = el enlace del servidor
+  // (PRIVACY_POLICY_URL). Cambiar `dataPolicyVersion` vuelve a preguntarles a
+  // todos. Lo edita el ORG_ADMIN en Configuración › Asistente Virtual; las reglas
+  // viven en @agenia/shared (autorizacion-datos.ts).
+  dataConsentEnabled   Boolean   @default(false)
+  dataPolicyUrl        String?
+  dataPolicyVersion    String    @default("1")
+  dataConsentUpdatedAt DateTime?
+  dataConsentUpdatedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1727,6 +1744,67 @@ model InformedConsent {
 }
 
 // -----------------------------------------------------------------------------
+// 🔒 AUTORIZACIÓN DE TRATAMIENTO DE DATOS POR CHAT (Ley 1581 de 2012)
+// -----------------------------------------------------------------------------
+// docs/PLAN_AUTORIZACION_DATOS.md. Una fila cada vez que el asistente le pide la
+// autorización a alguien (PENDING) y lo que respondió (ACCEPTED / REJECTED), más
+// una fila por cada retiro (REVOKED). Es la PRUEBA que exige el Decreto 1377 de
+// 2013 (art. 8): el texto exacto que vio, su respuesta y cuándo. Por eso NO entra
+// en la purga de conversaciones (180 días) y no se edita una respuesta dada.
+//
+// Va por remitente (número, BSUID o chat de Telegram), no por paciente: se pide
+// antes de saber de quién es la cita. `patientIds` enlaza después a los
+// pacientes que se registraron desde ese chat con la autorización vigente.
+// `InformedConsent` (historia clínica) no se usa para esto.
+model DataConsent {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  channel   ChannelKind
+  /// Clave canónica del remitente (`SenderIdentity.senderId`).
+  senderKey String
+  phone     String?
+  bsuid     String?
+
+  status DataConsentStatus @default(PENDING)
+
+  // Lo que se le mostró (la prueba): la versión de la política, su enlace y el
+  // texto completo del aviso.
+  policyVersion String
+  policyUrl     String?
+  noticeText    String  @db.Text
+  /// Cuántas veces se le preguntó en esa conversación (aviso + recordatorios).
+  timesAsked    Int     @default(1)
+
+  // Lo que respondió (recortado) y cómo: 'TEXT' | 'VOICE'.
+  answerText String?
+  answerVia  String?
+
+  /// Pacientes registrados desde este chat con esta autorización vigente.
+  patientIds String[] @default([])
+
+  askedAt    DateTime  @default(now())
+  answeredAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, senderKey])
+  @@index([organizationId, phone])
+  @@index([organizationId, bsuid])
+  @@index([organizationId, askedAt])
+}
+
+enum DataConsentStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  REVOKED
+}
+
+// -----------------------------------------------------------------------------
 // ⏳ LISTA DE ESPERA (WAITLIST)
 // -----------------------------------------------------------------------------
 model WaitlistEntry {
@@ -2410,6 +2488,11 @@ model EpsEnrollmentRequest {
   status     EnrollmentRequestStatus @default(PENDING)
   reviewedAt DateTime?
 
+  // 🔒 La casilla de autorización de datos del formulario (2026-11-20): cuándo
+  // la marcó y con qué versión de la política. Vacío en las anteriores.
+  dataConsentAt            DateTime?
+  dataConsentPolicyVersion String?
+
   // 🏢 TENANT ISOLATION
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -2507,6 +2590,9 @@ model AppointmentLimitRequest {
   message        String?   @db.Text
   extraRequested Int?
   submittedAt    DateTime?
+  // 🔒 La casilla de autorización de datos al radicar (2026-11-20).
+  dataConsentAt            DateTime?
+  dataConsentPolicyVersion String?
   // El enlace deja de servir para radicar (la fila INVITED queda como rastro).
   expiresAt      DateTime
 

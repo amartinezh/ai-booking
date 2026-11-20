@@ -8,6 +8,7 @@ import { OrganizationSettingsService } from './organization-settings.service';
 import { ConsultaHisBotService } from './consulta-his-bot.service';
 import { ConfirmacionHisService } from './confirmacion-his.service';
 import { MensajeAlPacienteService } from './mensaje-al-paciente.service';
+import { AutorizacionDatosService } from './autorizacion-datos.service';
 import { HttpModule } from '@nestjs/axios';
 import { AppointmentsModule } from 'src/appointments/appointments.module';
 import { WaitlistModule } from 'src/waitlist/waitlist.module';
@@ -51,6 +52,9 @@ import { MassMessageModule } from '../mass-message/mass-message.module';
     ConfirmacionHisService,
     // ✉️ El mensaje del personal al paciente desde la Bandeja (2026-10-29).
     MensajeAlPacienteService,
+    // 🔒 Autorización de tratamiento de datos antes de agendar
+    // (docs/PLAN_AUTORIZACION_DATOS.md). Solo depende de Prisma y la config.
+    AutorizacionDatosService,
     // 📝 Los avisos de pacientes («no puedo ir», «número equivocado») van a la
     // misma bandeja que las excepciones del espejo. Solo depende de Prisma: se
     // provee aquí y no se importa MirrorModule, que ya depende de este módulo

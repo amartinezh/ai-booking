@@ -35,6 +35,7 @@ import { AudioConfigService } from '../audio-config/audio-config.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
 import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
+import { AutorizacionDatosService } from './autorizacion-datos.service';
 
 // ════════════════════════════════════════════════════════════════════
 // PRUEBAS END-TO-END DE LOS PROCEDIMIENTOS DE CITAS
@@ -6036,6 +6037,451 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       );
       await say('necesito una cita');
       expect(lastSent()).not.toMatch(SE_PRESENTA);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 13. AUTORIZACIÓN DE DATOS (Ley 1581, docs/PLAN_AUTORIZACION_DATOS.md)
+  // El servicio REAL sobre una tabla `DataConsent` en memoria.
+  // ──────────────────────────────────────────────────────────────────
+  describe('13. Autorización de datos antes de agendar', () => {
+    const POLITICA = 'https://hospital.gov.co/datos';
+    const CEDULA = '1088123456';
+    let ajustes: {
+      dataConsentEnabled: boolean;
+      dataPolicyUrl: string | null;
+      dataPolicyVersion: string;
+    };
+    let filas: any[];
+    let settingsFalla: boolean;
+
+    const coincide = (r: any, w: any = {}): boolean => {
+      if (w.organizationId && r.organizationId !== w.organizationId)
+        return false;
+      if (w.id && r.id !== w.id) return false;
+      if (w.status && r.status !== w.status) return false;
+      if (w.policyVersion && r.policyVersion !== w.policyVersion) return false;
+      if (
+        w.OR &&
+        !w.OR.some((c: any) => Object.entries(c).every(([k, v]) => r[k] === v))
+      )
+        return false;
+      return true;
+    };
+    // Reloj que siempre avanza: dos respuestas seguidas nunca empatan.
+    let ultimo = 0;
+    const marca = (d: unknown) => {
+      if (!(d instanceof Date)) return d;
+      ultimo = Math.max(d.getTime(), ultimo + 1);
+      return new Date(ultimo);
+    };
+
+    const delRemitente = () => filas.filter((f) => f.senderKey === SENDER);
+    const aviso = /Antes de empezar necesito su autorización/;
+    const recordatorio = /Para continuar necesito su respuesta/;
+
+    beforeEach(() => {
+      ajustes = {
+        dataConsentEnabled: true,
+        dataPolicyUrl: POLITICA,
+        dataPolicyVersion: '1',
+      };
+      filas = [];
+      settingsFalla = false;
+      let seq = 0;
+      (prisma as any).organizationSettings = {
+        findUnique: jest.fn(async () => {
+          if (settingsFalla) throw new Error('base caída');
+          return { ...ajustes };
+        }),
+      };
+      (prisma as any).dataConsent = {
+        findFirst: jest.fn(async ({ where, orderBy }: any) => {
+          const campo = Object.keys(orderBy ?? {})[0];
+          const lista = filas.filter((f) => coincide(f, where));
+          if (campo)
+            lista.sort(
+              (a, b) =>
+                (b[campo]?.getTime?.() ?? -1) - (a[campo]?.getTime?.() ?? -1),
+            );
+          return lista[0] ?? null;
+        }),
+        create: jest.fn(async ({ data }: any) => {
+          const f = {
+            id: `dc-${++seq}`,
+            status: 'PENDING',
+            timesAsked: 1,
+            patientIds: [],
+            phone: null,
+            bsuid: null,
+            answerText: null,
+            answerVia: null,
+            answeredAt: null,
+            ...data,
+          };
+          f.askedAt = marca(data.askedAt ?? new Date());
+          if (data.answeredAt) f.answeredAt = marca(data.answeredAt);
+          filas.push(f);
+          return f;
+        }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          const lista = filas.filter((f) => coincide(f, where));
+          for (const f of lista) {
+            for (const [k, v] of Object.entries(data)) {
+              if (v && typeof v === 'object' && 'increment' in (v as any)) {
+                f[k] += (v as any).increment;
+              } else f[k] = k === 'answeredAt' ? marca(v) : v;
+            }
+          }
+          return { count: lista.length };
+        }),
+        update: jest.fn(async ({ where, data }: any) => {
+          const f = filas.find((x) => x.id === where.id);
+          if (f && data.patientIds?.push)
+            f.patientIds = [...f.patientIds, data.patientIds.push];
+          return f;
+        }),
+      };
+      (service as any).autorizacionDatos = new AutorizacionDatosService(
+        prisma as any,
+        { get: jest.fn(() => 'https://servidor/politica') } as any,
+      );
+
+      db.slots = [slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
+      appointments.getAvailableSlots.mockImplementation(() =>
+        db.slots
+          .filter((s) => s.isAvailable)
+          .map((s) => ({
+            slotId: s.id,
+            fecha: s.startTime,
+            doctor: s.doctor.fullName,
+            servicio: s.service.name,
+          })),
+      );
+    });
+
+    it('13.1 «Hola» → aviso; SÍ → gracias y el menú; el resumen ya no repite el párrafo legal; la cita queda enlazada', async () => {
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      const primer = lastSent();
+      expect(primer).toMatch(aviso);
+      expect(primer).toContain('Le saluda *AgenIA*');
+      expect(primer).toContain(ORG_NAME);
+      expect(primer).toContain('Ley 1581 de 2012');
+      expect(primer).toContain(POLITICA);
+      expect(primer).not.toContain('Medicina General'); // todavía no hay menú
+      expect(delRemitente()).toHaveLength(1);
+      expect(delRemitente()[0]).toMatchObject({
+        status: 'PENDING',
+        channel: 'WHATSAPP',
+        phone: SENDER,
+        policyVersion: '1',
+        policyUrl: POLITICA,
+        noticeText: primer,
+      });
+
+      await say('Sí');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      expect(lastSent()).toMatch(
+        /^¡Gracias! ✅ Quedó registrada su autorización\./,
+      );
+      expect(lastSent()).toContain('Medicina General');
+      expect(lastSent()).not.toMatch(/Le saluda \*/); // ya se presentó
+      expect(delRemitente()[0]).toMatchObject({
+        status: 'ACCEPTED',
+        answerText: 'Sí',
+        answerVia: 'TEXT',
+      });
+      expect(delRemitente()[0].answeredAt).toBeInstanceOf(Date);
+
+      await say('A');
+      await elegirParticular();
+      await say('A');
+      await say(CEDULA);
+      await decirNombre(say);
+      await responderAlta(say);
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      const resumen = lastSent();
+      expect(resumen).toContain('Juan Pérez');
+      expect(resumen).not.toMatch(/Ley 1581/);
+
+      await say('Sí');
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      expect(delRemitente()[0].patientIds).toEqual([db.patients[0].id]);
+      // Una sola fila: no se le volvió a preguntar en todo el agendamiento.
+      expect(delRemitente()).toHaveLength(1);
+    });
+
+    it('13.2 NO → se despide con el teléfono y la ventanilla; la próxima vez se le vuelve a preguntar', async () => {
+      await say('Hola');
+      await say('No acepto');
+      expect(await state()).toBe(ChatState.IDLE);
+      expect(lastSent()).toMatch(/respetamos su decisión/);
+      expect(lastSent()).toContain('6068538838');
+      expect(lastSent()).toMatch(/ventanilla/);
+      expect(delRemitente()[0]).toMatchObject({
+        status: 'REJECTED',
+        answerText: 'No acepto',
+      });
+
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      expect(lastSent()).toMatch(aviso);
+      expect(delRemitente()).toHaveLength(2);
+    });
+
+    it('13.3 quien ya autorizó esta versión va directo al menú', async () => {
+      filas.push({
+        id: 'previa',
+        organizationId: ORG_ID,
+        senderKey: SENDER,
+        phone: SENDER,
+        status: 'ACCEPTED',
+        policyVersion: '1',
+        answeredAt: new Date('2026-11-01T12:00:00Z'),
+        patientIds: [],
+      });
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      expect(lastSent()).toContain('Medicina General');
+      expect(lastSent()).not.toMatch(aviso);
+    });
+
+    it('13.4 si la clínica cambia la versión de la política, se le vuelve a preguntar', async () => {
+      filas.push({
+        id: 'previa',
+        organizationId: ORG_ID,
+        senderKey: SENDER,
+        status: 'ACCEPTED',
+        policyVersion: '1',
+        answeredAt: new Date('2026-11-01T12:00:00Z'),
+        patientIds: [],
+      });
+      ajustes.dataPolicyVersion = '2';
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      expect(delRemitente().at(-1)).toMatchObject({ policyVersion: '2' });
+    });
+
+    it('13.5 su primer mensaje ya decía qué quería: tras el SÍ sigue desde ahí', async () => {
+      // La IA solo encuentra el servicio en el mensaje que lo nombra.
+      provider.extractSchedulingIntent.mockImplementation(({ text }: any) =>
+        /medicina/i.test(String(text))
+          ? extraction({
+              intent: 'agendar_cita',
+              especialidad: 'Medicina General',
+            })
+          : extraction(),
+      );
+      await say('Buenas, necesito cita de medicina general');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      expect(lastSent()).toMatch(aviso);
+
+      const antes = sent().length;
+      await say('si acepto');
+      const nuevos = sent().slice(antes);
+      expect(nuevos[0]).toMatch(/^¡Gracias! ✅/);
+      // Siguió con el servicio que ya había pedido: ahora la EPS.
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+      expect(delRemitente()[0].status).toBe('ACCEPTED');
+    });
+
+    const pacienteRegistrado = () =>
+      db.patients.push({
+        id: 'pat-known',
+        cedula: '999888',
+        fullName: 'María Ruiz',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+        dateOfBirth: new Date('1975-06-01'),
+        gender: 'F',
+      });
+
+    it('13.5b paciente ya registrado: el resumen tampoco repite el párrafo legal', async () => {
+      pacienteRegistrado();
+      await say('Hola');
+      await say('Sí');
+      await say('A');
+      await elegirParticular();
+      await say('A');
+      await say('999888');
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(lastSent()).toContain('María Ruiz');
+      expect(lastSent()).not.toMatch(/Ley 1581/);
+    });
+
+    it('13.5c dio su documento en el primer mensaje: se retoma y el resumen no repite el párrafo legal', async () => {
+      pacienteRegistrado();
+      provider.extractSchedulingIntent.mockImplementation(({ text }: any) =>
+        /999888/.test(String(text))
+          ? extraction({ intent: 'agendar_cita', cedula: '999888' })
+          : extraction(),
+      );
+      await say('quiero una cita, mi cédula es 999888');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      await say('Sí');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      await say('A');
+      await elegirParticular();
+      await say('A');
+      // No se le volvió a pedir el documento: se retomó con el primer mensaje.
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(lastSent()).toContain('María Ruiz');
+      expect(lastSent()).not.toMatch(/Ley 1581/);
+    });
+
+    it('13.5d un «Hola» a mitad del agendamiento (empezó antes de encenderla) también la pide', async () => {
+      ajustes.dataConsentEnabled = false;
+      await say('Hola');
+      await say('A');
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+      ajustes.dataConsentEnabled = true;
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      expect(lastSent()).toMatch(aviso);
+    });
+
+    it('13.6 cancelar no pide la autorización, ni antes ni en la pregunta', async () => {
+      await say('cancelar cita');
+      expect(await state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+      expect(sent().join('\n')).not.toMatch(aviso);
+      expect(filas).toHaveLength(0);
+
+      await say('chao');
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      await say('cancelar cita');
+      expect(await state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+      // La pregunta queda sin respuesta (cuenta como «no respondió»).
+      expect(delRemitente()[0].status).toBe('PENDING');
+    });
+
+    it('13.7 otra cosa en vez de SÍ/NO: se le recuerda en corto y, tras varios recordatorios, se cierra con la salida', async () => {
+      await say('Hola');
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ intent: 'agendar_cita' }),
+      );
+      for (let i = 0; i < 3; i++) {
+        await say('quiero una cita');
+        expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+        expect(lastSent()).toMatch(recordatorio);
+        expect(lastSent()).toContain(POLITICA);
+      }
+      expect(delRemitente()).toHaveLength(1);
+      expect(delRemitente()[0].timesAsked).toBe(4);
+
+      await say('quiero una cita');
+      expect(await state()).toBe(ChatState.IDLE);
+      expect(lastSent()).toMatch(/no recibí su respuesta/);
+      expect(lastSent()).toContain('6068538838');
+      expect(delRemitente()[0].status).toBe('PENDING');
+      expect(appointments.getAvailableSlots).not.toHaveBeenCalled();
+    });
+
+    it('13.8 «no entiendo» no es un NO: se le vuelve a preguntar', async () => {
+      await say('Hola');
+      await say('no entiendo');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      expect(lastSent()).toMatch(recordatorio);
+      expect(delRemitente()[0].status).toBe('PENDING');
+    });
+
+    it('13.9 «Retiro mi autorización» la retira; para agendar se le vuelve a preguntar', async () => {
+      await say('Hola');
+      await say('Sí');
+      await say('Retiro mi autorización');
+      expect(await state()).toBe(ChatState.IDLE);
+      expect(lastSent()).toMatch(/retira su autorización/);
+      expect(lastSent()).toContain('6068538838');
+      expect(delRemitente().map((f) => f.status)).toEqual([
+        'ACCEPTED',
+        'REVOKED',
+      ]);
+
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      expect(lastSent()).toMatch(aviso);
+    });
+
+    it('13.10 el SÍ por nota de voz también vale (y queda dicho que fue por voz)', async () => {
+      await say('Hola');
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('x'));
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ isActive: true, accessToken: 't' });
+      provider.extractSchedulingIntent.mockResolvedValue(
+        extraction({ transcript: 'sí, acepto' }),
+      );
+      await service.processIncomingMessage(audioEvent());
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      expect(delRemitente()[0]).toMatchObject({
+        status: 'ACCEPTED',
+        answerVia: 'VOICE',
+        answerText: 'sí, acepto',
+      });
+    });
+
+    it('13.11 la emergencia sigue primero, también en la pregunta', async () => {
+      await say('Hola');
+      await say('me duele mucho el pecho');
+      expect(lastSent()).toMatch(/123|urgencias/i);
+      expect(delRemitente()[0].status).toBe('PENDING');
+    });
+
+    it('13.12 después de cancelar, «agendar otra» pide la autorización', async () => {
+      db.patients.push({
+        id: 'pat-1',
+        cedula: CEDULA,
+        fullName: 'Juan Pérez',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+      });
+      const slot = slotRow('slot-x', FECHA_B, 'Dr X', SVC_MEDICINA);
+      slot.isAvailable = false;
+      db.slots.push(slot);
+      db.appointments.push({
+        id: 'apt-x',
+        patientId: 'pat-1',
+        scheduleSlotId: 'slot-x',
+        status: 'SCHEDULED',
+        epsId: null,
+        organizationId: ORG_ID,
+      });
+      await say('cancelar cita');
+      await say(CEDULA);
+      await say('SI');
+      expect(await state()).toBe(ChatState.AWAITING_POST_CANCEL_CHOICE);
+      await say('SI');
+      expect(await state()).toBe(ChatState.AWAITING_DATA_CONSENT);
+      await say('Sí');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+    });
+
+    it('13.13 apagada, nada cambia: menú directo y el resumen conserva el párrafo legal', async () => {
+      ajustes.dataConsentEnabled = false;
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      await say('A');
+      await elegirParticular();
+      await say('A');
+      await say(CEDULA);
+      await decirNombre(say);
+      await responderAlta(say);
+      expect(lastSent()).toMatch(/Ley 1581/);
+      expect(lastSent()).toContain(POLITICA); // el enlace de la clínica
+      await say('Retiro mi autorización');
+      expect(filas).toHaveLength(0);
+    });
+
+    it('13.14 si la base falla al revisar, el chat sigue como siempre', async () => {
+      settingsFalla = true;
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      expect(lastSent()).toContain('Medicina General');
     });
   });
 });

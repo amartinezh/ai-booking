@@ -22,6 +22,7 @@ import RescheduleToggle from './RescheduleToggle';
 import PlazoAgendarSetting from './PlazoAgendarSetting';
 import ReservaPresencialSetting from './ReservaPresencialSetting';
 import SabadoRuralSetting from './SabadoRuralSetting';
+import AutorizacionDatosSetting from './AutorizacionDatosSetting';
 import HomologacionAutomatica from './HomologacionAutomatica';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
@@ -207,6 +208,15 @@ export default async function ConfiguracionPage({
                         {settings && <CancelToggle initialEnabled={settings.cancelEnabled} />}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <RescheduleToggle initialEnabled={settings.rescheduleEnabled} />}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {settings && (
+                            <AutorizacionDatosSetting
+                                inicial={settings.autorizacionDatos}
+                                nombreAsistente={settings.botName}
+                                nombreClinica={settings.nombreClinica}
+                                estilo={settings.communicationStyle}
+                            />
+                        )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && (
                             <PlazoAgendarSetting
