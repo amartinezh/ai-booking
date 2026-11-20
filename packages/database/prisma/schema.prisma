@@ -262,6 +262,17 @@ model OrganizationSettings {
   dataConsentUpdatedAt DateTime?
   dataConsentUpdatedBy String?
 
+  // 📄 PÁGINA PÚBLICA DE LA POLÍTICA DE DATOS (2026-11-20): la identificación
+  // del responsable que pide el Decreto 1377, art. 13 (razón social, NIT,
+  // municipio, dirección, teléfonos, correo, área que atiende los reclamos,
+  // horario y fecha de entrada en vigencia), como JSON. Con los obligatorios
+  // completos se publica /politica-de-datos/<organizationId>, con el texto de
+  // apps/web/lib/politica-datos; null = la página no existe (404). Lo edita el
+  // ORG_ADMIN en Configuración › Asistente Virtual, junto a la autorización.
+  dataPolicyPage          Json?
+  dataPolicyPageUpdatedAt DateTime?
+  dataPolicyPageUpdatedBy String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

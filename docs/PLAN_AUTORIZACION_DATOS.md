@@ -100,7 +100,7 @@ Pedido del 2026-11-20: al inicio de las comunicaciones con los pacientes donde s
 
 1. Desplegar: la migración solo agrega columnas vacías y una tabla.
 2. Llevar a la jurídica del hospital el texto del aviso. Está en Configuración, en «Ver el mensaje que recibe el paciente», y en `avisoAutorizacionDatos`. Si piden cambios, se cambian en `packages/shared/src/autorizacion-datos.ts`.
-3. En Configuración › Asistente Virtual, escribir el enlace de la política del hospital. El del servidor hoy es `https://www.hospitalsanvicenteanserma.gov.co/transparencia/proteccion-datos-personales`. Comprobar que abra en un celular.
+3. En Configuración › Asistente Virtual, poner el enlace de la política del hospital. El del servidor (`PRIVACY_POLICY_URL`) es `https://www.hospitalsanvicenteanserma.gov.co/transparencia/proteccion-datos-personales`, pero ese dominio no existe (el 2026-11-20 no resolvía en DNS); el sitio real es `hsvpanserma.gov.co`, y su página «Política y protección de datos» (`/politicas`) solo enlaza las políticas genéricas de la plataforma Mi Colombia Digital. Por eso AgenIA publica su propia política (§7): llenar el recuadro «Página de la política en AgenIA» y pulsar «Usar este enlace en la autorización». Comprobar que abra en un celular.
 4. Probar por Telegram, o con un número de prueba:
    - saludar, decir SÍ y agendar;
    - decir NO;
@@ -114,3 +114,16 @@ Pedido del 2026-11-20: al inicio de las comunicaciones con los pacientes donde s
 - **Excel de autorizaciones**: para una auditoría de la Superintendencia de Industria y Comercio. Mientras tanto, la tabla `DataConsent` tiene todo.
 - **Retiros**: no llegan solos al hospital. El asistente le dice a la persona que se comunique con el hospital para corregir o borrar sus datos. Si el hospital quiere un aviso, se puede dejar un caso en la Bandeja.
 - **Documentos de la consulta**: el resumen de la atención no pide esta autorización. Sale de una plantilla del hospital y tiene su propia baja. La jurídica debe confirmar que la finalidad «enviarle información de su atención» del aviso lo cubre.
+
+## 7. La política pública de AgenIA (2026-11-20)
+
+Pedido del 2026-11-20: «una página web pública en nuestro sistema con los tratamientos de los datos según la estricta ley», con la política de Mi Colombia Digital como base, en un enlace del servidor de AgenIA y para el hospital, porque las que tiene publicadas son viejas.
+
+- **Lo que tenía el hospital**: en `hsvpanserma.gov.co/politicas`, solo las políticas genéricas de Mi Colombia Digital (hablan del «sitio Web del Municipio» y de un correo del MinTIC). Su «Manual de Políticas de Seguridad Digital y Seguridad de la Información» (código 343, v2.0, vigente desde el 2026-08-01) trae lineamientos internos de protección de datos (5.3.3), pero no la política para los titulares que pide el Decreto 1377, art. 13. El pie de página del sitio dice: Carrera 5 Calle 1 Bis, Anserma (Caldas); conmutador (606) 853 8860; celular 314 679 3010; línea gratuita (606) 853 8828; siau@hsvpanserma.gov.co. El manual, en cambio, pone Calle 1 Sur #4-03/107 y (606) 853 8838. El NIT no aparece en ninguno de los dos.
+- **Lo construido**: la página `/politica-de-datos/<clínica>` (`apps/web/app/politica-de-datos`), el texto en `apps/web/lib/politica-datos/documento.ts` y la identificación del responsable en `OrganizationSettings.dataPolicyPage` (migración `20261120200000_politica_datos_publica`), editable en el recuadro «Página de la política en AgenIA». Detalle en AGENIA.md, Parte 2, §3.12.
+- **Lo que debe decidir o confirmar el hospital antes de enlazarla**:
+  1. La jurídica aprueba el texto. Si piden cambios, se hacen en `documento.ts`.
+  2. Cuál dirección y cuáles teléfonos van (el sitio y el manual no coinciden), el NIT y el área que atiende los reclamos de datos (se sugiere la Oficina de Atención al Usuario, SIAU, por el correo siau@).
+  3. La fecha de entrada en vigencia y, si la adopta por resolución, su número.
+  4. Que existan los contratos o cláusulas de transmisión con los proveedores que procesan datos fuera de Colombia (mensajería, inteligencia artificial, voz, correo y servidores): la política dice que esas transmisiones se hacen así (Decreto 1377, arts. 24 y 25).
+  5. Que el hospital enlace la página desde su sitio, en «Política y protección de datos».

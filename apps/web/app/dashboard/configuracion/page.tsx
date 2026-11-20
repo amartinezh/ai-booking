@@ -36,6 +36,7 @@ import BloqueosAgenda from './BloqueosAgenda';
 import { obtenerBloqueosAgenda } from '@/app/actions/bloqueos-agenda';
 import EstadisticasParaCompartir from './EstadisticasParaCompartir';
 import { getMyEstadisticasParaCompartir } from '@/app/actions/estadisticas';
+import { getMyPaginaPoliticaDatos } from '@/app/actions/politica-datos';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -95,16 +96,22 @@ export default async function ConfiguracionPage({
         null;
     // 🩺 Médicos nuevos del hospital: solo con espejo. Aislado como los demás.
     let homologacion: Awaited<ReturnType<typeof getMyHomologacionAutomatica>> | null = null;
+    // 📄 La página pública de la política de datos. Aislada como las demás: si
+    // falla, la autorización de datos se muestra igual, sin ese bloque.
+    let paginaPolitica: Awaited<ReturnType<typeof getMyPaginaPoliticaDatos>> | null = null;
 
     if (activeTab === 'chatbot') {
-        const [setRes, audRes, plazoRes, homRes, reservaRes, sabadoRes] = await Promise.allSettled([
+        const [setRes, audRes, plazoRes, homRes, reservaRes, sabadoRes, politicaRes] = await Promise.allSettled([
             getMyOrgSettings(),
             getMyAudioConfig(),
             getMyPlazoAgendarResumen(),
             getMyHomologacionAutomatica(),
             getMyReservaPresencialResumen(),
             getMySabadoRuralEstado(),
+            getMyPaginaPoliticaDatos(),
         ]);
+        if (politicaRes.status === 'fulfilled') paginaPolitica = politicaRes.value;
+        else console.error('[configuracion] Página de la política de datos load failed:', politicaRes.reason);
         if (sabadoRes.status === 'fulfilled' && sabadoRes.value.success) sabadoEstado = sabadoRes.value.estado;
         if (reservaRes.status === 'fulfilled' && reservaRes.value.success) reservaResumen = reservaRes.value.resumen;
         if (homRes.status === 'fulfilled') homologacion = homRes.value;
@@ -215,6 +222,7 @@ export default async function ConfiguracionPage({
                                 nombreAsistente={settings.botName}
                                 nombreClinica={settings.nombreClinica}
                                 estilo={settings.communicationStyle}
+                                pagina={paginaPolitica}
                             />
                         )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}

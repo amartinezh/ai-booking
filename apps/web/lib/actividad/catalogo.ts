@@ -140,6 +140,8 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     APPOINTMENT_LIMITS_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió el límite de citas por paciente' },
     // `aviso`: cambia lo primero que le dice el asistente a quien quiere agendar.
     DATA_CONSENT_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la autorización de datos del asistente', aviso: true },
+    // `aviso`: cambia lo que dice la política pública de datos de la clínica.
+    DATA_POLICY_PAGE_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la página de la política de datos', aviso: true },
     AI_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la inteligencia artificial del asistente', aviso: true },
     WHATSAPP_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la conexión con WhatsApp', aviso: true },
     AUDIO_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la voz del asistente' },

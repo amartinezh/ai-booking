@@ -5,6 +5,8 @@ import { ShieldCheck } from 'lucide-react';
 import { setMyAutorizacionDatos } from '@/app/actions/settings';
 import { formatAppointmentCompact } from '@/lib/date';
 import { avisoAutorizacionDatos, type EstiloAviso } from '@agenia/shared';
+import type { PaginaPoliticaDatos as Pagina } from '@/app/actions/politica-datos';
+import PaginaPoliticaDatos from './PaginaPoliticaDatos';
 
 export interface AutorizacionDatosGuardada {
     encendida: boolean;
@@ -24,11 +26,14 @@ export default function AutorizacionDatosSetting({
     nombreAsistente,
     nombreClinica,
     estilo,
+    pagina,
 }: {
     inicial: AutorizacionDatosGuardada;
     nombreAsistente: string;
     nombreClinica: string;
     estilo: EstiloAviso;
+    /** La página pública de la política (lib/politica-datos); sin ella no se muestra el bloque. */
+    pagina?: Pagina | null;
 }) {
     const [guardada, setGuardada] = useState(inicial);
     const [encendida, setEncendida] = useState(inicial.encendida);
@@ -42,11 +47,11 @@ export default function AutorizacionDatosSetting({
     const cambiaVersion = version.trim() !== guardada.version;
     const hayCambios = encendida !== guardada.encendida || url.trim() !== guardada.urlPolitica || cambiaVersion;
 
-    const guardar = () => {
+    const enviar = (entrada: { encendida: boolean; urlPolitica: string; version: string }) => {
         setError(null);
         setListo(false);
         startTransition(async () => {
-            const res = await setMyAutorizacionDatos({ encendida, urlPolitica: url, version });
+            const res = await setMyAutorizacionDatos(entrada);
             if (res.success) {
                 setGuardada(res.autorizacionDatos);
                 setEncendida(res.autorizacionDatos.encendida);
@@ -59,6 +64,11 @@ export default function AutorizacionDatosSetting({
             }
         });
     };
+    const guardar = () => enviar({ encendida, urlPolitica: url, version });
+    // «Usar este enlace» de la página de AgenIA: cambia solo el enlace, con lo
+    // demás como está guardado (lo que se esté editando arriba se descarta).
+    const usarEnlaceDeLaPagina = (enlace: string) =>
+        enviar({ encendida: guardada.encendida, urlPolitica: enlace, version: guardada.version });
 
     const aviso = avisoAutorizacionDatos({
         estilo,
@@ -126,6 +136,12 @@ export default function AutorizacionDatosSetting({
                         maxLength={300}
                         className={input}
                     />
+                    {pagina && !pagina.publicada && !url.trim() && (
+                        <span className="text-xs text-zinc-400">
+                            ¿La clínica no tiene una política publicada? Más abajo, en «Página de la política en AgenIA»,
+                            puede publicar una.
+                        </span>
+                    )}
                 </label>
 
                 <label className="flex flex-col gap-1 text-sm text-zinc-600 dark:text-zinc-300 sm:max-w-xs">
@@ -208,6 +224,14 @@ export default function AutorizacionDatosSetting({
                     Último cambio: {guardada.ultimoCambio.por} ·{' '}
                     {formatAppointmentCompact(new Date(guardada.ultimoCambio.en))}
                 </p>
+            )}
+            {pagina && (
+                <PaginaPoliticaDatos
+                    inicial={pagina}
+                    enlaceGuardado={guardada.urlPolitica}
+                    onUsarEnlace={usarEnlaceDeLaPagina}
+                    ocupado={isPending}
+                />
             )}
         </section>
     );

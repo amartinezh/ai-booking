@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 jest.mock('@/app/actions/settings', () => ({ setMyAutorizacionDatos: jest.fn() }));
+jest.mock('@/app/actions/politica-datos', () => ({ setMyPaginaPoliticaDatos: jest.fn() }));
 
 import AutorizacionDatosSetting from './AutorizacionDatosSetting';
 import { setMyAutorizacionDatos } from '@/app/actions/settings';
