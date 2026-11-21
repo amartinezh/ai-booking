@@ -1,7 +1,7 @@
 /**
  * LÍMITE DE CITAS POR PACIENTE — quién gestiona y la cifra del menú.
  *
- * La configuración del límite (/dashboard/limites-citas) es solo de ORG_ADMIN,
+ * La configuración del límite (Configuración › Qué puede hacer el asistente) es solo de ORG_ADMIN,
  * que es quien fija la regla (2026-10-22: el agendador la veía y la podía
  * cambiar). La bandeja de solicitudes de más citas (/dashboard/solicitudes-citas)
  * es de ORG_ADMIN y BOOKING_AGENT: quien agenda es quien atiende a esos

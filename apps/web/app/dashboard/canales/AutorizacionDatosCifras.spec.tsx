@@ -57,7 +57,7 @@ describe('AutorizacionDatosCifras (Canales en vivo)', () => {
             cifras: cifrasDeAutorizaciones([], ahora),
         });
         await pintar();
-        expect(screen.getByText(/Se enciende en Configuración › Asistente Virtual/)).toBeInTheDocument();
+        expect(screen.getByText(/Se enciende en Configuración › Privacidad \(Ley 1581\)/)).toBeInTheDocument();
         expect(screen.getByText('Sin preguntas en este período.')).toBeInTheDocument();
     });
 

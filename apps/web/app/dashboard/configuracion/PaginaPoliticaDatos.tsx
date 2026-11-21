@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { AvisoSinGuardar, useAvisoAlSalir } from './CambiosSinGuardar';
 import { ExternalLink, FileText } from 'lucide-react';
 import { setMyPaginaPoliticaDatos, type PaginaPoliticaDatos as Pagina } from '@/app/actions/politica-datos';
 import { CAMPOS_POLITICA, type CampoPolitica } from '@/lib/politica-datos/datos';
@@ -34,6 +35,8 @@ export default function PaginaPoliticaDatos({
 
     const hayCambios = CAMPOS_POLITICA.some((d) => valores[d.campo].trim() !== pagina.datos[d.campo]);
     const enUso = pagina.publicada && enlaceGuardado === pagina.enlace;
+
+    useAvisoAlSalir(hayCambios);
 
     const guardar = () => {
         setError(null);
@@ -174,6 +177,7 @@ export default function PaginaPoliticaDatos({
                         ))}
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
+                        <AvisoSinGuardar visible={hayCambios} />
                         <button
                             type="button"
                             onClick={guardar}

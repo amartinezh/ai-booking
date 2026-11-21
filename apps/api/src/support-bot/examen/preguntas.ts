@@ -112,7 +112,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: ADMIN,
     pregunta: '¿cómo apago los recordatorios automáticos?',
     tipos: RESUELVE,
-    temas: ['configuracion'],
+    temas: ['config-recordatorios'],
   },
   {
     id: 'como-no-cancelar',
@@ -121,7 +121,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     pregunta:
       'no quiero que los pacientes puedan cancelar por el bot, ¿se puede?',
     tipos: RESUELVE,
-    temas: ['configuracion'],
+    temas: ['config-asistente'],
   },
   {
     id: 'como-telegram-pacientes',
@@ -129,7 +129,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: ADMIN,
     pregunta: '¿cómo conecto Telegram para los pacientes?',
     tipos: RESUELVE,
-    temas: ['configuracion'],
+    temas: ['config-canales'],
   },
   {
     id: 'como-limite-mes',
@@ -137,7 +137,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: ADMIN,
     pregunta: '¿cómo cambio el máximo de citas por mes de un paciente?',
     tipos: RESUELVE,
-    temas: ['limites-citas'],
+    temas: ['config-asistente'],
   },
   {
     id: 'como-plantillas',
@@ -145,7 +145,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: ADMIN,
     pregunta: '¿por qué WhatsApp necesita plantillas?',
     tipos: RESUELVE,
-    temas: ['configuracion'],
+    temas: ['config-canales'],
   },
   {
     id: 'como-horarios-ofrecidos',
@@ -154,7 +154,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     pregunta:
       '¿cuántas opciones de hora le muestra el bot al paciente y se puede cambiar?',
     tipos: RESUELVE,
-    temas: ['agenda', 'configuracion'],
+    temas: ['agenda', 'config-agenda'],
   },
   {
     id: 'como-cupo-libre',
@@ -170,7 +170,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: ADMIN,
     pregunta: '¿cómo funcionan los recordatorios? ¿cuándo salen?',
     tipos: RESUELVE,
-    temas: ['configuracion', 'parte2-4', 'vision-general'],
+    temas: ['config-recordatorios', 'parte2-4', 'vision-general'],
   },
   {
     id: 'como-que-es-espejo',
@@ -245,7 +245,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     pregunta:
       '¿el límite de citas también me aplica a mí cuando agendo desde el panel?',
     tipos: RESUELVE,
-    temas: ['limites-citas', 'parte2-3'],
+    temas: ['config-asistente', 'parte2-3'],
   },
   {
     id: 'como-rastreo-medico',
@@ -330,7 +330,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: ADMIN,
     pregunta: 'le doy probar a la inteligencia artificial y falla',
     tipos: RESUELVE,
-    temas: ['configuracion'],
+    temas: ['config-canales'],
   },
   {
     id: 'error-sin-agenda',
@@ -384,7 +384,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: AGENTE,
     pregunta: '¿cómo conecto WhatsApp?',
     tipos: RESUELVE,
-    temas: ['configuracion'],
+    temas: ['config-canales'],
     debeDecir: [/administrador/i],
   },
   {
@@ -411,7 +411,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: MEDICO,
     pregunta: '¿cómo cambio el máximo de citas por día?',
     tipos: RESUELVE,
-    temas: ['limites-citas'],
+    temas: ['config-asistente'],
     debeDecir: [/administrador|agente/i],
   },
 
@@ -456,7 +456,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
     rol: ADMIN,
     pregunta: 'en límite de citas el botón de guardar está gris y no me deja',
     tipos: ['respuesta', 'falla', 'aclarar'],
-    temas: ['limites-citas'],
+    temas: ['config-asistente'],
     urgencia: 'normal',
   },
 
@@ -581,7 +581,7 @@ export const CASOS_DEL_EXAMEN: CasoDeExamen[] = [
       interruptores: { agendar: false, cancelar: true, cambiarFecha: true },
     },
     debeDecir: [/apagad|desactivad/i],
-    temas: ['configuracion'],
+    temas: ['config-asistente'],
   },
   {
     id: 'ficha-sin-latido',

@@ -17,7 +17,7 @@ export type TipoPlantillaComunicado =
 /** Lo que se sabe de la plantilla del comunicado antes de enviar. */
 export interface VerificacionPlantilla {
   tipo: TipoPlantillaComunicado;
-  /** Registrada y activa en Configuración → WhatsApp. */
+  /** Registrada y activa en Configuración › Canales e IA. */
   configurada: boolean;
   nombre: string | null;
   idioma: string | null;
@@ -91,7 +91,7 @@ export class MassMessageMetaService {
     const registrada = await this.plantillas.findTemplate(organizationId, tipo);
     if (!registrada) {
       base.problemas.push(
-        `Falta registrar la plantilla «${TEMPLATE_CONTRACTS[tipo].label}» en Configuración → WhatsApp.`,
+        `Falta registrar la plantilla «${TEMPLATE_CONTRACTS[tipo].label}» en Configuración › Canales e IA.`,
       );
       return base;
     }

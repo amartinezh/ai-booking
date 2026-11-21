@@ -23,12 +23,15 @@ import type {
     RecibeAvisos,
 } from '@/lib/bandeja/tipos';
 import { BOTON_PRIMARIO, BOTON_SECUNDARIO, CAMPO } from './estilos';
+import { AvisoSinGuardar, useSinGuardar } from '../configuracion/CambiosSinGuardar';
 
 /**
  * 📣 Los avisos por WhatsApp de la Bandeja (docs/PLAN_AVISOS_AGENDADORES.md).
  *
  * Arriba, si salen y a cuántas personas llegan; quien no configura ve además si él
- * los recibe (§3.5). El administrador abre «Configurar avisos»: la lista de
+ * los recibe (§3.5). La configuración vive en Configuración › Hospital (espejo)
+ * (`enConfiguracion`, docs/PLAN_NAVEGACION.md Fase 3): en la Bandeja el
+ * administrador solo ve el enlace «Configurar avisos →». Allá está la lista de
  * agendadores y administradores de la clínica, cada uno con su celular, qué recibe y
  * cómo le fue con el último aviso, abajo los números sin cuenta y, al final, cuándo
  * se envían (a cualquier hora o solo en horario laboral, §8).
@@ -118,8 +121,19 @@ function textoCobertura(c: EstadoAvisos['cobertura']): string {
     return `Llegan a ${p} ${p === 1 ? 'persona' : 'personas'} · citas que no llegan al hospital: ${c.porGrupo.SINCRONIZACION.recordatorios} · pedidos de pacientes: ${c.porGrupo.PEDIDOS_PACIENTES.recordatorios}`;
 }
 
-export default function PanelAvisos({ avisos, puedeConfigurar }: { avisos: EstadoAvisos; puedeConfigurar: boolean }) {
-    const [editando, setEditando] = useState(false);
+/** Dónde se configuran los avisos (el ancla de la sección del hospital). */
+export const RUTA_CONFIGURAR_AVISOS = '/dashboard/configuracion/hospital#avisos-agendadores';
+
+export default function PanelAvisos({
+    avisos,
+    puedeConfigurar,
+    enConfiguracion = false,
+}: {
+    avisos: EstadoAvisos;
+    puedeConfigurar: boolean;
+    /** En Configuración › Hospital (espejo): con el editor abierto. En la Bandeja: solo el estado y el enlace. */
+    enConfiguracion?: boolean;
+}) {
     const [mensaje, setMensaje] = useState<{ ok: boolean; texto: string } | null>(null);
 
     const estilos = avisos.salen
@@ -150,30 +164,15 @@ export default function PanelAvisos({ avisos, puedeConfigurar }: { avisos: Estad
                     <LineaHorario horario={avisos.horario} />
                     <MiEstado yo={avisos.yo} puedeConfigurar={puedeConfigurar} />
                 </div>
-                {puedeConfigurar && (
-                    <button
-                        type="button"
-                        className={BOTON_SECUNDARIO}
-                        onClick={() => {
-                            setMensaje(null);
-                            setEditando((v) => !v);
-                        }}
-                        aria-expanded={editando}
-                    >
-                        {editando ? 'Cerrar' : 'Configurar avisos'}
-                    </button>
+                {puedeConfigurar && !enConfiguracion && (
+                    <Link href={RUTA_CONFIGURAR_AVISOS} className={BOTON_SECUNDARIO}>
+                        Configurar avisos →
+                    </Link>
                 )}
             </div>
 
-            {puedeConfigurar && editando && avisos.destinatarios && (
-                <Editor
-                    avisos={avisos}
-                    destinatarios={avisos.destinatarios}
-                    alGuardar={(texto) => {
-                        setMensaje({ ok: true, texto });
-                        setEditando(false);
-                    }}
-                />
+            {puedeConfigurar && enConfiguracion && avisos.destinatarios && (
+                <Editor avisos={avisos} destinatarios={avisos.destinatarios} alGuardar={(texto) => setMensaje({ ok: true, texto })} />
             )}
             {mensaje && (
                 <p
@@ -238,6 +237,7 @@ function Editor({
     const [hasta, setHasta] = useState(avisos.horario.hasta);
     const [error, setError] = useState<string | null>(null);
     const [nuevas, setNuevas] = useState(0);
+    const { sucio, marcarGuardado } = useSinGuardar({ filas, activos, aCualquierHora, desde, hasta });
     const [guardando, iniciar] = useTransition();
 
     const cambiar = (clave: string, cambio: Partial<FilaEditable>) =>
@@ -271,6 +271,7 @@ function Editor({
                 setError(r.error);
                 return;
             }
+            marcarGuardado();
             alGuardar('Guardado.');
             router.refresh();
         });
@@ -397,6 +398,7 @@ function Editor({
                     {error}
                 </p>
             )}
+            <AvisoSinGuardar visible={sucio} />
             <button type="button" className={BOTON_PRIMARIO} disabled={guardando} onClick={guardar}>
                 {guardando ? 'Guardando…' : 'Guardar cambios'}
             </button>

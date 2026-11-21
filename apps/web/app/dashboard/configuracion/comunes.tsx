@@ -34,6 +34,22 @@ export function Ajuste({ id, children }: { id: string; children: ReactNode }) {
     );
 }
 
+/**
+ * «Esto se movió aquí»: para quien llega desde una dirección vieja que redirige
+ * con `?desde=…` (docs/PLAN_NAVEGACION.md §6). Solo se ve si vino de allá.
+ */
+export function AvisoMovido({ visible, children }: { visible: boolean; children: ReactNode }) {
+    if (!visible) return null;
+    return (
+        <p
+            role="status"
+            className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-900/20 dark:text-blue-200"
+        >
+            ℹ️ {children}
+        </p>
+    );
+}
+
 /** La línea entre un ajuste y el siguiente. */
 export function Separador() {
     return <div className="border-t border-zinc-200 dark:border-zinc-800" />;

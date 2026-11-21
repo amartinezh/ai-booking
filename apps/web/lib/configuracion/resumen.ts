@@ -5,6 +5,7 @@ import {
     textoSabadoRural,
     type LimitesCitas,
 } from '@agenia/shared';
+import { alertasLleganPorWhatsapp } from './telefono-soporte';
 
 // ─────────────────────────────────────────────────────────────
 // El Resumen de Configuración (docs/PLAN_NAVEGACION.md §5.1): una línea por
@@ -78,7 +79,14 @@ export interface DatosDelResumen {
      * Solo con espejo (`undefined` = la clínica no tiene espejo: no hay bloque).
      * null = no se pudo leer.
      */
-    hospital?: { encendido: boolean; auto: boolean; whatsappOn: boolean; modoAgenda: string } | null;
+    hospital?: {
+        encendido: boolean;
+        auto: boolean;
+        whatsappOn: boolean;
+        modoAgenda: string;
+        /** Los avisos por WhatsApp a los agendadores; null = no se pudo leer. */
+        avisos: { salen: boolean; personas: number } | null;
+    } | null;
     /** null = la clínica no lo tiene; undefined = no se pudo leer. */
     telefonoSoporte: string | null | undefined;
 }
@@ -124,6 +132,7 @@ export function armarResumen(d: DatosDelResumen): Resumen {
     const recordatorios = `${RUTA}/recordatorios`;
     const identidad = `${RUTA}/identidad`;
     const conocimiento = `${RUTA}/conocimiento`;
+    const clinica = `${RUTA}/clinica`;
     const privacidad = `${RUTA}/privacidad`;
     const canales = `${RUTA}/canales`;
     const hospital = `${RUTA}/hospital`;
@@ -240,6 +249,22 @@ export function armarResumen(d: DatosDelResumen): Resumen {
             ],
         },
         {
+            titulo: 'Datos de la clínica',
+            icono: '🏢',
+            href: clinica,
+            filas:
+                d.telefonoSoporte === undefined
+                    ? [sinLeer('Teléfono de soporte', `${clinica}#telefono`)]
+                    : d.telefonoSoporte === null
+                      ? [{ nombre: 'Teléfono de soporte', valor: 'Sin teléfono', estado: 'falta', href: `${clinica}#telefono` }]
+                      : [
+                            { nombre: 'Teléfono de soporte', valor: d.telefonoSoporte, estado: 'neutro', href: `${clinica}#telefono` },
+                            alertasLleganPorWhatsapp(d.telefonoSoporte)
+                                ? { nombre: 'Alertas de emergencia', valor: 'Llegan por WhatsApp', estado: 'encendido', href: `${clinica}#telefono` }
+                                : { nombre: 'Alertas de emergencia', valor: 'No llegan por WhatsApp', estado: 'falta', href: `${clinica}#telefono` },
+                        ],
+        },
+        {
             titulo: 'Privacidad (Ley 1581)',
             icono: '🔒',
             href: privacidad,
@@ -326,6 +351,21 @@ export function armarResumen(d: DatosDelResumen): Resumen {
                           estado: 'neutro',
                           href: `${hospital}#modo-agenda`,
                       },
+                      !h.avisos
+                          ? sinLeer('Avisos a los agendadores', `${hospital}#avisos-agendadores`)
+                          : h.avisos.salen
+                            ? {
+                                  nombre: 'Avisos a los agendadores',
+                                  valor: h.avisos.personas === 1 ? 'Llegan a 1 persona' : `Llegan a ${h.avisos.personas} personas`,
+                                  estado: 'encendido',
+                                  href: `${hospital}#avisos-agendadores`,
+                              }
+                            : {
+                                  nombre: 'Avisos a los agendadores',
+                                  valor: 'No están saliendo',
+                                  estado: 'falta',
+                                  href: `${hospital}#avisos-agendadores`,
+                              },
                   ],
         });
     }
@@ -359,11 +399,24 @@ export function armarResumen(d: DatosDelResumen): Resumen {
             enlace: 'Escribirla',
         });
     }
+    if (d.hospital?.avisos && !d.hospital.avisos.salen) {
+        avisos.push({
+            texto: 'Los avisos por WhatsApp a los agendadores no están saliendo: lo que no llegue al hospital solo se ve abriendo la Bandeja.',
+            href: `${hospital}#avisos-agendadores`,
+            enlace: 'Revisarlos',
+        });
+    }
     if (d.telefonoSoporte === null) {
         avisos.push({
-            texto: 'La clínica no tiene teléfono de soporte: cuando el asistente no puede ayudar, le dice al paciente que se comunique «con el hospital», sin número. Lo registra el equipo de AgenIA.',
-            href: '/dashboard/soporte',
-            enlace: 'Pedirlo en Soporte y ayuda',
+            texto: 'La clínica no tiene teléfono de soporte: es el número que el asistente les da a los pacientes y al que llegan las alertas de posible emergencia.',
+            href: `${clinica}#telefono`,
+            enlace: 'Escribirlo',
+        });
+    } else if (d.telefonoSoporte && !alertasLleganPorWhatsapp(d.telefonoSoporte)) {
+        avisos.push({
+            texto: 'El teléfono de soporte no es un celular con indicativo: las alertas de posible emergencia no llegan por WhatsApp y solo quedan en la Caja Negra.',
+            href: `${clinica}#telefono`,
+            enlace: 'Revisarlo',
         });
     }
     return { avisos, bloques };

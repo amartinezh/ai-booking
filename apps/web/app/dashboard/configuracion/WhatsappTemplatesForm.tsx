@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { AvisoSinGuardar, useAvisoAlSalir } from './CambiosSinGuardar';
 import {
     saveMyWhatsappTemplate,
     deleteMyWhatsappTemplate,
@@ -29,6 +30,11 @@ export default function WhatsappTemplatesForm({
     const [pending, startTransition] = useTransition();
     const [feedback, setFeedback] = useState<{ kind: WhatsappTemplateKind; ok: boolean; msg: string } | null>(null);
 
+    // Los campos no son controlados: cada tarjeta se marca al escribir en ella y se limpia al guardar o eliminar.
+    const [sinGuardar, setSinGuardar] = useState<WhatsappTemplateKind[]>([]);
+    useAvisoAlSalir(sinGuardar.length > 0);
+    const yaGuardada = (kind: WhatsappTemplateKind) => setSinGuardar((p) => p.filter((k) => k !== kind));
+
     const byKind = (kind: WhatsappTemplateKind) =>
         templates.find((t) => t.kind === kind);
 
@@ -52,6 +58,7 @@ export default function WhatsappTemplatesForm({
                     ...prev.filter((t) => t.kind !== kind),
                     res.data,
                 ]);
+                yaGuardada(kind);
                 setFeedback({ kind, ok: true, msg: 'Plantilla guardada.' });
             } else {
                 setFeedback({ kind, ok: false, msg: res.error });
@@ -64,6 +71,7 @@ export default function WhatsappTemplatesForm({
             const res = await deleteMyWhatsappTemplate(kind);
             if (res.success) {
                 setTemplates((prev) => prev.filter((t) => t.kind !== kind));
+                yaGuardada(kind);
                 setFeedback({ kind, ok: true, msg: 'Plantilla eliminada.' });
             } else {
                 setFeedback({ kind, ok: false, msg: res.error });
@@ -93,6 +101,7 @@ export default function WhatsappTemplatesForm({
                 return (
                     <form
                         key={kind}
+                        onChange={() => setSinGuardar((p) => (p.includes(kind) ? p : [...p, kind]))}
                         onSubmit={(e) => {
                             e.preventDefault();
                             handleSave(kind, e.currentTarget);
@@ -192,6 +201,7 @@ export default function WhatsappTemplatesForm({
                         </div>
 
                         <div className="flex items-center gap-3">
+                            <AvisoSinGuardar visible={sinGuardar.includes(kind)} />
                             <button
                                 type="submit"
                                 disabled={pending}

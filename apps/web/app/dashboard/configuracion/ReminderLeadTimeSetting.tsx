@@ -83,14 +83,19 @@ export default function ReminderLeadTimeSetting({ initialMinutes }: { initialMin
                             <span className="ml-2 text-emerald-600 dark:text-emerald-400">✓ Guardado</span>
                         )}
                     </p>
-                    <p className="text-zinc-500 dark:text-zinc-400">
-                        Sirve para las citas que el hospital agenda el mismo día, minutos antes: el paciente ya está
-                        ahí y el recordatorio no le aporta nada.
-                    </p>
-                    <p className="text-xs text-zinc-400 mt-1">
-                        La cita no se marca como recordada: si la mueven a una hora más lejana, el recordatorio puede
-                        salir. El botón de recordatorio manual de la agenda no se afecta.
-                    </p>
+                    <details className="mt-1">
+                        <summary className="w-fit cursor-pointer font-medium text-blue-600 hover:underline dark:text-blue-400">
+                            ¿Para qué sirve?
+                        </summary>
+                        <p className="mt-1 text-zinc-500 dark:text-zinc-400">
+                            Sirve para las citas que el hospital agenda el mismo día, minutos antes: el paciente ya está
+                            ahí y el recordatorio no le aporta nada.
+                        </p>
+                        <p className="text-xs text-zinc-400 mt-1">
+                            La cita no se marca como recordada: si la mueven a una hora más lejana, el recordatorio puede
+                            salir. El botón de recordatorio manual de la agenda no se afecta.
+                        </p>
+                    </details>
                 </div>
             </div>
             {error && (

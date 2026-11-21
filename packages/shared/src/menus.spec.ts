@@ -339,11 +339,12 @@ describe('Límite de citas y solicitudes de más citas (2026-10-14)', () => {
   const tiene = (menus: { href: string }[], href: string) =>
     menus.some((m) => m.href === href);
 
-  it('ORG_ADMIN ve las dos opciones, sin depender del espejo', () => {
+  it('ORG_ADMIN ve las solicitudes; el límite ya no es una opción del menú: está en Configuración (N5)', () => {
     for (const opts of [{}, { conEspejo: true }]) {
       const menus = getMenusForRole('ORG_ADMIN', opts);
-      expect(tiene(menus, LIMITE)).toBe(true);
+      expect(tiene(menus, LIMITE)).toBe(false);
       expect(tiene(menus, SOLICITUDES)).toBe(true);
+      expect(tiene(seccionesDeConfiguracion(menus), '/dashboard/configuracion/asistente')).toBe(true);
       expect(menus[menus.length - 1].href).toBe('/dashboard/soporte');
     }
   });
@@ -524,9 +525,8 @@ describe('Grupos del menú (docs/PLAN_NAVEGACION.md §4)', () => {
       '/dashboard/padron',
       '/dashboard/analytics',
       '/dashboard/canales',
-      '/dashboard/configuracion/integraciones/surveys',
+      '/dashboard/encuestas',
       '/dashboard/configuracion',
-      '/dashboard/limites-citas',
       '/dashboard/usuarios',
       '/dashboard/espejo',
       '/dashboard/soporte',
@@ -711,6 +711,7 @@ describe('Secciones de Configuración (docs/PLAN_NAVEGACION.md §5)', () => {
       '/dashboard/configuracion/recordatorios',
       '/dashboard/configuracion/identidad',
       '/dashboard/configuracion/conocimiento',
+      '/dashboard/configuracion/clinica',
       '/dashboard/configuracion/privacidad',
       '/dashboard/configuracion/canales',
     ]);

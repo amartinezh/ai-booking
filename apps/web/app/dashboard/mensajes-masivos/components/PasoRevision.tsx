@@ -114,7 +114,7 @@ export default function PasoRevision({
                 ? previa.plantilla.problemas.join(' ')
                 : previa.plantilla.verificadaConMeta
                   ? `Aprobada en Meta (categoría ${previa.plantilla.categoria?.toLowerCase() ?? '—'}).`
-                  : 'No se pudo comprobar con Meta (falta el id de la cuenta de WhatsApp Business en Configuración → WhatsApp). Haga una prueba.',
+                  : 'No se pudo comprobar con Meta (falta el id de la cuenta de WhatsApp Business en Configuración › Canales e IA). Haga una prueba.',
         },
         {
             nivel: calidad?.nivel ?? 'INFO',

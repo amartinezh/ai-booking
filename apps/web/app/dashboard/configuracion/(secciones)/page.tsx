@@ -11,6 +11,8 @@ import { getMyAudioConfig } from '@/app/actions/audio-config';
 import { getMyPaginaPoliticaDatos } from '@/app/actions/politica-datos';
 import { prisma } from '@/lib/prisma';
 import { getTenantMirrorFlags } from '@/lib/mirror-flags';
+import { resolverActorBandeja } from '@/lib/bandeja/acceso';
+import { estadoAvisos } from '@/lib/bandeja/avisos';
 import {
     AVISO_DE_LAS_PESTANAS_HASTA,
     armarResumen,
@@ -50,7 +52,8 @@ export default async function ResumenDeConfiguracionPage({
     const organizationId = session.organizationId!;
     const banderas = await getTenantMirrorFlags(organizationId);
 
-    const [ajustes, limites, bloqueos, base, ia, whatsapp, telegram, voz, pagina, espejo, org] = await Promise.allSettled([
+    const actorBandeja = banderas.conEspejo ? await resolverActorBandeja(prisma, session) : null;
+    const [ajustes, limites, bloqueos, base, ia, whatsapp, telegram, voz, pagina, espejo, org, avisosAgendadores] = await Promise.allSettled([
         getMyOrgSettings(),
         prisma.organizationSettings.findUnique({
             where: { organizationId },
@@ -75,12 +78,14 @@ export default async function ResumenDeConfiguracionPage({
               })
             : Promise.resolve(null),
         prisma.organization.findUnique({ where: { id: organizationId }, select: { supportPhone: true, timezone: true } }),
+        actorBandeja?.ok ? estadoAvisos(prisma, actorBandeja.actor) : Promise.resolve(null),
     ]);
 
     const s = valor(ajustes);
     const b = valor(bloqueos);
     const e = valor(espejo);
     const o = valor(org);
+    const av = valor(avisosAgendadores);
     const datos: DatosDelResumen = {
         ajustes: s,
         limites: limites.status === 'fulfilled' ? limitesDeLaClinica(limites.value) : null,
@@ -100,6 +105,7 @@ export default async function ResumenDeConfiguracionPage({
                     auto: e.autoHomologateDoctors,
                     whatsappOn: e.autoHomologateWhatsappOn,
                     modoAgenda: e.availabilityMode,
+                    avisos: av?.success ? { salen: av.data.salen, personas: av.data.cobertura.personas } : null,
                 },
         telefonoSoporte: org.status === 'fulfilled' ? (o?.supportPhone?.trim() || null) : undefined,
     };

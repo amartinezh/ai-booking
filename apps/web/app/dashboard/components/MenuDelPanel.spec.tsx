@@ -17,7 +17,7 @@ describe('MenuLateral', () => {
     it('el administrador ve los cinco grupos con su encabezado, cada uno con sus opciones', () => {
         render(<MenuLateral secciones={seccionesDelMenu(getMenusForRole('ORG_ADMIN', ANSERMA))} />);
         const grupos = screen.getAllByRole('group');
-        expect(grupos.map((g) => within(g).getAllByRole('link').length)).toEqual([5, 3, 5, 3, 4]);
+        expect(grupos.map((g) => within(g).getAllByRole('link').length)).toEqual([5, 3, 5, 3, 3]);
         const operacion = screen.getByRole('group', { name: 'Operación diaria' });
         expect(within(operacion).getAllByRole('link').map((a) => a.textContent)).toEqual([
             '🚨Bandeja de sincronización',

@@ -73,7 +73,7 @@ export class ChatbotController {
   // 1. Verificación del Webhook (Facebook te llama aquí primero).
   //
   // En modo multi-tenant ya no hay un VERIFY_TOKEN global: cada clínica define
-  // el suyo en Configuración → Integraciones → WhatsApp y lo registra con Meta.
+  // el suyo en Configuración › Canales e IA › WhatsApp y lo registra con Meta.
   // Buscamos la clínica que reclame el token enviado. Si no existe ninguna,
   // rechazamos.
   @Get('webhook')

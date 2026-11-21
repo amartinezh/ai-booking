@@ -27,4 +27,12 @@ describe('HomologacionAutomatica — médicos nuevos del hospital', () => {
         await userEvent.click(whatsapp);
         await waitFor(() => expect(setMyAutoHomologacionWhatsapp).toHaveBeenCalledWith(true));
     });
+
+    it('el de WhatsApp dice que no aplica mientras el primero esté apagado, y deja de decirlo al encenderlo', async () => {
+        (setMyAutoHomologacion as jest.Mock).mockResolvedValue({ success: true });
+        render(<HomologacionAutomatica auto={false} whatsappOn={false} />);
+        expect(screen.getByText(/No aplica mientras «Agregar solos/)).toBeInTheDocument();
+        await userEvent.click(screen.getByRole('switch', { name: 'Agregar solos los médicos nuevos del hospital' }));
+        await waitFor(() => expect(screen.queryByText(/No aplica mientras «Agregar solos/)).not.toBeInTheDocument());
+    });
 });

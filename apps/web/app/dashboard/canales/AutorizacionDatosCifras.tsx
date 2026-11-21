@@ -47,7 +47,7 @@ export default async function AutorizacionDatosCifras({
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 {r.encendida
                     ? `Encendida (versión ${r.version} de la política): el asistente pide la autorización antes de agendar.`
-                    : 'Apagada: el asistente no pide la autorización. Se enciende en Configuración › Asistente Virtual.'}{' '}
+                    : 'Apagada: el asistente no pide la autorización. Se enciende en Configuración › Privacidad (Ley 1581).'}{' '}
                 Cada persona cuenta una vez, por lo último que respondió.
             </p>
 

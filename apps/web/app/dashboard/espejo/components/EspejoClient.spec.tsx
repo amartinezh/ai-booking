@@ -3,7 +3,6 @@ import EspejoClient from './EspejoClient';
 
 jest.mock('@/app/actions/espejo', () => ({
     reprocesarEvento: jest.fn(),
-    cambiarModoAgenda: jest.fn(),
 }));
 jest.mock('next/link', () => ({
     __esModule: true,
@@ -100,6 +99,20 @@ describe('EspejoClient — qué escribe AgenIA en el hospital', () => {
 // 🏷️ La versión del agente (2026-10-29): el agente se actualiza a mano en el
 // servidor del hospital; aquí se confirma que la actualización quedó corriendo.
 // ══════════════════════════════════════════════════════════════════════════
+describe('EspejoClient — modo de agenda (docs/PLAN_NAVEGACION.md, Fase 3)', () => {
+    it('lo muestra y lleva a Configuración, sin botones para cambiarlo aquí', () => {
+        render(<EspejoClient data={base({ availabilityMode: 'SHADOW' })} />);
+        expect(screen.getByRole('heading', { name: 'Modo de agenda' }).parentElement).toHaveTextContent('Ahora: SHADOW');
+        expect(screen.getByRole('link', { name: 'Configuración › Hospital (espejo)' })).toHaveAttribute(
+            'href',
+            '/dashboard/configuracion/hospital#modo-agenda',
+        );
+        for (const modo of ['OFF', 'SHADOW', 'ON']) {
+            expect(screen.queryByRole('button', { name: modo })).not.toBeInTheDocument();
+        }
+    });
+});
+
 describe('EspejoClient — versión del agente', () => {
     it('muestra la versión actual, desde cuándo y con qué se compiló; y las anteriores', () => {
         render(

@@ -26,7 +26,7 @@ const TODO_BIEN: DatosDelResumen = {
     telegram: { enabled: true, config: { connected: true, isActive: true, botUsername: 'clinica_bot' } },
     voz: { activeProvider: 'ELEVENLABS', gender: 'FEMENINO' },
     politicaPublicada: true,
-    telefonoSoporte: '+57 606 000 0000',
+    telefonoSoporte: '+57 300 000 0000',
 };
 
 const fila = (r: ReturnType<typeof armarResumen>, bloque: string, nombre: string) =>
@@ -41,6 +41,7 @@ describe('armarResumen (docs/PLAN_NAVEGACION.md §5.1)', () => {
             ['Recordatorios', '/dashboard/configuracion/recordatorios'],
             ['Nombre, tono y voz', '/dashboard/configuracion/identidad'],
             ['Base de conocimiento', '/dashboard/configuracion/conocimiento'],
+            ['Datos de la clínica', '/dashboard/configuracion/clinica'],
             ['Privacidad (Ley 1581)', '/dashboard/configuracion/privacidad'],
             ['Canales e IA', '/dashboard/configuracion/canales'],
         ]);
@@ -48,7 +49,7 @@ describe('armarResumen (docs/PLAN_NAVEGACION.md §5.1)', () => {
     });
 
     it('cada línea lleva a su ajuste exacto, dentro de su sección', () => {
-        for (const b of armarResumen({ ...TODO_BIEN, hospital: { encendido: true, auto: false, whatsappOn: false, modoAgenda: 'ON' } }).bloques) {
+        for (const b of armarResumen({ ...TODO_BIEN, hospital: { encendido: true, auto: false, whatsappOn: false, modoAgenda: 'ON', avisos: { salen: true, personas: 2 } } }).bloques) {
             for (const f of b.filas) {
                 if (f.href === '/dashboard/espejo') continue; // el espejo mismo se enciende en su pantalla
                 expect(f.href.startsWith(`${b.href}#`)).toBe(true);
@@ -92,12 +93,19 @@ describe('armarResumen (docs/PLAN_NAVEGACION.md §5.1)', () => {
             '/dashboard/configuracion/canales#ia',
             '/dashboard/configuracion/canales#whatsapp',
             '/dashboard/configuracion/conocimiento#base',
-            '/dashboard/soporte',
+            '/dashboard/configuracion/clinica#telefono',
         ]);
         expect(r.avisos[0].texto).toMatch(/solo consulta citas/);
         expect(fila(r, 'Canales e IA', 'Inteligencia artificial')).toMatchObject({ valor: 'Sin configurar', estado: 'falta' });
         expect(fila(r, 'Canales e IA', 'WhatsApp')).toMatchObject({ valor: 'Sin conectar', estado: 'falta' });
         expect(fila(r, 'Base de conocimiento', 'Contenido')).toMatchObject({ valor: 'Vacía', estado: 'falta' });
+    });
+
+    it('un teléfono fijo: se dice que las alertas de emergencia no llegan por WhatsApp', () => {
+        const r = armarResumen({ ...TODO_BIEN, telefonoSoporte: '(606) 859 1010' });
+        expect(fila(r, 'Datos de la clínica', 'Alertas de emergencia')).toMatchObject({ valor: 'No llegan por WhatsApp', estado: 'falta' });
+        expect(r.avisos.map((a) => a.href)).toEqual(['/dashboard/configuracion/clinica#telefono']);
+        expect(fila(armarResumen(TODO_BIEN), 'Datos de la clínica', 'Alertas de emergencia')?.valor).toBe('Llegan por WhatsApp');
     });
 
     it('WhatsApp con número y token pero apagado: apagado, no «sin conectar»', () => {
@@ -134,14 +142,30 @@ describe('armarResumen (docs/PLAN_NAVEGACION.md §5.1)', () => {
     });
 
     it('con espejo: el bloque del hospital, con los médicos nuevos y el modo de agenda', () => {
-        const r = armarResumen({ ...TODO_BIEN, hospital: { encendido: true, auto: true, whatsappOn: false, modoAgenda: 'SHADOW' } });
+        const r = armarResumen({
+            ...TODO_BIEN,
+            hospital: { encendido: true, auto: true, whatsappOn: false, modoAgenda: 'SHADOW', avisos: { salen: true, personas: 1 } },
+        });
         const b = r.bloques[r.bloques.length - 1];
         expect(b).toMatchObject({ titulo: 'Hospital (espejo)', href: '/dashboard/configuracion/hospital' });
         expect(b.filas.map((f) => f.valor)).toEqual([
             'Encendido',
             'Se agregan solos, sin WhatsApp',
             'SHADOW: se compara con la del hospital',
+            'Llegan a 1 persona',
         ]);
+        expect(r.avisos).toEqual([]);
+    });
+
+    it('si los avisos a los agendadores no salen, es de lo que falta; si no se pudieron leer, no se alarma', () => {
+        const hospital = { encendido: true, auto: false, whatsappOn: false, modoAgenda: 'ON' };
+        const no = armarResumen({ ...TODO_BIEN, hospital: { ...hospital, avisos: { salen: false, personas: 0 } } });
+        expect(fila(no, 'Hospital (espejo)', 'Avisos a los agendadores')).toMatchObject({ valor: 'No están saliendo', estado: 'falta' });
+        expect(no.avisos.map((a) => a.href)).toEqual(['/dashboard/configuracion/hospital#avisos-agendadores']);
+
+        const sinLeer = armarResumen({ ...TODO_BIEN, hospital: { ...hospital, avisos: null } });
+        expect(fila(sinLeer, 'Hospital (espejo)', 'Avisos a los agendadores')?.valor).toBe('No se pudo leer');
+        expect(sinLeer.avisos).toEqual([]);
     });
 });
 

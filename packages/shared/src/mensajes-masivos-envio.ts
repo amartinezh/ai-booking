@@ -233,7 +233,7 @@ const ERRORES_META: Record<string, Omit<ErrorDeEnvioExplicado, 'codigo'>> = {
   '131031': { motivo: 'Meta bloqueó la cuenta de WhatsApp de la clínica.', reintentable: false, detieneElEnvio: true },
   '131042': { motivo: 'Hay un problema con el medio de pago de la cuenta de WhatsApp en Meta.', reintentable: false, detieneElEnvio: true },
   '133010': { motivo: 'El número de la clínica no está registrado en WhatsApp.', reintentable: false, detieneElEnvio: true },
-  '190': { motivo: 'El token de Meta venció: hay que renovarlo en Configuración → WhatsApp.', reintentable: false, detieneElEnvio: true },
+  '190': { motivo: 'El token de Meta venció: hay que renovarlo en Configuración › Canales e IA.', reintentable: false, detieneElEnvio: true },
   '10': { motivo: 'El token de Meta no tiene permiso para enviar.', reintentable: false, detieneElEnvio: true },
   '200': { motivo: 'El token de Meta no tiene permiso para enviar.', reintentable: false, detieneElEnvio: true },
   '368': { motivo: 'Meta bloqueó temporalmente los envíos de la cuenta.', reintentable: true, detieneElEnvio: true },

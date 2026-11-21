@@ -59,7 +59,8 @@ export async function guardarLimitesCitas(
             organizationId: session.organizationId,
             metadata: { detalle: `Citas por paciente ${dia} · ${mes}` },
         });
-        revalidatePath('/dashboard/limites-citas');
+        // Vive en Configuración › Qué puede hacer el asistente (docs/PLAN_NAVEGACION.md, N5).
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, limites };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };

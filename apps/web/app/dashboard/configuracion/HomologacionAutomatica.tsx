@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { UserCheck, UserX, MessageCircle, MessageCircleOff } from 'lucide-react';
 import { setMyAutoHomologacion, setMyAutoHomologacionWhatsapp } from '@/app/actions/settings';
 import InstantSwitch from './InstantSwitch';
@@ -11,11 +12,13 @@ import InstantSwitch from './InstantSwitch';
  * las reglas, y con qué WhatsApp entra. Los dos guardan al instante.
  */
 export default function HomologacionAutomatica({ auto, whatsappOn }: { auto: boolean; whatsappOn: boolean }) {
+    const [autoActual, setAutoActual] = useState(auto);
     return (
-        <div className="space-y-8">
+        <div className="space-y-3">
             <InstantSwitch
                 initialEnabled={auto}
                 save={setMyAutoHomologacion}
+                alCambiar={setAutoActual}
                 title="Agregar solos los médicos nuevos del hospital"
                 description="Cuando un médico del hospital tiene citas de un servicio que AgenIA maneja y todavía no está en AgenIA. El cambio aplica desde la próxima comparación con el hospital (cada noche)."
                 iconOn={<UserCheck className="w-5 h-5" />}
@@ -30,6 +33,7 @@ export default function HomologacionAutomatica({ auto, whatsappOn }: { auto: boo
             <InstantSwitch
                 initialEnabled={whatsappOn}
                 save={setMyAutoHomologacionWhatsapp}
+                noAplica={autoActual ? null : 'No aplica mientras «Agregar solos los médicos nuevos» esté apagado.'}
                 title="Los médicos agregados solos entran con WhatsApp encendido"
                 description="Solo aplica a los que AgenIA agrega sola (el interruptor de arriba). Con el botón de la Bandeja se elige en cada caso."
                 iconOn={<MessageCircle className="w-5 h-5" />}

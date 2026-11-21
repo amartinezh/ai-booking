@@ -846,7 +846,7 @@ export class ResumenEnvioService {
       kind: 'RESUMEN_PLANTILLA_FALLA',
       dedupeKey: clave,
       title: CATALOGO_ALERTAS.RESUMEN_PLANTILLA_FALLA.titulo,
-      detail: `La plantilla «Documentos de la consulta»${templateName ? ` (${templateName})` : ''}: ${falla}. Sin ella no sale ningún aviso a quien no escribió en las últimas 24 horas. Revisarla en el administrador de WhatsApp de Meta y en Configuración › WhatsApp.`,
+      detail: `La plantilla «Documentos de la consulta»${templateName ? ` (${templateName})` : ''}: ${falla}. Sin ella no sale ningún aviso a quien no escribió en las últimas 24 horas. Revisarla en el administrador de WhatsApp de Meta y en Configuración › Canales e IA.`,
       organizationId,
       organizationName: await this.nombreDeLaClinica(organizationId),
       fuente: 'envío de los documentos de la consulta',

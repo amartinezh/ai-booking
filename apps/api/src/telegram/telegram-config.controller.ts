@@ -14,7 +14,7 @@ import { TelegramConfigService } from './telegram-config.service';
 import type { SaveTelegramConfigInput } from './telegram.types';
 
 /**
- * Canal de Telegram desde el panel (Configuración → Integraciones).
+ * Canal de Telegram desde el panel (Configuración › Canales e IA).
  *
  * El tenant sale SIEMPRE del token (@CurrentTenant), nunca del body ni de la
  * ruta: una clínica no puede ver ni tocar el bot de otra.

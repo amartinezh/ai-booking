@@ -2,17 +2,20 @@
 
 import { useState, useTransition } from 'react';
 import { updateMyKnowledgeBase } from '@/app/actions/knowledge-base';
+import { AvisoSinGuardar, useSinGuardar } from '../configuracion/CambiosSinGuardar';
 
 export default function KnowledgeBaseEditor({ initialContent }: { initialContent: string }) {
     const [content, setContent] = useState(initialContent);
     const [isPending, startTransition] = useTransition();
     const [saved, setSaved] = useState(false);
+    const { sucio, marcarGuardado } = useSinGuardar(content);
 
     const handleSave = () => {
         setSaved(false);
         startTransition(async () => {
             const res = await updateMyKnowledgeBase(content);
             if (res.success) {
+                marcarGuardado();
                 setSaved(true);
                 setTimeout(() => setSaved(false), 3000);
             } else {
@@ -26,11 +29,13 @@ export default function KnowledgeBaseEditor({ initialContent }: { initialContent
             <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
                 <div className="text-sm text-zinc-500 dark:text-zinc-400">
                     {content.length > 0 ? (
-                        <span>{content.length.toLocaleString()} caracteres guardados</span>
+                        <span>{content.length.toLocaleString()} caracteres</span>
                     ) : (
                         <span className="text-amber-500">Sin contenido — el chatbot responderá que no tiene información disponible.</span>
                     )}
                 </div>
+                <div className="flex items-center">
+                <AvisoSinGuardar visible={sucio} />
                 <button
                     onClick={handleSave}
                     disabled={isPending}
@@ -50,6 +55,7 @@ export default function KnowledgeBaseEditor({ initialContent }: { initialContent
                         <><span>💾</span> Guardar Base de Conocimiento</>
                     )}
                 </button>
+                </div>
             </div>
 
             <textarea

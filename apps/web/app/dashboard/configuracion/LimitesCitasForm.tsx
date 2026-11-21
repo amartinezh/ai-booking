@@ -3,7 +3,8 @@
 import { useState, useTransition } from 'react';
 import { CalendarDays, CalendarRange } from 'lucide-react';
 import { LIMITE_CITAS, type LimitesCitas } from '@agenia/shared';
-import { guardarLimitesCitas } from './actions';
+import { guardarLimitesCitas } from '@/app/actions/limites-citas';
+import { AvisoSinGuardar, useAvisoAlSalir } from './CambiosSinGuardar';
 
 /** «una cita», «2 citas» — igual que el mensaje del asistente. */
 const citas = (n: number) => (n === 1 ? 'una cita' : `${n} citas`);
@@ -31,6 +32,8 @@ export default function LimitesCitasForm({
         limites.maxDia !== guardado.maxDia ||
         limites.mesActivo !== guardado.mesActivo ||
         limites.maxMes !== guardado.maxMes;
+
+    useAvisoAlSalir(cambiado);
 
     const guardar = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -104,6 +107,7 @@ export default function LimitesCitasForm({
                         ✓ Guardado. El asistente lo aplica desde el siguiente mensaje.
                     </p>
                 )}
+                <AvisoSinGuardar visible={cambiado} />
                 <button
                     type="submit"
                     disabled={isPending || !cambiado}

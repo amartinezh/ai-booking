@@ -33,7 +33,7 @@ const ESTADO: Record<string, { texto: string; clase: string }> = {
 
 // ─────────────────────────────────────────────────────────────
 // SOLICITUDES DE MÁS CITAS — pacientes que el asistente frenó por el límite
-// de citas del día o del mes (/dashboard/limites-citas) y que piden una
+// de citas del día o del mes (Configuración › Qué puede hacer el asistente) y que piden una
 // revisión desde el enlace que les envió (/solicitud-citas/{id}).
 // La ven ORG_ADMIN y BOOKING_AGENT.
 // ─────────────────────────────────────────────────────────────
@@ -114,7 +114,10 @@ export default async function SolicitudesCitasPage({
                 <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-3xl">
                     Pacientes a los que el asistente no les agendó porque ya tenían el máximo de citas del día o del mes (
                     {puedeConfigurarLimiteCitas(session) ? (
-                        <Link href="/dashboard/limites-citas" className="text-teal-600 hover:underline font-medium">
+                        <Link
+                            href="/dashboard/configuracion/asistente#limite"
+                            className="text-teal-600 hover:underline font-medium"
+                        >
                             Límite de citas
                         </Link>
                     ) : (

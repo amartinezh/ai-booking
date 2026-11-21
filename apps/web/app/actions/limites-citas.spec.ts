@@ -9,7 +9,7 @@ jest.mock('next/cache', () => ({ revalidatePath: jest.fn() }));
 
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
-import { guardarLimitesCitas } from './actions';
+import { guardarLimitesCitas } from './limites-citas';
 
 const mockSession = getSession as jest.Mock;
 const upsert = prisma.organizationSettings.upsert as jest.Mock;

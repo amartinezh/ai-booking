@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { Sparkles, BrainCircuit, Cpu, ShieldCheck, KeyRound } from 'lucide-react';
 import { updateMyAiConfig } from '@/app/actions/ai-config';
+import { AvisoSinGuardar, useSinGuardar } from './CambiosSinGuardar';
 import {
     PROVIDER_MODELS,
     type LlmProvider,
@@ -62,6 +63,8 @@ export default function AiIntegrationForm({ initial }: Props) {
     const [openaiOrgId, setOpenaiOrgId] = useState<string>(initial.openaiOrganizationId ?? '');
     const [isPending, startTransition] = useTransition();
     const [saved, setSaved] = useState(false);
+    const camposDelFormulario = { provider, apiKey, model, openaiOrgId };
+    const { sucio, marcarGuardado } = useSinGuardar(camposDelFormulario);
     const [error, setError] = useState<string | null>(null);
 
     const modelOptions =
@@ -86,6 +89,7 @@ export default function AiIntegrationForm({ initial }: Props) {
         startTransition(async () => {
             const res = await updateMyAiConfig(payload);
             if (res.success) {
+                marcarGuardado({ ...camposDelFormulario, apiKey: '' });
                 setSaved(true);
                 setApiKey(''); // limpiar campo por seguridad
                 setTimeout(() => setSaved(false), 4000);
@@ -269,6 +273,7 @@ export default function AiIntegrationForm({ initial }: Props) {
 
             {/* ── Footer ─────────────────────────────────────── */}
             <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6 flex justify-end">
+                <AvisoSinGuardar visible={sucio} />
                 <button
                     type="submit"
                     disabled={isPending}

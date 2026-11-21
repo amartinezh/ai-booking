@@ -46,4 +46,9 @@ describe('SelfBookedRemindersToggle', () => {
         expect(await screen.findByRole('alert')).toHaveTextContent('Acceso denegado');
         expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
     });
+
+    it('con los recordatorios apagados dice que no aplica', () => {
+        render(<SelfBookedRemindersToggle initialEnabled recordatoriosEncendidos={false} />);
+        expect(screen.getByText('No aplica mientras los recordatorios automáticos estén apagados.')).toBeInTheDocument();
+    });
 });

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import BandejaClient from './BandejaClient';
+import PanelAvisos from './PanelAvisos';
 import type { DestinatarioVista, EstadoAvisos, ExcepcionDetalle, ExcepcionVista, ListaExcepciones, MedicoFiltro } from '@/lib/bandeja/tipos';
 
 const refresh = jest.fn();
@@ -554,8 +555,8 @@ describe('BandejaClient — avisos a los agendadores (docs/PLAN_AVISOS_AGENDADOR
         }),
     ];
     const abrir = async (over: Partial<EstadoAvisos> = {}) => {
-        pintar([fila()], { puedeConfigurarAvisos: true, avisos: avisosOk({ destinatarios: LISTA, ...over }) });
-        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
+        // El editor vive en Configuración › Hospital (espejo) (docs/PLAN_NAVEGACION.md, Fase 3).
+        render(<PanelAvisos avisos={avisosOk({ destinatarios: LISTA, ...over })} puedeConfigurar enConfiguracion />);
     };
 
     it('✅ cuando salen, lo dice y a cuántas personas llegan', () => {
@@ -596,7 +597,7 @@ describe('BandejaClient — avisos a los agendadores (docs/PLAN_AVISOS_AGENDADOR
     describe('lo que ve el agendador (§3.5)', () => {
         it('🔒 no ve el botón de configurar', () => {
             pintar([fila()], { puedeConfigurarAvisos: false });
-            expect(screen.queryByRole('button', { name: 'Configurar avisos' })).not.toBeInTheDocument();
+            expect(screen.queryByRole('link', { name: 'Configurar avisos →' })).not.toBeInTheDocument();
         });
 
         it('si recibe: a qué número (enmascarado) y qué', () => {
@@ -618,6 +619,24 @@ describe('BandejaClient — avisos a los agendadores (docs/PLAN_AVISOS_AGENDADOR
         it('si no recibe: que se lo pida al administrador', () => {
             pintar([fila()], { puedeConfigurarAvisos: false });
             expect(screen.getByText(/No recibes estos avisos por WhatsApp\. Si los necesitas, pídeselo al administrador\./)).toBeInTheDocument();
+        });
+    });
+
+    describe('en la Bandeja, el administrador ve el estado y el enlace (docs/PLAN_NAVEGACION.md, Fase 3)', () => {
+        it('«Configurar avisos →» lleva a Configuración, sin editor aquí', () => {
+            pintar([fila()], { puedeConfigurarAvisos: true, avisos: avisosOk({ destinatarios: LISTA }) });
+            expect(screen.getByRole('link', { name: 'Configurar avisos →' })).toHaveAttribute(
+                'href',
+                '/dashboard/configuracion/hospital#avisos-agendadores',
+            );
+            expect(screen.queryByText('Agendadores y administradores')).not.toBeInTheDocument();
+            expect(screen.queryByLabelText('Celular de Karen Muñoz')).not.toBeInTheDocument();
+        });
+
+        it('en Configuración no se muestra ese enlace: el editor ya está abierto', async () => {
+            await abrir();
+            expect(screen.queryByRole('link', { name: 'Configurar avisos →' })).not.toBeInTheDocument();
+            expect(screen.getByText('Agendadores y administradores')).toBeInTheDocument();
         });
     });
 

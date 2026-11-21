@@ -1128,7 +1128,7 @@ export class ChatbotService implements OnModuleInit {
         this.logger.error(
           `🚨 Token de Meta inválido para org ${creds.organizationId}. ` +
             `Pídele al administrador de la clínica que regenere el Access Token ` +
-            `en Configuración → Integraciones → Canal de WhatsApp.`,
+            `en Configuración › Canales e IA › Canal de WhatsApp.`,
         );
       }
 

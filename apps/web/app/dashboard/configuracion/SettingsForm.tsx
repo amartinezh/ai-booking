@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { MessageCircle, Sparkles, GraduationCap } from 'lucide-react';
 import { updateMyOrgSettings, type CommStyle } from '@/app/actions/settings';
+import { AvisoSinGuardar, useSinGuardar } from './CambiosSinGuardar';
 
 type Props = {
     initial: {
@@ -22,6 +23,7 @@ export default function SettingsForm({ initial }: Props) {
     const [style, setStyle] = useState<CommStyle>(initial.communicationStyle);
     const [isPending, startTransition] = useTransition();
     const [saved, setSaved] = useState(false);
+    const { sucio, marcarGuardado } = useSinGuardar({ botName, style });
 
     const handleSave = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -30,6 +32,7 @@ export default function SettingsForm({ initial }: Props) {
             // «Horarios que ofrece» se guarda aparte, en Agenda que ofrece el asistente.
             const res = await updateMyOrgSettings({ botName, communicationStyle: style });
             if (res.success) {
+                marcarGuardado();
                 setSaved(true);
                 setTimeout(() => setSaved(false), 3000);
             } else {
@@ -132,6 +135,7 @@ export default function SettingsForm({ initial }: Props) {
 
             {/* ── Footer: Guardar ────────────────────────────── */}
             <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6 flex justify-end">
+                <AvisoSinGuardar visible={sucio} />
                 <button
                     type="submit"
                     disabled={isPending}

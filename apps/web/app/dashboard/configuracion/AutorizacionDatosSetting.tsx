@@ -7,6 +7,7 @@ import { formatAppointmentCompact } from '@/lib/date';
 import { avisoAutorizacionDatos, type EstiloAviso } from '@agenia/shared';
 import type { PaginaPoliticaDatos as Pagina } from '@/app/actions/politica-datos';
 import PaginaPoliticaDatos from './PaginaPoliticaDatos';
+import { AvisoSinGuardar, useAvisoAlSalir } from './CambiosSinGuardar';
 
 export interface AutorizacionDatosGuardada {
     encendida: boolean;
@@ -46,6 +47,8 @@ export default function AutorizacionDatosSetting({
 
     const cambiaVersion = version.trim() !== guardada.version;
     const hayCambios = encendida !== guardada.encendida || url.trim() !== guardada.urlPolitica || cambiaVersion;
+
+    useAvisoAlSalir(hayCambios);
 
     const enviar = (entrada: { encendida: boolean; urlPolitica: string; version: string }) => {
         setError(null);
@@ -169,6 +172,7 @@ export default function AutorizacionDatosSetting({
                 )}
 
                 <div className="flex flex-wrap items-center gap-3">
+                    <AvisoSinGuardar visible={hayCambios} />
                     <button
                         type="button"
                         onClick={guardar}

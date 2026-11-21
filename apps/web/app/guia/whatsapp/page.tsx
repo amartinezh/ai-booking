@@ -732,7 +732,7 @@ export default function GuiaWhatsappPage() {
                                 <li>Inicia sesión como Administrador de Clínica.</li>
                                 <li>
                                     Menú →{' '}
-                                    <strong>Configuración → Integraciones (IA y Canales)</strong>{' '}
+                                    <strong>Configuración › Canales e IA</strong>{' '}
                                     → sección <strong>&quot;Canal de WhatsApp (Meta)&quot;</strong>.
                                 </li>
                                 <li>

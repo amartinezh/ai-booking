@@ -30,7 +30,7 @@ export function fallaDePlantilla(
 ): string | null {
   if (!error) return null;
   if (error === 'template-not-configured')
-    return 'no está registrada en Configuración › WhatsApp';
+    return 'no está registrada en Configuración › Canales e IA';
   if (error === 'body-params-mismatch')
     return 'la registrada no recibe las 2 variables (nombre y fecha de la consulta)';
   const m = /"code"\s*:\s*(\d{6})/.exec(error);

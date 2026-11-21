@@ -48,7 +48,7 @@ const AVISO_QUE_NO_SALE: Partial<
   SIN_PLANTILLA:
     'La plantilla de WhatsApp del aviso (SYNC_EXCEPTION_ALERT) no está aprobada en Meta: el agendador no se entera de las citas que no llegan al hospital.',
   SIN_DESTINO:
-    'La clínica tiene los avisos encendidos pero nadie en la lista recibe el primer aviso («Configurar avisos» de la Bandeja): nadie se entera de las citas que no llegan al hospital.',
+    'La clínica tiene los avisos encendidos pero nadie en la lista recibe el primer aviso (Configuración › Hospital (espejo) › Avisos a los agendadores): nadie se entera de las citas que no llegan al hospital.',
   ENVIO_FALLIDO: 'Meta rechazó el envío del aviso al agendador',
 };
 
@@ -57,7 +57,7 @@ const AVISO_PACIENTES_QUE_NO_SALE: typeof AVISO_QUE_NO_SALE = {
   SIN_PLANTILLA:
     'La plantilla de WhatsApp «Aviso al agendador (pedidos de pacientes)» (PATIENT_REQUEST_ALERT) no está registrada: el agendador no se entera de un paciente que pidió cancelar o avisó que no irá, con la cita cerca.',
   SIN_DESTINO:
-    'La clínica tiene los avisos encendidos pero nadie en la lista recibe el primer aviso de pedidos de pacientes («Configurar avisos» de la Bandeja).',
+    'La clínica tiene los avisos encendidos pero nadie en la lista recibe el primer aviso de pedidos de pacientes (Configuración › Hospital (espejo) › Avisos a los agendadores).',
   ENVIO_FALLIDO:
     'Meta rechazó el envío del aviso de pedidos de pacientes al agendador',
 };
@@ -356,7 +356,7 @@ export class MirrorWatchdogService {
         kind: 'AVISO_AGENDADOR_NO_SALE',
         dedupeKey: clave,
         title: 'El aviso no le llega a una persona de la lista',
-        detail: `A ${d.nombre} (${enmascararIdentificadorWhatsapp(d.phone)}) no le sale el WhatsApp del aviso: ${d.error ?? 'sin motivo'}. Los demás de la lista sí lo reciben. Revisar su número en «Configurar avisos» de la Bandeja.`,
+        detail: `A ${d.nombre} (${enmascararIdentificadorWhatsapp(d.phone)}) no le sale el WhatsApp del aviso: ${d.error ?? 'sin motivo'}. Los demás de la lista sí lo reciben. Revisar su número en Configuración › Hospital (espejo) › Avisos a los agendadores.`,
         organizationId,
         organizationName: nombreClinica,
         fuente: 'vigilante del espejo',

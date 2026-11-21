@@ -9,9 +9,9 @@ import { exigirAdministrador } from '../comunes';
 // sección por tema, cada una con su dirección. Antes eran cinco pestañas, y
 // «Asistente Virtual» apilaba hasta 17 ajustes de seis temas.
 //
-// Las secciones van en el grupo de rutas `(secciones)` para que Encuestas
-// (`/dashboard/configuracion/integraciones/surveys`, que es de Indicadores) no
-// herede esta columna.
+// Las secciones van en el grupo de rutas `(secciones)` para que la dirección vieja
+// de Encuestas (`…/integraciones/surveys`, que ahora solo redirige a
+// /dashboard/encuestas) no herede esta columna.
 // ─────────────────────────────────────────────────────────────
 
 export default async function ConfiguracionLayout({ children }: { children: ReactNode }) {
@@ -35,8 +35,9 @@ export default async function ConfiguracionLayout({ children }: { children: Reac
                     con los pacientes.
                 </p>
             </header>
-            <div className="grid gap-6 md:grid-cols-[15rem_minmax(0,1fr)]">
-                <aside>
+            {/* minmax(0, 1fr) también en el celular: si no, la fila de secciones ensancha la columna y corta el contenido. */}
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-6 md:grid-cols-[15rem_minmax(0,1fr)]">
+                <aside className="min-w-0">
                     <NavConfiguracion entradas={entradas} />
                 </aside>
                 <div className="min-w-0">{children}</div>

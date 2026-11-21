@@ -19,13 +19,17 @@ export default async function RecordatoriosPage() {
         >
             {ajustes.status === 'fulfilled' ? (
                 <>
-                    <Ajuste id="recordatorios">
-                        <RemindersToggle initialEnabled={ajustes.value.remindersEnabled} />
-                    </Ajuste>
-                    <Separador />
-                    <Ajuste id="solo-chat">
-                        <SelfBookedRemindersToggle initialEnabled={ajustes.value.remindersOnlySelfBooked} />
-                    </Ajuste>
+                    <div className="space-y-3">
+                        <Ajuste id="recordatorios">
+                            <RemindersToggle initialEnabled={ajustes.value.remindersEnabled} />
+                        </Ajuste>
+                        <Ajuste id="solo-chat">
+                            <SelfBookedRemindersToggle
+                                initialEnabled={ajustes.value.remindersOnlySelfBooked}
+                                recordatoriosEncendidos={ajustes.value.remindersEnabled}
+                            />
+                        </Ajuste>
+                    </div>
                     <Separador />
                     <Ajuste id="anticipacion">
                         <ReminderLeadTimeSetting initialMinutes={ajustes.value.reminderMinLeadMinutes} />

@@ -10,10 +10,18 @@ import InstantSwitch from './InstantSwitch';
  * en su siguiente vuelta. Solo cambia a quién le llega el recordatorio
  * automático; ninguna otra operación.
  */
-export default function SelfBookedRemindersToggle({ initialEnabled }: { initialEnabled: boolean }) {
+export default function SelfBookedRemindersToggle({
+    initialEnabled,
+    recordatoriosEncendidos = true,
+}: {
+    initialEnabled: boolean;
+    /** Con los recordatorios apagados este ajuste no hace nada: se atenúa y lo dice. */
+    recordatoriosEncendidos?: boolean;
+}) {
     return (
         <InstantSwitch
             initialEnabled={initialEnabled}
+            noAplica={recordatoriosEncendidos ? null : 'No aplica mientras los recordatorios automáticos estén apagados.'}
             save={setMyRemindersOnlySelfBooked}
             title="Recordatorios solo a pacientes que agendaron ellos mismos"
             description="Envía el recordatorio automático únicamente para las citas que el paciente agendó por el chat. El cambio aplica de inmediato."

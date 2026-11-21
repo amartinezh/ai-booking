@@ -11,6 +11,7 @@ import {
     Info,
 } from 'lucide-react';
 import { updateMyWhatsappConfig } from '@/app/actions/whatsapp-config';
+import { AvisoSinGuardar, useSinGuardar } from './CambiosSinGuardar';
 import type {
     PublicWhatsappConfig,
     SaveWhatsappConfigInput,
@@ -34,6 +35,8 @@ export default function WhatsappChannelForm({ initial }: Props) {
     const [appSecret, setAppSecret] = useState('');
     const [isPending, startTransition] = useTransition();
     const [saved, setSaved] = useState(false);
+    const camposDelFormulario = { phoneNumberId, businessAccountId, displayPhoneNumber, verifyToken, accessToken, appSecret };
+    const { sucio, marcarGuardado } = useSinGuardar(camposDelFormulario);
     const [error, setError] = useState<string | null>(null);
     const [copiedField, setCopiedField] = useState<'url' | 'token' | null>(null);
 
@@ -64,6 +67,12 @@ export default function WhatsappChannelForm({ initial }: Props) {
         startTransition(async () => {
             const res = await updateMyWhatsappConfig(payload);
             if (res.success) {
+                marcarGuardado({
+                    ...camposDelFormulario,
+                    accessToken: '',
+                    appSecret: '',
+                    verifyToken: res.data.verifyToken || verifyToken,
+                });
                 setSaved(true);
                 setAccessToken('');
                 setAppSecret('');
@@ -344,6 +353,7 @@ export default function WhatsappChannelForm({ initial }: Props) {
 
             {/* ── Footer ───────────────────────────────────── */}
             <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6 flex justify-end">
+                <AvisoSinGuardar visible={sucio} />
                 <button
                     type="submit"
                     disabled={isPending}

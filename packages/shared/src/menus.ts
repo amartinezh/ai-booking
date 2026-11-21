@@ -284,7 +284,9 @@ const CANALES: MenuItem = {
 };
 const ENCUESTAS: MenuItem = {
   label: 'Encuestas',
-  href: '/dashboard/configuracion/integraciones/surveys',
+  // Antes colgaba de Configuración (`…/configuracion/integraciones/surveys`, que
+  // ahora redirige aquí): es una pantalla de resultados, no un ajuste.
+  href: '/dashboard/encuestas',
   icon: '⭐',
   description: 'Opiniones de pacientes',
   accent: 'orange',
@@ -302,21 +304,10 @@ const CONFIGURACION: MenuItem = {
   grupo: 'administracion',
 };
 
-/**
- * Límite de citas por paciente (cuántas puede tener el mismo día y en el mismo
- * mes por el asistente): solo ORG_ADMIN, que es quien fija la regla
- * (2026-10-22: el agendador la veía y la podía cambiar). El permiso real lo
- * aplican la página y sus acciones (`apps/web/lib/limite-citas/acceso.ts`).
- * En la Fase 3 de docs/PLAN_NAVEGACION.md pasa a Configuración (N5).
- */
-const LIMITE_CITAS: MenuItem = {
-  label: 'Límite de citas',
-  href: '/dashboard/limites-citas',
-  icon: '🚦',
-  description: 'Máximo de citas por paciente al día y al mes',
-  accent: 'amber',
-  grupo: 'administracion',
-};
+// 🚦 El Límite de citas por paciente ya no es una opción del menú: vive en
+// Configuración › Qué puede hacer el asistente (docs/PLAN_NAVEGACION.md, N5;
+// `/dashboard/limites-citas` redirige allá). Lo fija solo ORG_ADMIN
+// (`apps/web/lib/limite-citas/acceso.ts`), igual que toda Configuración.
 
 const USUARIOS: MenuItem = {
   label: 'Usuarios',
@@ -389,7 +380,6 @@ const ADMIN_MENUS: MenuItem[] = [
   CANALES,
   ENCUESTAS,
   CONFIGURACION,
-  LIMITE_CITAS,
   USUARIOS,
   ESPEJO,
   SUPPORT,
@@ -590,6 +580,13 @@ const SECCIONES_DE_CONFIGURACION: ReadonlyArray<
     icono: '📚',
     descripcion: 'Lo que el asistente responde sobre la clínica',
     grupo: 'asistente',
+  },
+  {
+    titulo: 'Datos de la clínica',
+    href: `${RUTA_CONFIGURACION}/clinica`,
+    icono: '🏢',
+    descripcion: 'Teléfono de soporte, nombre, logo y responsable de los datos',
+    grupo: 'clinica',
   },
   {
     titulo: 'Privacidad (Ley 1581)',

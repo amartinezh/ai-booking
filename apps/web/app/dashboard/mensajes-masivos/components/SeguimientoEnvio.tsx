@@ -80,7 +80,7 @@ export default function SeguimientoEnvio({ id, inicial }: { id: string; inicial:
 
             {e.estado === 'PAUSADO' && e.ultimoError && (
                 <Aviso nivel="ERROR" titulo="El envío se detuvo solo">
-                    {e.ultimoError} Corrija la causa (en Configuración → WhatsApp o en Meta) y apriete «Reanudar»: nadie recibió el mensaje dos veces.
+                    {e.ultimoError} Corrija la causa (en Configuración › Canales e IA o en Meta) y apriete «Reanudar»: nadie recibió el mensaje dos veces.
                 </Aviso>
             )}
             {e.estado === 'EN_COLA' && <Aviso nivel="INFO">En cola: sale en la próxima vuelta del horario permitido (cada 20 segundos se envía una tanda).</Aviso>}

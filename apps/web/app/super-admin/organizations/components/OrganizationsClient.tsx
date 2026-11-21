@@ -317,7 +317,7 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                   Las credenciales de Meta (Phone ID, Access Token, Verify Token) ahora
                   las gestiona el administrador de cada clínica desde su panel:
                   <span className="block mt-1 text-zinc-500 italic">
-                    Configuración → Integraciones → Canal de WhatsApp.
+                    Configuración › Canales e IA › Canal de WhatsApp.
                   </span>
                   {editingOrg?.whatsappConfig?.phoneNumberId && (
                     <p className="mt-2 font-mono text-[11px]">

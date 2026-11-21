@@ -345,7 +345,7 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                     )}
                     {!panel.envio.plantillaConfigurada && (
                         <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="falta-plantilla">
-                            Falta la plantilla «Documentos de la consulta» en Configuración › Plantillas de WhatsApp: sin ella,
+                            Falta la plantilla «Documentos de la consulta» en Configuración › Canales e IA › Plantillas de WhatsApp: sin ella,
                             el aviso solo le llega a quien escribió en las últimas 24 horas.
                         </p>
                     )}

@@ -4,7 +4,7 @@ import { TEXTOS_RESUMEN, conArticulo } from './resumen-textos';
 describe('fallaDePlantilla: los errores que dicen que la plantilla no se puede usar', () => {
   it('reconoce la plantilla sin registrar, sin las 2 variables y los códigos de plantilla de Meta', () => {
     expect(fallaDePlantilla('template-not-configured')).toBe(
-      'no está registrada en Configuración › WhatsApp',
+      'no está registrada en Configuración › Canales e IA',
     );
     expect(fallaDePlantilla('body-params-mismatch')).toContain('2 variables');
     expect(

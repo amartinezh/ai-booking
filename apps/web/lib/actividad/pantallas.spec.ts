@@ -17,6 +17,17 @@ describe('nombreDePantalla', () => {
         );
     });
 
+    it('las secciones de Configuración se anotan con su nombre, solo para quien tiene Configuración', () => {
+        expect(nombreDePantalla('/dashboard/configuracion', 'ORG_ADMIN')).toBe('Configuración');
+        expect(nombreDePantalla('/dashboard/configuracion/agenda', 'ORG_ADMIN')).toBe(
+            'Configuración › Agenda que ofrece el asistente',
+        );
+        expect(nombreDePantalla('/dashboard/configuracion/hospital#modo-agenda', 'ORG_ADMIN')).toBe(
+            'Configuración › Hospital (espejo)',
+        );
+        expect(nombreDePantalla('/dashboard/configuracion/agenda', 'BOOKING_AGENT')).toBeNull();
+    });
+
     it('sin la consulta (puede llevar una cédula) ni la barra final', () => {
         expect(rutaLimpia('/dashboard/rastreo?q=1053123456#x')).toBe('/dashboard/rastreo');
         expect(rutaLimpia('/dashboard/pacientes/')).toBe('/dashboard/pacientes');

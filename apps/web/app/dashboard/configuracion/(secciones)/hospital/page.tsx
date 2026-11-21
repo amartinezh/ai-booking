@@ -3,62 +3,47 @@ import { redirect } from 'next/navigation';
 import { getMyHomologacionAutomatica } from '@/app/actions/settings';
 import { prisma } from '@/lib/prisma';
 import { getTenantMirrorFlags } from '@/lib/mirror-flags';
+import { resolverActorBandeja } from '@/lib/bandeja/acceso';
+import { estadoAvisos } from '@/lib/bandeja/avisos';
+import PanelAvisos from '@/app/dashboard/bandeja/PanelAvisos';
 import HomologacionAutomatica from '../../HomologacionAutomatica';
+import ModoAgendaSetting from '../../ModoAgendaSetting';
 import { Ajuste, Seccion, SectionLoadError, Separador, exigirAdministrador, motivoDelFallo } from '../../comunes';
 
 export const dynamic = 'force-dynamic';
 
-const MODO_AGENDA: Record<string, string> = {
-    OFF: 'OFF: la agenda es la de AgenIA',
-    SHADOW: 'SHADOW: se compara con la del hospital, sin escribir nada',
-    ON: 'ON: la agenda es la del hospital',
-};
-
 /**
- * 🏥 Hospital (espejo): solo en las clínicas con espejo. Los médicos nuevos del
- * hospital se configuran aquí; el modo de agenda, los avisos a los agendadores,
- * el resumen de la atención y los avisos masivos siguen en su pantalla, y desde
- * aquí se llega a ellos (la Fase 3 de docs/PLAN_NAVEGACION.md trae los dos primeros).
+ * 🏥 Hospital (espejo): solo en las clínicas con espejo. Aquí se configuran el
+ * modo de agenda (antes, botones en el Espejo), los avisos a los agendadores
+ * (antes, «Configurar avisos» en la Bandeja) y los médicos nuevos del hospital
+ * (docs/PLAN_NAVEGACION.md, Fases 2 y 3). El Espejo y la Bandeja siguen mostrando
+ * cómo está cada uno, con el enlace hasta aquí. El resumen de la atención y la
+ * lista de los avisos masivos siguen en su pantalla (N8): desde aquí se llega.
+ * Cada lectura va aislada: si una falla, lo demás se muestra igual.
  */
 export default async function HospitalPage() {
     const session = await exigirAdministrador();
     const banderas = await getTenantMirrorFlags(session.organizationId);
     if (!banderas.conEspejo) redirect('/dashboard/configuracion');
 
-    const [homologacion, espejo] = await Promise.allSettled([
+    const actor = await resolverActorBandeja(prisma, session);
+    const [homologacion, espejo, avisos] = await Promise.allSettled([
         getMyHomologacionAutomatica(),
         prisma.hospitalMirrorConfig.findUnique({
             where: { organizationId: session.organizationId! },
             select: { enabled: true, availabilityMode: true },
         }),
+        actor.ok ? estadoAvisos(prisma, actor.actor) : Promise.reject(new Error(actor.error)),
     ]);
     const encendido = espejo.status === 'fulfilled' && espejo.value?.enabled === true;
-    const modo = espejo.status === 'fulfilled' ? (espejo.value?.availabilityMode ?? null) : null;
 
-    const enOtraPantalla: { id: string; titulo: string; valor: string | null; texto: string; href: string; enlace: string }[] = [
-        {
-            id: 'modo-agenda',
-            titulo: 'Modo de agenda',
-            valor: modo ? (MODO_AGENDA[modo] ?? modo) : null,
-            texto: 'OFF → SHADOW → ON. El paso a ON es una decisión de negocio: se toma después de comparar en SHADOW durante al menos una semana.',
-            href: '/dashboard/espejo',
-            enlace: 'Cambiarlo en Espejo con el HIS →',
-        },
-        {
-            id: 'avisos-agendadores',
-            titulo: 'Avisos a los agendadores',
-            valor: null,
-            texto: 'A quiénes les llega por WhatsApp el aviso de una cita que no llegó al hospital o de un pedido de un paciente, y a qué horas.',
-            href: '/dashboard/bandeja',
-            enlace: 'Configurarlos en la Bandeja › Configurar avisos →',
-        },
+    const enOtraPantalla = [
         ...(banderas.conResumen
             ? [
                   {
                       id: 'resumen-atencion',
                       titulo: 'Resumen de la atención',
-                      valor: null,
-                      texto: 'Leer del hospital los documentos de la consulta y enviárselos al paciente.',
+                      texto: 'Leer del hospital los documentos de la consulta y enviárselos al paciente: los interruptores, el piloto y la revisión.',
                       href: '/dashboard/espejo/resumen-atencion',
                       enlace: 'Abrir Resumen de la atención →',
                   },
@@ -69,7 +54,6 @@ export default async function HospitalPage() {
                   {
                       id: 'avisos-masivos',
                       titulo: 'Lista de los avisos masivos',
-                      valor: null,
                       texto: 'Cómo se arma la lista de pacientes de un aviso o recordatorio para el día de agenda de un especialista.',
                       href: '/dashboard/espejo/avisos',
                       enlace: 'Abrir Avisos masivos →',
@@ -82,8 +66,49 @@ export default async function HospitalPage() {
         <Seccion
             titulo="Hospital (espejo)"
             icono="🏥"
-            descripcion="Lo que se configura de la conexión con el sistema del hospital (HIS)."
+            descripcion="Lo que se configura de la conexión con el sistema del hospital (HIS). Cómo está el agente, la cola y los eventos se ve en Espejo con el HIS."
         >
+            <Ajuste id="modo-agenda">
+                {espejo.status === 'fulfilled' && espejo.value ? (
+                    <ModoAgendaSetting inicial={espejo.value.availabilityMode} />
+                ) : (
+                    <SectionLoadError
+                        title="No pudimos cargar el modo de agenda"
+                        detail={espejo.status === 'rejected' ? motivoDelFallo(espejo.reason, 'Error desconocido.') : null}
+                    />
+                )}
+            </Ajuste>
+            <Separador />
+            <Ajuste id="avisos-agendadores">
+                <section className="space-y-4">
+                    <div>
+                        <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Avisos a los agendadores</h2>
+                        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                            A quiénes les llega por WhatsApp el aviso de una cita que no llegó al hospital o de un pedido de
+                            un paciente, y a qué horas. Los casos se atienden en la{' '}
+                            <Link href="/dashboard/bandeja" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
+                                Bandeja de sincronización
+                            </Link>
+                            .
+                        </p>
+                    </div>
+                    {avisos.status === 'fulfilled' && avisos.value.success ? (
+                        <PanelAvisos avisos={avisos.value.data} puedeConfigurar={actor.ok && actor.actor.permisos.configurarAvisos} enConfiguracion />
+                    ) : (
+                        <SectionLoadError
+                            title="No pudimos cargar los avisos a los agendadores"
+                            detail={
+                                avisos.status === 'rejected'
+                                    ? motivoDelFallo(avisos.reason, 'Error desconocido.')
+                                    : avisos.value.success
+                                      ? null
+                                      : avisos.value.error
+                            }
+                        />
+                    )}
+                </section>
+            </Ajuste>
+            <Separador />
             <Ajuste id="medicos-nuevos">
                 {homologacion.status === 'rejected' ? (
                     <SectionLoadError
@@ -110,7 +135,7 @@ export default async function HospitalPage() {
                             <h2 className="text-lg font-bold text-zinc-900 dark:text-white">{c.titulo}</h2>
                             <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{c.texto}</p>
                             <div className="mt-4 flex flex-col gap-2 rounded-2xl border border-zinc-200 p-4 text-sm dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between">
-                                <p className="font-semibold text-zinc-900 dark:text-white">{c.valor ?? 'Se configura en su pantalla'}</p>
+                                <p className="font-semibold text-zinc-900 dark:text-white">Se configura en su pantalla</p>
                                 <Link href={c.href} className="font-medium text-blue-600 hover:underline dark:text-blue-400">
                                     {c.enlace}
                                 </Link>

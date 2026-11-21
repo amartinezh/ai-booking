@@ -167,7 +167,7 @@ export class MassNoticeService {
         skipped: batch.skipped,
         error:
           `No hay una plantilla ${templateKind} aprobada para esta clínica. ` +
-          'Regístrela en Configuración → WhatsApp antes de enviar.',
+          'Regístrela en Configuración › Canales e IA antes de enviar.',
       };
     }
 

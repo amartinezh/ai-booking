@@ -6,7 +6,7 @@
  * que ve esa persona; las pantallas que no están en el menú tienen el suyo aquí.
  * Una ruta que no se reconoce no se anota. Pura, para probarla.
  */
-import { getMenusForRole, type UserRole } from '../menus';
+import { getMenusForRole, seccionesDeConfiguracion, type UserRole } from '../menus';
 import { SUPER_ADMIN_MENUS } from '../super-admin-menus';
 
 /** Cada cuánto se vuelve a anotar la misma pantalla para la misma persona. */
@@ -42,13 +42,17 @@ export function nombreDePantalla(ruta: string, rol: string): string | null {
         const item = SUPER_ADMIN_MENUS.find((m) => m.href === r);
         if (item) return item.label;
     } else {
-        const item = getMenusForRole(rol as UserRole, {
+        const menus = getMenusForRole(rol as UserRole, {
             conEspejo: true,
             conAvisos: true,
             conAvisosDriver: true,
             conResumen: true,
-        }).find((m) => m.href === r);
+        });
+        const item = menus.find((m) => m.href === r);
         if (item) return item.label;
+        // Las secciones de Configuración (docs/PLAN_NAVEGACION.md §5) no son opciones del menú.
+        const seccion = seccionesDeConfiguracion(menus).find((s) => s.href === r);
+        if (seccion) return `Configuración › ${seccion.titulo}`;
     }
     if (FUERA_DEL_MENU[r]) return FUERA_DEL_MENU[r];
     return CON_PARAMETRO.find((p) => p.patron.test(r))?.nombre ?? null;

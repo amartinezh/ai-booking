@@ -251,6 +251,8 @@ export async function cambiarModoAgenda(modo: string) {
     });
 
     revalidatePath('/dashboard/espejo');
+    // Se cambia en Configuración › Hospital (espejo) (docs/PLAN_NAVEGACION.md, Fase 3).
+    revalidatePath('/dashboard/configuracion', 'layout');
     return { success: true };
 }
 

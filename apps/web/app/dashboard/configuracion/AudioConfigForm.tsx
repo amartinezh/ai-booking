@@ -18,6 +18,7 @@ import {
     Venus,
 } from 'lucide-react';
 import { updateMyAudioConfig, diagnoseAudio } from '@/app/actions/audio-config';
+import { AvisoSinGuardar, useSinGuardar } from './CambiosSinGuardar';
 import type {
     AudioDiagnosisResult,
     AudioEncoding,
@@ -63,6 +64,17 @@ export default function AudioConfigForm({ initial, assistantName }: Props) {
 
     const [isSaving, startSaving] = useTransition();
     const [saved, setSaved] = useState(false);
+    const camposDelFormulario = {
+        activeProvider,
+        gender,
+        googleVoiceId,
+        googlePitch,
+        googleSpeakingRate,
+        audioEncoding,
+        elevenLabsVoiceId,
+        elevenLabsApiKey,
+    };
+    const { sucio, marcarGuardado } = useSinGuardar(camposDelFormulario);
     const [error, setError] = useState<string | null>(null);
 
     const [aliveLoading, setAliveLoading] = useState(false);
@@ -109,6 +121,7 @@ export default function AudioConfigForm({ initial, assistantName }: Props) {
         startSaving(async () => {
             const res = await updateMyAudioConfig(payload);
             if (res.success) {
+                marcarGuardado({ ...camposDelFormulario, elevenLabsApiKey: '' });
                 setSaved(true);
                 if (typedKey) {
                     setHasKey(true);
@@ -396,6 +409,7 @@ export default function AudioConfigForm({ initial, assistantName }: Props) {
 
             {/* ── Footer ──────────────────────────────────────────────── */}
             <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6 flex justify-end">
+                <AvisoSinGuardar visible={sucio} />
                 <button
                     type="submit"
                     disabled={isSaving}

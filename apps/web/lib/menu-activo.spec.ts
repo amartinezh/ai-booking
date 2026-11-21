@@ -17,7 +17,8 @@ describe('opcionActiva: qué opción del menú se resalta', () => {
     ['/dashboard/espejo/avisos', '/dashboard/espejo/avisos'],
     ['/dashboard/espejo/resumen-atencion/envios', '/dashboard/espejo/resumen-atencion/envios'],
     ['/dashboard/configuracion?tab=kb', '/dashboard/configuracion'],
-    ['/dashboard/configuracion/integraciones/surveys', '/dashboard/configuracion/integraciones/surveys'],
+    ['/dashboard/encuestas', '/dashboard/encuestas'],
+    ['/dashboard/configuracion/agenda', '/dashboard/configuracion'],
     ['/dashboard/soporte/ayuda#agenda', '/dashboard/soporte'],
   ])('%s → %s', (ruta, esperado) => {
     expect(opcionActiva(menus, ruta)).toBe(esperado);
