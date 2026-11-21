@@ -9,7 +9,8 @@ import { AvisoSinGuardar, useAvisoAlSalir } from './CambiosSinGuardar';
 /**
  * 📞 El teléfono de soporte (docs/PLAN_NAVEGACION.md, N9). Se dice para qué se usa
  * porque de él dependen las alertas de posible emergencia: un celular las recibe
- * por WhatsApp; un fijo se le da al paciente, pero no las recibe.
+ * por WhatsApp (si ese número le escribió al asistente en las últimas 24 horas: la
+ * alerta es texto libre); un fijo se le da al paciente, pero no las recibe.
  */
 export default function TelefonoSoporteForm({ inicial }: { inicial: string | null }) {
     const [guardado, setGuardado] = useState(inicial ?? '');
@@ -78,8 +79,8 @@ export default function TelefonoSoporteForm({ inicial }: { inicial: string | nul
                         }`}
                     >
                         {llegan
-                            ? `Se guarda como ${v.valor}. Las alertas de posible emergencia llegan a este WhatsApp.`
-                            : 'No es un celular colombiano: el asistente se lo da a los pacientes, pero las alertas de posible emergencia no llegan por WhatsApp y solo quedan en la Caja Negra.'}
+                            ? `Se guarda como ${v.valor}. La alerta de posible emergencia sale a este WhatsApp, pero WhatsApp solo la entrega si este número le escribió al asistente en las últimas 24 horas; si no, queda en la Caja Negra.`
+                            : `Se guarda como ${v.valor}. No es un celular colombiano: el asistente se lo da a los pacientes, pero las alertas de posible emergencia no llegan por WhatsApp y solo quedan en la Caja Negra.`}
                     </p>
                 )}
                 {error && (

@@ -105,7 +105,7 @@ describe('armarResumen (docs/PLAN_NAVEGACION.md §5.1)', () => {
         const r = armarResumen({ ...TODO_BIEN, telefonoSoporte: '(606) 859 1010' });
         expect(fila(r, 'Datos de la clínica', 'Alertas de emergencia')).toMatchObject({ valor: 'No llegan por WhatsApp', estado: 'falta' });
         expect(r.avisos.map((a) => a.href)).toEqual(['/dashboard/configuracion/clinica#telefono']);
-        expect(fila(armarResumen(TODO_BIEN), 'Datos de la clínica', 'Alertas de emergencia')?.valor).toBe('Llegan por WhatsApp');
+        expect(fila(armarResumen(TODO_BIEN), 'Datos de la clínica', 'Alertas de emergencia')?.valor).toBe('Por WhatsApp, si escribió en 24 h');
     });
 
     it('WhatsApp con número y token pero apagado: apagado, no «sin conectar»', () => {

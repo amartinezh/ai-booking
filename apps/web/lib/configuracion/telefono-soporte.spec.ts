@@ -11,15 +11,23 @@ describe('validarTelefonoSoporte (docs/PLAN_NAVEGACION.md, N9)', () => {
         expect(validarTelefonoSoporte(entrada)).toEqual({ ok: true, valor: '+57 300 123 4567', alertasPorWhatsapp: true });
     });
 
-    it.each(['(606) 859 1010', '6068591010', '8591010', '+1 415 555 0100'])(
-        '%s se acepta tal cual, pero dice que la alerta por WhatsApp no llega',
+    it.each(['606 853 8860', '(606) 853 8860', '6068538860', '+57 606 853 8860', '576068538860'])(
+        'el fijo %s se guarda con indicativo: sin el 57, la alerta saldría a Malasia (+60)',
         (entrada) => {
-            expect(validarTelefonoSoporte(entrada)).toEqual({ ok: true, valor: entrada, alertasPorWhatsapp: false });
+            expect(validarTelefonoSoporte(entrada)).toEqual({ ok: true, valor: '+57 606 853 8860', alertasPorWhatsapp: false });
         },
     );
 
+    it.each(['8591010', '+1 415 555 0100'])('%s se acepta tal cual, pero dice que la alerta por WhatsApp no llega', (entrada) => {
+        expect(validarTelefonoSoporte(entrada)).toEqual({ ok: true, valor: entrada, alertasPorWhatsapp: false });
+    });
+
+    it.each(['4155550100', '1 415 555 0100'])('%s: sin + no se sabe de qué país es, y la alerta podría salir a otro', (entrada) => {
+        expect(validarTelefonoSoporte(entrada)).toEqual({ ok: false, error: expect.stringContaining('con + y su indicativo') });
+    });
+
     it('junta los espacios de más', () => {
-        expect(validarTelefonoSoporte('  (606)   859  1010 ')).toMatchObject({ ok: true, valor: '(606) 859 1010' });
+        expect(validarTelefonoSoporte('  +1   415  555 0100 ')).toMatchObject({ ok: true, valor: '+1 415 555 0100' });
     });
 
     it.each(['', '   ', null, undefined, 3001234567])('%p no se puede guardar: no se deja vacío', (entrada) => {

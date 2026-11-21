@@ -45,6 +45,18 @@ describe('TelefonoSoporteForm (docs/PLAN_NAVEGACION.md, N9)', () => {
         expect(boton()).toBeEnabled();
     });
 
+    it('dice que WhatsApp solo entrega la alerta dentro de las 24 horas: no promete de más', async () => {
+        render(<TelefonoSoporteForm inicial={null} />);
+        await userEvent.type(campo(), '3001234567');
+        expect(screen.getByText(/solo la entrega si este número le escribió al asistente en las últimas 24 horas/)).toBeInTheDocument();
+    });
+
+    it('un fijo guardado sin indicativo se puede corregir sin reescribirlo, y dice cómo queda', () => {
+        render(<TelefonoSoporteForm inicial="606 853 8860" />);
+        expect(boton()).toBeEnabled();
+        expect(screen.getByText(/Se guarda como \+57 606 853 8860/)).toBeInTheDocument();
+    });
+
     it('si el servidor lo rechaza, lo dice y conserva lo escrito', async () => {
         guardar.mockResolvedValue({ success: false, error: 'Acceso denegado' });
         render(<TelefonoSoporteForm inicial="(606) 859 1010" />);

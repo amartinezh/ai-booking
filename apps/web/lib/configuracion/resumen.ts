@@ -260,7 +260,7 @@ export function armarResumen(d: DatosDelResumen): Resumen {
                       : [
                             { nombre: 'Teléfono de soporte', valor: d.telefonoSoporte, estado: 'neutro', href: `${clinica}#telefono` },
                             alertasLleganPorWhatsapp(d.telefonoSoporte)
-                                ? { nombre: 'Alertas de emergencia', valor: 'Llegan por WhatsApp', estado: 'encendido', href: `${clinica}#telefono` }
+                                ? { nombre: 'Alertas de emergencia', valor: 'Por WhatsApp, si escribió en 24 h', estado: 'neutro', href: `${clinica}#telefono` }
                                 : { nombre: 'Alertas de emergencia', valor: 'No llegan por WhatsApp', estado: 'falta', href: `${clinica}#telefono` },
                         ],
         },

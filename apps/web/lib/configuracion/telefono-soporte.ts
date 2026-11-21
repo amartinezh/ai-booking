@@ -17,7 +17,13 @@ const MAX_CARACTERES = 30;
 const MIN_DIGITOS = 7;
 const MAX_DIGITOS = 15;
 
-/** Si con este número la alerta de emergencia puede llegar por WhatsApp: un celular colombiano con indicativo. */
+const conIndicativo = (n: string) => `+57 ${n.slice(0, 3)} ${n.slice(3, 6)} ${n.slice(6)}`;
+
+/**
+ * Si con este número la alerta de emergencia PUEDE llegar por WhatsApp: un celular
+ * colombiano con indicativo. Es condición necesaria, no garantía: la alerta es texto
+ * libre y Meta solo la entrega si ese número le escribió al asistente en 24 horas.
+ */
 export function alertasLleganPorWhatsapp(valor: string | null | undefined): boolean {
     return /^573\d{9}$/.test((valor ?? '').replace(/\D/g, ''));
 }
@@ -38,9 +44,18 @@ export function validarTelefonoSoporte(entrada: unknown): TelefonoValidado {
         return { ok: false, error: `El teléfono debe tener entre ${MIN_DIGITOS} y ${MAX_DIGITOS} dígitos.` };
     }
     const celular = normalizePhoneToE164Co(texto);
-    if (celular) {
-        const n = celular.slice(3);
-        return { ok: true, valor: `+57 ${n.slice(0, 3)} ${n.slice(3, 6)} ${n.slice(6)}`, alertasPorWhatsapp: true };
+    if (celular) return { ok: true, valor: conIndicativo(celular.slice(3)), alertasPorWhatsapp: true };
+
+    // Un fijo colombiano también lleva su indicativo: la alerta usa los dígitos tal
+    // cual y «606 853 8860» sin el 57 es, para WhatsApp, un número de Malasia (+60).
+    const soloDigitos = texto.replace(/\D/g, '');
+    const fijo = /^(?:57)?(60\d{8})$/.exec(soloDigitos)?.[1];
+    if (fijo) return { ok: true, valor: conIndicativo(fijo), alertasPorWhatsapp: false };
+
+    // Con 10 dígitos o más, sin «+», no se sabe de qué país es y la alerta podría
+    // salir a otro. Los cortos (7 dígitos) nunca se usan como destino de la alerta.
+    if (soloDigitos.length >= 10 && !texto.startsWith('+')) {
+        return { ok: false, error: 'Si no es un número de Colombia, escríbalo con + y su indicativo.' };
     }
     return { ok: true, valor: texto, alertasPorWhatsapp: false };
 }
