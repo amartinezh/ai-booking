@@ -8,7 +8,8 @@
  *   1. Que el archivo esté bien: la Parte 1 se lee con el MISMO lector que usan
  *      la página y el asistente de soporte (packages/shared/src/conocimiento.ts),
  *      los enlaces apuntan a temas que existen y cada opción del menú del
- *      administrador (packages/shared/src/menus.ts) tiene su tema con el mismo título.
+ *      administrador (packages/shared/src/menus.ts) tiene su tema con el mismo título,
+ *      en la categoría de su grupo; también cada sección de Configuración.
  *
  *   2. Que se mantenga al día: un commit que toca código del producto debe
  *      tocar también AGENIA.md, salvo que su mensaje diga explícitamente
@@ -61,7 +62,7 @@ const verde = (s) => (process.stdout.isTTY ? `\x1b[32m${s}\x1b[0m` : s);
 
 async function validarArchivo(markdown, origen) {
   const lector = await import(pathToFileURL(path.join(REPO, 'packages/shared/src/conocimiento.ts')).href);
-  const { GRUPOS_DEL_MENU, getMenusForRole } = await import(pathToFileURL(path.join(REPO, 'packages/shared/src/menus.ts')).href);
+  const { GRUPOS_DEL_MENU, getMenusForRole, seccionesDeConfiguracion } = await import(pathToFileURL(path.join(REPO, 'packages/shared/src/menus.ts')).href);
 
   let contenido;
   try {
@@ -84,9 +85,20 @@ async function validarArchivo(markdown, origen) {
   const categorias = contenido.categorias.map((c) => `${c.id}:${c.titulo}`).join(', ');
   if (categorias !== esperadas.map((c) => `${c.id}:${c.titulo}`).join(', '))
     problemas.push(`${ARCHIVO}: las categorías de la Parte 1 (${categorias}) tienen que ser «Para empezar» y los grupos del menú, en su orden (packages/shared/src/menus.ts, GRUPOS_DEL_MENU).`);
-  const rutas = new Set(menu.map((m) => m.href));
+  // Las secciones de Configuración (docs/PLAN_NAVEGACION.md §5): cada una con su
+  // tema del mismo título, en la categoría de Configuración.
+  const secciones = seccionesDeConfiguracion(menu);
+  const categoriaConfiguracion = menu.find((m) => m.href === '/dashboard/configuracion')?.grupo;
+  for (const sec of secciones) {
+    const tema = lector.temaDeRuta(contenido.temas, sec.href);
+    if (!tema) problemas.push(`${ARCHIVO}: la sección de Configuración «${sec.titulo}» (${sec.href}) no tiene su tema en la Parte 1.`);
+    else if (tema.titulo !== sec.titulo) problemas.push(`${ARCHIVO}: el tema de ${sec.href} se llama «${tema.titulo}» y la sección «${sec.titulo}».`);
+    else if (tema.categoria !== categoriaConfiguracion)
+      problemas.push(`${ARCHIVO}: el tema «${tema.titulo}» está en la categoría «${tema.categoria}» y Configuración en «${categoriaConfiguracion}».`);
+  }
+  const rutas = new Set([...menu.map((m) => m.href), ...secciones.map((sec) => sec.href)]);
   for (const t of contenido.temas) {
-    if (t.href && !rutas.has(t.href)) problemas.push(`${ARCHIVO}: el tema «${t.titulo}» apunta a ${t.href}, que no está en el menú del administrador.`);
+    if (t.href && !rutas.has(t.href)) problemas.push(`${ARCHIVO}: el tema «${t.titulo}» apunta a ${t.href}, que no está en el menú del administrador ni es una sección de Configuración.`);
   }
   if (!/^\*\*Última actualización:\*\* \d{4}-\d{2}-\d{2}$/m.test(markdown)) problemas.push(`${ARCHIVO}: falta la línea «**Última actualización:** AAAA-MM-DD».`);
   if (!/^# Parte 3 · Bitácora de cambios$/m.test(markdown)) problemas.push(`${ARCHIVO}: falta la «# Parte 3 · Bitácora de cambios».`);

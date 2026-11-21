@@ -278,8 +278,8 @@ export default function EspejoClient({ data }: { data: Estado }) {
                     Un interruptor por operación. Encendido: se hace por el asistente y desde el panel, y llega al
                     hospital. Apagado: no se puede hacer en AgenIA y se hace directamente en el sistema del hospital;
                     nada queda en cola. Se cambian en{' '}
-                    <Link href="/dashboard/configuracion" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
-                        Configuración
+                    <Link href="/dashboard/configuracion/asistente" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
+                        Configuración › Qué puede hacer el asistente
                     </Link>
                     .
                 </p>

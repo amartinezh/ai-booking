@@ -100,7 +100,8 @@ describe('acciones — página pública de la política de datos', () => {
         const log = mockLog.mock.calls[0][0].data;
         expect(log.action).toBe('DATA_POLICY_PAGE_CHANGED');
         expect(log.message).toMatch(/publicada/);
-        expect(revalidatePath).toHaveBeenCalledWith('/dashboard/configuracion');
+        // Con 'layout': refresca todas las secciones de Configuración (docs/PLAN_NAVEGACION.md §5).
+        expect(revalidatePath).toHaveBeenCalledWith('/dashboard/configuracion', 'layout');
     });
 
     it('cambiar un dato dice cuál; guardar lo mismo no es un cambio', async () => {

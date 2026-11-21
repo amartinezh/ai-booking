@@ -17,7 +17,7 @@ export class NoActiveLlmProviderError extends Error {
   constructor(organizationId: string) {
     super(
       `La organización ${organizationId} todavía no tiene un proveedor de IA configurado. ` +
-        `Configúralo en /dashboard/configuracion → Integración de IA.`,
+        `Configúralo en /dashboard/configuracion/canales (Configuración › Canales e IA).`,
     );
     this.name = 'NoActiveLlmProviderError';
   }

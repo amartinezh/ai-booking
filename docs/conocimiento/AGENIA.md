@@ -44,9 +44,9 @@ Si estás empezando como administrador, aquí ves qué configurar primero y por 
 
 ##### Poner en marcha la clínica, de cero a la primera cita
 
-1. Configuración › Integraciones (IA y Canales): conecta el proveedor de inteligencia artificial y el canal de WhatsApp (y Telegram si lo vas a usar). Pulsa «Probar Servicio» para confirmar que responden.
-2. Configuración › Asistente Virtual: dale nombre y tono al asistente, decide qué puede hacer el paciente (agendar, cancelar, cambiar la fecha) y enciende los recordatorios.
-3. Configuración › Base de Conocimiento: escribe horarios, dirección, tarifas, EPS con convenio y teléfonos. Es lo único que el asistente responderá sobre la clínica.
+1. Configuración › Canales e IA: conecta el proveedor de inteligencia artificial y el canal de WhatsApp (y Telegram si lo vas a usar). Pulsa «Probar Servicio» para confirmar que responden.
+2. Configuración › Nombre, tono y voz: dale nombre y tono al asistente. En Qué puede hacer el asistente decide qué puede hacer el paciente (agendar, cancelar, cambiar la fecha) y en Recordatorios enciéndelos.
+3. Configuración › Base de conocimiento: escribe horarios, dirección, tarifas, EPS con convenio y teléfonos. Es lo único que el asistente responderá sobre la clínica.
 4. Servicios de salud: crea las especialidades que se podrán agendar.
 5. Aseguradoras (EPS): crea las EPS con las que la clínica tiene convenio.
 6. Médicos: crea a cada médico y asígnale su servicio.
@@ -161,7 +161,7 @@ No. Si fue un error, el cupo ya quedó libre: pídele al paciente que vuelva a a
 
 ##### ¿Qué diferencia hay entre «Recordar» y los recordatorios automáticos?
 
-Los automáticos salen solos antes de cada cita si están encendidos en Configuración › Asistente Virtual. «Recordar» lo envías tú en el momento, por ejemplo cuando el paciente pidió que le reenvíen los datos. Una cita que el paciente se agenda por el chat con un día y medio o menos de anticipación (por ejemplo, hoy para mañana) no recibe el automático: la confirmación del chat acaba de decirle lo mismo. Con más anticipación sí lo recibe, nunca antes de 12 horas después de la confirmación; por ejemplo, la agendada el sábado para el martes lo recibe el día anterior. Ningún automático sale de noche: todos salen de 7:00 a. m. a 8:00 p. m. (hasta el 13 de noviembre de 2026, los de las citas del sábado que agendó el hospital salían el viernes pasada la medianoche). «Recordar» sí le llega siempre.
+Los automáticos salen solos antes de cada cita si están encendidos en Configuración › Recordatorios. «Recordar» lo envías tú en el momento, por ejemplo cuando el paciente pidió que le reenvíen los datos. Una cita que el paciente se agenda por el chat con un día y medio o menos de anticipación (por ejemplo, hoy para mañana) no recibe el automático: la confirmación del chat acaba de decirle lo mismo. Con más anticipación sí lo recibe, nunca antes de 12 horas después de la confirmación; por ejemplo, la agendada el sábado para el martes lo recibe el día anterior. Ningún automático sale de noche: todos salen de 7:00 a. m. a 8:00 p. m. (hasta el 13 de noviembre de 2026, los de las citas del sábado que agendó el hospital salían el viernes pasada la medianoche). «Recordar» sí le llega siempre.
 
 #### Si algo no sale bien
 
@@ -179,7 +179,7 @@ Ese paciente no tiene un WhatsApp guardado. Contáctalo por otro medio.
 
 ##### El recordatorio por WhatsApp no sale y el paciente no ha escrito hace más de un día.
 
-Fuera de las 24 horas siguientes al último mensaje del paciente, WhatsApp solo deja enviar plantillas aprobadas. Configura la plantilla «Recordatorio de cita» en Configuración › Integraciones › Plantillas de WhatsApp.
+Fuera de las 24 horas siguientes al último mensaje del paciente, WhatsApp solo deja enviar plantillas aprobadas. Configura la plantilla «Recordatorio de cita» en Configuración › Canales e IA › Plantillas de WhatsApp.
 
 ### 🛟 Soporte y ayuda {#soporte}
 
@@ -484,7 +484,7 @@ Lee el motivo: suele faltar la plantilla «Aviso al agendador» o que nadie en l
 
 ##### El panel dice que los pedidos de pacientes no se avisan por WhatsApp.
 
-Falta la plantilla «Aviso al agendador (pedidos de pacientes)»: créala en Meta (categoría Utilidad, tres variables: cuántos casos, la cita más próxima y qué pidió el paciente) y regístrala en Configuración › Integraciones › Plantillas de WhatsApp. No uses la del «Aviso al agendador»: su texto dice que las citas no llegaron al hospital. Mientras tanto, esos casos solo se ven en la bandeja.
+Falta la plantilla «Aviso al agendador (pedidos de pacientes)»: créala en Meta (categoría Utilidad, tres variables: cuántos casos, la cita más próxima y qué pidió el paciente) y regístrala en Configuración › Canales e IA › Plantillas de WhatsApp. No uses la del «Aviso al agendador»: su texto dice que las citas no llegaron al hospital. Mientras tanto, esos casos solo se ven en la bandeja.
 
 ##### Solo se muestran 500.
 
@@ -687,11 +687,11 @@ Abre más cupos en Agendas y cupos para los servicios que aparecen en «Especial
 
 ##### Casos de «Token Meta expirado» o «Error de WhatsApp».
 
-Renueva el Access Token en Configuración › Integraciones › Canal de WhatsApp y pruébalo con «Salud de la Conexión».
+Renueva el Access Token en Configuración › Canales e IA › Canal de WhatsApp y pruébalo con «Salud de la Conexión».
 
 ##### Casos de «IA caída».
 
-Revisa la clave de API en Configuración › Integraciones y pulsa «Probar Servicio».
+Revisa la clave de API en Configuración › Canales e IA y pulsa «Probar Servicio».
 
 ### 🔎 Rastreo de paciente {#rastreo}
 
@@ -1091,7 +1091,7 @@ Revisa que: el cupo no sea exclusivo de otra EPS; el médico esté activo y con 
 
 ##### ¿Cuántas opciones de hora le muestra el asistente al paciente?
 
-Las que definas en Configuración › Asistente Virtual › «Horarios que ofrece el asistente» (entre 2 y 12; recomendado 6), repartidas entre mañana y tarde. Si ninguna le sirve, el paciente puede elegir la opción «Otro día», que aparece al final cuando hay cupos en días siguientes, o escribir lo que prefiere: «mañana», «el jueves 30», «en la tarde», «más temprano», «otro horario» o una hora («para las 3:30»). El asistente le busca cupos de eso dentro del plazo para agendar, sin repetir los que ya vio (con una hora, le muestra los más cercanos a ella); si pide un día después del plazo, le dice desde cuándo escribir. También entiende la letra dentro de una frase («Perdón, es la B») y, si dos horarios coinciden con lo que escribe, el médico que nombre («a las 9 con el doctor Santiago»). Si rechaza lo que ve («no me sirve», «no me da la hora», «ninguno») y no queda otro horario por el chat, le ofrece la lista de espera. Si pide «otra» u «otro horario» y no hay más, le dice que los que vio siguen disponibles y que, si ninguno le sirve, escriba «Lista de espera»; con «lista de espera» o «anóteme en la lista», en cualquier momento de ese menú, le pregunta si lo anota.
+Las que definas en Configuración › Agenda que ofrece el asistente › «Horarios que ofrece el asistente» (entre 2 y 12; recomendado 6), repartidas entre mañana y tarde. Si ninguna le sirve, el paciente puede elegir la opción «Otro día», que aparece al final cuando hay cupos en días siguientes, o escribir lo que prefiere: «mañana», «el jueves 30», «en la tarde», «más temprano», «otro horario» o una hora («para las 3:30»). El asistente le busca cupos de eso dentro del plazo para agendar, sin repetir los que ya vio (con una hora, le muestra los más cercanos a ella); si pide un día después del plazo, le dice desde cuándo escribir. También entiende la letra dentro de una frase («Perdón, es la B») y, si dos horarios coinciden con lo que escribe, el médico que nombre («a las 9 con el doctor Santiago»). Si rechaza lo que ve («no me sirve», «no me da la hora», «ninguno») y no queda otro horario por el chat, le ofrece la lista de espera. Si pide «otra» u «otro horario» y no hay más, le dice que los que vio siguen disponibles y que, si ninguno le sirve, escriba «Lista de espera»; con «lista de espera» o «anóteme en la lista», en cualquier momento de ese menú, le pregunta si lo anota.
 
 ##### ¿El asistente le guarda el horario al paciente mientras se registra?
 
@@ -1450,13 +1450,13 @@ Cifras de citas, de conversaciones y de satisfacción de los pacientes.
 ### 📊 Analíticas {#analiticas}
 
 - **Ruta:** `/dashboard/analytics`
-- **Resumen:** Indicadores de las citas: total, completadas, canceladas, y cómo se reparten por especialidad, EPS, origen y día.
+- **Resumen:** Indicadores de las citas: total, completadas, canceladas, y cómo se reparten por especialidad, EPS, origen y día. El administrador abre aquí, con una clave, la página para compartir las cifras.
 - **Relacionados:** [Canales en vivo](#canales), [Encuestas](#encuestas), [Visión General](#vision-general)
-- **Palabras clave:** estadísticas, métricas, indicadores, kpi, reportes, informes, gráficas, business intelligence, bi, tendencias, analíticas de negocio
+- **Palabras clave:** estadísticas, métricas, indicadores, kpi, reportes, informes, gráficas, business intelligence, bi, tendencias, analíticas de negocio, estadísticas para compartir, compartir resultados, clave, enlace público, subdominio, gerencia, informe
 
 #### Para qué sirve
 
-Responde preguntas de gestión: qué especialidad se pide más, qué EPS mueve más citas, cuántas llegan por el asistente frente a las del personal o del hospital, y cómo va el volumen día a día. Las cifras se calculan con la fecha de la cita, no con la fecha en que se agendó.
+Responde preguntas de gestión: qué especialidad se pide más, qué EPS mueve más citas, cuántas llegan por el asistente frente a las del personal o del hospital, y cómo va el volumen día a día. Las cifras se calculan con la fecha de la cita, no con la fecha en que se agendó. Al final, el administrador tiene «Estadísticas para compartir»: una página con las cifras de AgenIA que se abre con una clave sencilla, para la gerencia o quien decida.
 
 #### Paso a paso
 
@@ -1467,6 +1467,17 @@ Responde preguntas de gestión: qué especialidad se pide más, qué EPS mueve m
 3. Para volver a ver todo, pulsa la X («Limpiar filtros»).
 
 > 💡 Los días se cuentan completos en hora de Colombia.
+
+##### Compartir las estadísticas con una clave
+
+1. En Analíticas, pulsa «🔗 Compartir estas cifras» (solo lo ve el Administrador) o baja a «Estadísticas para compartir». Viene cerrada: nadie la puede ver.
+2. Escribe una clave de al menos 6 caracteres en «Clave para abrir la página» y pulsa «Abrir la página».
+3. Copia el enlace con «Copiar» y compártelo junto con la clave solo con quien deba ver las cifras. Con «Abrir» la ves tú.
+4. Quien abre el enlace escribe la clave una vez: queda dentro 30 días en ese navegador, y con «Salir» se olvida.
+5. Para cambiar la clave, escribe la nueva en «Clave nueva» y pulsa «Cambiar la clave»: quien ya había entrado debe escribir la nueva.
+6. Para cerrarla, pulsa «Cerrar la página» y confirma con «Sí, cerrar».
+
+> 💡 La página muestra recordatorios enviados y leídos, gestiones por chat (confirmar, consultar, agendar, cancelar, cambiar fecha y avisar inasistencia), citas agendadas por chat, cupos devueltos, mensajes fuera de horario, asistencia con y sin recordatorio, cuánto espera el paciente por su cita (días desde que la pide hasta el día de la cita, por chat y por el personal del hospital, con cuántas quedan dentro de 3 días; minutos de conversación para conseguirla por chat; y horas desde que entra a la lista de espera hasta que recibe el cupo) y, desde que el primer paciente recibe un aviso, los documentos de la consulta (avisos enviados, entregados y leídos por día, cuántos pacientes pidieron y recibieron sus documentos, archivos entregados y vistos, páginas abiertas, consultas que no se envían y bajas), sin datos de ningún paciente. Se recalcula cada día a las 6 a. m. con el día anterior completo: el día en curso no sale. Las gráficas por día muestran los últimos 30 días y las cifras cuentan desde el primer recordatorio. Si el equipo de AgenIA le dio a tu clínica una dirección corta para las estadísticas, esa también sirve con la misma clave.
 
 #### Qué ves en la pantalla
 
@@ -1492,6 +1503,18 @@ Analíticas mira las citas. Canales en vivo mira las conversaciones de WhatsApp 
 
 Sí. Aparecen con origen MIRROR.
 
+##### ¿La página de estadísticas muestra datos de pacientes?
+
+No. Solo cuenta: cuántos recordatorios, mensajes, citas y gestiones hubo, sin nombres, teléfonos ni cédulas. Aun así va con clave porque son cifras de la operación del hospital, y no aparece en buscadores como Google.
+
+##### ¿Por qué la página de estadísticas no tiene las cifras de hoy?
+
+Porque se recalcula una vez al día, a las 6 a. m., con el día anterior completo. Un día a medias se vería como una caída (a media mañana van pocos recordatorios). Antes de las 6 a. m. todavía muestra el corte del día anterior.
+
+##### Olvidé la clave de las estadísticas. ¿Cómo la veo?
+
+No se puede ver: se guarda cifrada. Pon una nueva en Analíticas › Estadísticas para compartir y compártela; quien había entrado con la anterior tendrá que escribir la nueva.
+
 #### Si algo no sale bien
 
 ##### Sale «No pudimos cargar la información de analíticas».
@@ -1501,6 +1524,14 @@ El servicio de AgenIA no respondió. Recarga en un minuto; si sigue igual, repó
 ##### Una gráfica dice «Sin datos».
 
 No hay citas en ese periodo. Amplía las fechas.
+
+##### La página de estadísticas dice «Demasiados intentos con una clave equivocada».
+
+Tras 5 claves equivocadas desde la misma conexión en 15 minutos (o 30 en total para la clínica) la página deja de comprobar por 15 minutos, para que nadie la adivine probando. Espera y escribe la clave correcta; si no la sabes, pídela al administrador.
+
+##### El enlace de las estadísticas muestra «404» o «página no encontrada».
+
+La página está cerrada: el administrador la abre poniendo una clave en Analíticas › Estadísticas para compartir. También pasa si el enlace quedó incompleto al copiarlo.
 
 ### 📈 Canales en vivo {#canales}
 
@@ -1563,7 +1594,7 @@ Canales en vivo cuenta. La Caja Negra te muestra cada caso para que puedas conta
 
 ##### ¿Qué quiere decir «No respondieron» en la autorización de datos?
 
-Que el asistente le pidió la autorización y la conversación se cerró sin un sí ni un no (dejó de escribir o, tras varios recordatorios, el asistente cerró). «Esperando respuesta» son las conversaciones que siguen abiertas. Si la sección dice que está apagada, se enciende en Configuración › Asistente Virtual.
+Que el asistente le pidió la autorización y la conversación se cerró sin un sí ni un no (dejó de escribir o, tras varios recordatorios, el asistente cerró). «Esperando respuesta» son las conversaciones que siguen abiertas. Si la sección dice que está apagada, se enciende en Configuración › Privacidad (Ley 1581).
 
 #### Si algo no sale bien
 
@@ -1577,11 +1608,11 @@ Actualiza el padrón de esa EPS y revisa las Solicitudes de alta.
 
 ##### Aparece «IA no disponible».
 
-Ve a Configuración › Integraciones y pulsa «Probar Servicio» en Salud de la Conexión.
+Ve a Configuración › Canales e IA y pulsa «Probar Servicio» en Salud de la Conexión.
 
 ##### Aparece «Error enviando la respuesta».
 
-Revisa el canal de WhatsApp (token de Meta) en Configuración › Integraciones.
+Revisa el canal de WhatsApp (token de Meta) en Configuración › Canales e IA.
 
 ### ⭐ Encuestas {#encuestas}
 
@@ -1686,214 +1717,73 @@ El asistente virtual, sus canales y sus reglas, las cuentas del personal y la co
 ### ⚙️ Configuración {#configuracion}
 
 - **Ruta:** `/dashboard/configuracion`
-- **Resumen:** El asistente virtual (nombre, tono, voz y qué puede hacer el paciente), sus canales, la información que comparte y la página de estadísticas para compartir.
-- **Relacionados:** [Canales en vivo](#canales), [Encuestas](#encuestas), [Visión General](#vision-general), [Espejo con el HIS](#espejo), [Analíticas](#analiticas)
-- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días, médicos nuevos, homologar automáticamente, agregar médicos, estadísticas, cifras, informe, gerencia, compartir resultados, enlace público, subdominio, habeas data, ley 1581, autorización de datos, consentimiento, política de privacidad, tratamiento de datos
+- **Resumen:** El Resumen de los ajustes de la clínica, qué está encendido y qué falta, y las secciones donde se cambian: lo que hace el asistente, la agenda que ofrece, los recordatorios, su nombre y su voz, la base de conocimiento, la privacidad, los canales y el hospital.
+- **Relacionados:** [Qué puede hacer el asistente](#config-asistente), [Agenda que ofrece el asistente](#config-agenda), [Canales e IA](#config-canales), [Límite de citas](#limites-citas), [Analíticas](#analiticas)
+- **Palabras clave:** ajustes, configurar, opciones, chatbot, bot, asistente, resumen, qué está encendido, qué falta, pestañas, asistente virtual, integraciones
 
 #### Para qué sirve
 
-Tiene cinco pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, si le pide la autorización de datos antes de agendar, hasta cuántos días adelante le ofrece citas, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Días sin citas»: un calendario para elegir los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados). «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica. «Estadísticas»: abre, con una clave sencilla, una página con las cifras de AgenIA para compartir con la gerencia o con quien decidas.
+Configuración tiene una columna a la izquierda: arriba el Resumen y, debajo, las secciones por grupo. El asistente: Qué puede hacer el asistente, Agenda que ofrece el asistente, Recordatorios, Nombre, tono y voz, y Base de conocimiento. La clínica: Privacidad (Ley 1581). Conexiones: Canales e IA y, si la clínica está conectada al sistema del hospital, Hospital (espejo). El Resumen dice de un vistazo cómo está cada ajuste, y cada línea lleva a ese ajuste para cambiarlo. Arriba salen en amarillo las cosas que faltan, como WhatsApp sin conectar, la base de conocimiento vacía o la clínica sin teléfono de soporte. En el celular, las secciones salen en una fila que se desliza de lado.
+
+#### Paso a paso
+
+##### Ver qué está encendido y cambiar un ajuste
+
+1. Abre Configuración: llegas al Resumen.
+2. Busca el ajuste en su bloque. Cada línea dice cómo está: el punto verde es encendido, el gris es apagado y el amarillo, algo que falta.
+3. Pulsa la línea: te lleva a su sección y al ajuste, que queda enmarcado.
+4. Cámbialo allí. Para volver, pulsa «Resumen» arriba de la columna.
+
+> 💡 Cada sección tiene su dirección, así que puedes guardarla en favoritos o mandarle el enlace a otra persona del equipo con el mismo acceso.
+
+#### Qué ves en la pantalla
+
+- **Resumen:** Un bloque por sección con una línea por ajuste, su estado y el enlace para cambiarlo.
+- **Lo que falta:** Avisos en amarillo arriba del Resumen, cada uno con el enlace para arreglarlo.
+- **Columna de secciones:** El Resumen arriba y las secciones por grupo (El asistente, La clínica, Conexiones), con la abierta resaltada.
+
+#### Preguntas frecuentes
+
+##### ¿Dónde quedó lo de las pestañas de antes?
+
+Configuración ya no va en pestañas. Lo de «Asistente Virtual» quedó repartido en Qué puede hacer el asistente, Agenda que ofrece el asistente (con «Horarios que ofrece», que antes iba junto al nombre), Recordatorios, Nombre, tono y voz, Privacidad (Ley 1581) y, con espejo, Hospital. «Días sin citas» está en Agenda que ofrece el asistente; «Integraciones (IA y Canales)», en Canales e IA; «Base de Conocimiento», en Base de conocimiento; y «Estadísticas», en Analíticas, con el botón «Compartir estas cifras». Los enlaces de antes siguen funcionando: llevan a la sección nueva.
+
+##### ¿Los cambios se guardan solos?
+
+Los interruptores y las listas se guardan al instante, en cuanto los cambias. Lo que se escribe (el nombre del asistente, el enlace de la política, las claves de WhatsApp o de la IA, la base de conocimiento) tiene su propio botón para guardar.
+
+#### Si algo no sale bien
+
+##### Sale «No pudimos cargar…» en una sección.
+
+Las demás secciones siguen funcionando. Recarga la página; si persiste, repórtalo en Soporte y ayuda.
+
+##### Una línea del Resumen dice «No se pudo leer».
+
+Ese dato no se pudo leer en el momento, por ejemplo porque el servidor de AgenIA tardó en responder. Las demás líneas sí están al día. Recarga en un minuto; si sigue igual, repórtalo en Soporte y ayuda.
+
+### 🤖 Qué puede hacer el asistente {#config-asistente}
+
+- **Ruta:** `/dashboard/configuracion/asistente`
+- **Resumen:** Si el paciente puede agendar, cancelar y cambiar la fecha de su cita por WhatsApp o Telegram, y cuántas citas puede tener por el asistente.
+- **Relacionados:** [Configuración](#configuracion), [Límite de citas](#limites-citas), [Espejo con el HIS](#espejo), [Agenda que ofrece el asistente](#config-agenda)
+- **Palabras clave:** agendar, cancelar, cambiar fecha, reprogramar, apagar agenda, solo consultas, interruptores, operaciones del bot, límite de citas
+
+#### Para qué sirve
+
+Tres interruptores deciden qué puede hacer el paciente con el asistente: agendar citas nuevas, cancelar y cambiar la fecha de una cita. Con los tres apagados, el asistente solo consulta citas. Debajo está cómo va el límite de citas por paciente, con el enlace para cambiarlo.
 
 #### Paso a paso
 
 ##### Decidir qué puede hacer el paciente con el asistente
 
-1. Abre la pestaña «Asistente Virtual».
+1. Abre Configuración › Qué puede hacer el asistente.
 2. Enciende o apaga «Agendar citas por el asistente», «Cancelar citas por el asistente» y «Cambiar la fecha de una cita por el asistente».
 3. Cada interruptor se guarda al instante y aplica desde el siguiente mensaje del paciente.
 
 > 💡 Con una operación apagada, el asistente le dice al paciente que se comunique con el hospital y qué sí puede hacer por ahí. Con las tres apagadas, solo consulta citas. Si la clínica está conectada al hospital, cada interruptor manda en todo: encendido, la operación se hace por el asistente y desde el panel y llega al sistema del hospital (el asistente solo le confirma al paciente cuando el hospital lo registró); apagado, no se puede hacer en AgenIA —ni por el asistente ni desde el panel— y se hace directamente en el sistema del hospital. Cada cambio queda en la auditoría del espejo. Sin conexión al hospital, el personal sigue haciendo todo desde el panel.
 
-##### Pedir la autorización de datos antes de agendar
-
-1. En «Asistente Virtual», busca «Autorización de datos (Ley 1581)».
-2. Escribe el enlace de la política de tratamiento de datos de la clínica (por ejemplo, la página de protección de datos de su sitio web). Si la clínica no tiene una al día, publica la de AgenIA (la guía siguiente) y pulsa «Usar este enlace en la autorización». Sin el enlace no se puede encender.
-3. Deja la versión de la política en 1, o escribe la que use la clínica.
-4. Enciende el interruptor y pulsa «Guardar». Aplica desde el siguiente mensaje de cada paciente.
-5. Pulsa «Ver el mensaje que recibe el paciente» para leer el texto exacto: saludo, para qué se usan los datos, que los de salud son sensibles y no está obligado a autorizarlos, sus derechos, la ley, el enlace y la pregunta SÍ o NO.
-6. Al pie aparece el último cambio: quién lo hizo y cuándo. El cambio también queda en la Actividad de usuarios.
-7. Si la política cambia de fondo, cambia la versión (por ejemplo, de 1 a 2) y guarda: a todos los que ya habían autorizado se les volverá a preguntar la próxima vez que quieran agendar.
-
-> 💡 El texto lo debe aprobar la oficina jurídica o el oficial de protección de datos de la clínica, que es la responsable de los datos. Las cifras de quién aceptó, quién no y quién no respondió están en Canales en vivo, y en Pacientes se ve con qué autorización se registró cada paciente por el chat.
-
-##### Publicar la política de tratamiento de datos en AgenIA
-
-1. En «Asistente Virtual», dentro de «Autorización de datos (Ley 1581)», busca el recuadro «Página de la política en AgenIA».
-2. Escribe los datos de la clínica, que es la responsable de los datos: nombre o razón social, municipio y departamento, dirección, teléfonos, correo para consultas y reclamos de datos personales, el área o cargo que los atiende y la fecha de entrada en vigencia. El NIT y el horario de atención son opcionales.
-3. Pulsa «Publicar la página». Si falta un dato, el mensaje dice cuál y el campo se marca en rojo.
-4. Ya publicada, el recuadro muestra el enlace con «Ver la página» y «Copiar el enlace».
-5. Pulsa «Usar este enlace en la autorización» para que el asistente, el resumen de la cita y los formularios de solicitud enlacen esta página. Desde ahí dice «es el enlace que usa el asistente».
-6. Para corregir un dato, pulsa «Editar los datos de la clínica», cámbialo y pulsa «Guardar los cambios». La página se actualiza al instante y el cambio queda en la Actividad de usuarios.
-
-> 💡 El texto es el mismo para todas las clínicas y describe lo que hace AgenIA: qué datos se tratan y para qué, datos de salud y de menores, cómo se pide la autorización, uso de inteligencia artificial, con quién se comparten, derechos, cómo reclamar y en qué plazos, cuánto tiempo se guarda cada cosa y seguridad (Ley 1581 de 2012 y Decreto 1377 de 2013). La versión y el nombre del asistente salen de esta misma pantalla. Antes de usarla, la debe aprobar la oficina jurídica de la clínica. Mientras falte un dato obligatorio, la página no existe.
-
-##### Limitar hasta qué día ofrece citas el asistente
-
-1. En «Asistente Virtual», elige el «Plazo máximo para agendar» (por defecto, «Sin límite»).
-2. Los días se cuentan desde hoy, incluido, y sin contar domingos ni festivos: con 4 días, un viernes el asistente ofrece citas para el viernes, el sábado, el lunes y el martes; si el lunes es festivo, hasta el miércoles. Debajo verás las fechas reales, por ejemplo «se ofrecen citas hasta el martes 27 de octubre; desde el miércoles 28 de octubre, no», con los domingos y festivos marcados como días que no cuentan. Con «Sábados por el asistente» en «Solo zona rural», el sábado tampoco cuenta, porque el hospital abre la agenda del sábado ese mismo día: con 4 días, un jueves el asistente ofrece citas hasta el martes, y el sábado se sigue ofreciendo (en la fila aparece como «no cuenta, se ofrece igual»).
-3. Se guarda al instante y aplica al agendar, al cambiar la fecha de una cita y a la lista de espera. Cada día que pasa se abre un día nuevo.
-4. Revisa el aviso de abajo: dice cuántos cupos puede ofrecer hoy el asistente con ese plazo. Si no puede ofrecer ninguno (por ejemplo, 2 días un viernes con los sábados bloqueados), lo avisa en amarillo con el primer día que tiene cupos, desde cuándo lo verán los pacientes y el plazo mínimo para ofrecerlo desde hoy.
-5. Al pie aparece el último cambio: quién lo hizo, de cuánto a cuánto y cuándo.
-6. Para quitar el límite, elige «Sin límite».
-
-> 💡 Cuenta la fecha de la cita, no la del mensaje, y solo aplica al asistente (WhatsApp y Telegram): el personal agenda desde el panel y el hospital en su sistema para cualquier fecha, y las citas ya agendadas no cambian.
-
-##### Reservar parte de la agenda para agendar en el hospital
-
-1. En «Asistente Virtual», elige la «Parte de la agenda para el asistente» (por defecto, «Sin reserva»).
-2. El porcentaje es lo máximo que el asistente puede agendar de cada médico, cada día. Con 80 %, de un médico con 20 cupos un día el asistente agenda hasta 16 citas; los otros 4 cupos solo se agendan en el hospital (ventanilla o teléfono).
-3. Se guarda al instante y aplica al agendar, al cambiar la fecha de una cita y a la lista de espera.
-4. Revisa la tabla de abajo: por cada uno de los próximos días muestra los cupos de la agenda, cuántas citas lleva el asistente y cuál es su tope, cuántas dio el hospital, cuántos cupos quedan libres y si el asistente todavía puede agendar.
-5. Al pie aparece el último cambio: quién lo hizo, de cuánto a cuánto y cuándo.
-6. Para quitar la reserva, elige «Sin reserva».
-
-> 💡 Solo limita al asistente (WhatsApp y Telegram). El personal agenda desde el panel y el hospital en su sistema sin tope; el sistema del hospital no cambia ni muestra la reserva, y las citas ya agendadas se conservan aunque bajes el porcentaje. Se redondea a favor del hospital: con 7 cupos, el asistente agenda 5; una agenda de un solo cupo queda para el hospital.
-
-##### Abrir los sábados por el asistente solo para la zona rural
-
-1. En «Asistente Virtual», en «Sábados por el asistente», elige «Solo zona rural» con el porcentaje que quieras (por defecto, «Sin regla especial»). Con 50 %, de un médico con 24 cupos un sábado el asistente agenda hasta 12 citas, y solo a personas del campo; el resto queda para agendar en el hospital. «Solo zona rural, sin tope» deja al asistente tomar todo lo libre del sábado, siempre solo para la zona rural.
-2. El asistente reconoce a la persona del campo por el campo «Zona» de su ficha en el hospital (pestaña «Datos Complementarios»: urbano o rural). El agente del hospital manda la lista de pacientes con zona rural una vez al día (solo los números de documento), y la primera vez en la hora siguiente a encender la regla. Mientras no llegue, el asistente no ofrece sábados; el recuadro lo avisa.
-3. Si los sábados están cerrados en «Días sin citas», quita ese bloqueo después de encender «Solo zona rural»: mientras siga, el asistente no ofrece sábados. Mientras «Solo zona rural» esté encendida, el sábado no cuenta para el «Plazo máximo para agendar» (ver arriba): así, de miércoles a viernes el asistente alcanza la agenda que el hospital ya abrió para la semana siguiente.
-4. Revisa el recuadro: dice cuántos pacientes de zona rural trae la lista y cuándo llegó, y si los sábados siguen en «Días sin citas». La tabla de «Parte de la agenda para el asistente» muestra el tope del sábado y lo marca «🌾 solo zona rural».
-5. Al pie aparece el último cambio: quién lo hizo, de cuánto a cuánto y cuándo.
-6. Para volver a lo de antes, elige «Sin regla especial» (y, si quieres los sábados cerrados, vuelve a ponerlos en «Días sin citas»).
-
-> 💡 El asistente ofrece los sábados a todos, como un día más, y no dice que son para la zona rural. Al dar el documento de quien va a la cita, revisa la zona; si no dice rural, le pide con amabilidad comunicarse con el hospital (con su teléfono) o acercarse a la ventanilla para la cita del sábado, y le muestra los horarios de otros días, ya sin sábados. Si elige uno y AgenIA todavía no tiene su ficha completa, le pide escribir de nuevo el documento para registrarle con su nombre, fecha de nacimiento y sexo. Solo limita al asistente: el personal y el hospital agendan sábados como siempre. Requiere que el agente del hospital esté actualizado.
-
-##### Encender o apagar los recordatorios automáticos
-
-1. En «Asistente Virtual», usa el interruptor «Recordatorios automáticos de citas».
-2. Aplica de inmediato. Al encenderlos, las citas que aún estén dentro del plazo reciben el suyo.
-
-> 💡 Fuera de las 24 horas de conversación, WhatsApp exige la plantilla «Recordatorio de cita» (pestaña Integraciones).
-
-##### Enviar recordatorios solo a quien agendó por el chat
-
-1. En «Asistente Virtual», usa el interruptor «Recordatorios solo a pacientes que agendaron ellos mismos».
-2. Encendido, el recordatorio automático solo sale para las citas que el paciente agendó por WhatsApp o Telegram. Las que agendó el personal desde el panel o el hospital no lo reciben.
-3. Aplica de inmediato. Si lo apagas, las citas que aún estén dentro del plazo reciben el suyo.
-
-> 💡 Solo funciona con los recordatorios automáticos encendidos. No cambia nada más: las citas se agendan, cancelan y atienden igual, y el botón de recordatorio manual de Visión General sigue sirviendo para cualquier cita.
-
-##### No enviar el recordatorio a citas que están por empezar
-
-1. En «Asistente Virtual», elige la «Anticipación mínima del recordatorio» (por defecto, 1 hora).
-2. Si a la cita le falta menos de ese tiempo, el recordatorio automático no sale. Sirve para las citas que el hospital agenda el mismo día, minutos antes, con el paciente ya ahí.
-3. Aplica de inmediato. «Sin mínimo» vuelve a enviar el recordatorio aunque la cita esté por empezar.
-
-> 💡 La cita no se marca como recordada: si la mueven a una hora más lejana, el recordatorio puede salir. El botón de recordatorio manual de Visión General no se afecta.
-
-##### Cambiar el nombre, el tono y las horas que ofrece el asistente
-
-1. En «Asistente Virtual», escribe el «Nombre del asistente virtual» (hasta 40 caracteres).
-2. Elige el tono: «Formal» (trato de usted, opciones A/B/C) o «Informal» (trato de tú, conversacional). La vista previa muestra cómo se verá.
-3. En «Horarios que ofrece el asistente», elige cuántas opciones de cita muestra (entre 2 y 12; se recomiendan 6). Se reparten entre mañana y tarde.
-4. Pulsa «Guardar configuración».
-
-##### Bloquear días u horas sin citas por el asistente
-
-1. Abre la pestaña «Días sin citas».
-2. En el calendario, pulsa el día (los que ya pasaron no se pueden elegir).
-3. En «¿Qué quiere bloquear?», elige «Todo el día» o «Unas horas». Con «Unas horas», escribe «Desde» y «Hasta»: no se ofrecen las citas que empiecen desde la hora inicial y antes de la final (de 8:00 a 10:00 quita la de las 9:40, no la de las 10:00).
-4. Si se repite, marca «Repetir todos los …» (por ejemplo, «Repetir todos los sábados»): vale ese día y el mismo día de cada semana en adelante.
-5. Si quieres, escribe el motivo. Revisa la frase de resumen («El asistente no ofrecerá citas todos los sábados, todo el día…») y pulsa «Bloquear».
-6. Para deshacerlo, en «Bloqueos activos» pulsa «Quitar» y confirma.
-
-> 💡 Aplica solo al asistente (WhatsApp y Telegram) y cuenta la hora de la cita, no la del mensaje: un paciente que escribe un sábado sí puede agendar para el lunes. Las citas ya agendadas no cambian, y los agendadores siguen agendando esos días desde el panel y en el sistema del hospital. En el calendario, rojo es todo el día sin citas y ámbar, algunas horas.
-
-##### Agregar solos los médicos nuevos del hospital
-
-1. En «Asistente Virtual», busca «Agregar solos los médicos nuevos del hospital». Solo aparece si la clínica está conectada al sistema de un hospital.
-2. Apagado (como viene), cada médico del hospital que tenga citas de un servicio que AgenIA maneja y todavía no esté en AgenIA queda como caso en la Bandeja, con el botón «Crear y homologar».
-3. Encendido, AgenIA lo crea y homologa sola cuando cumple todas las reglas: cédula única en el hospital, cargo de médico, su servicio principal es uno que AgenIA maneja y está activo en el hospital. Deja un caso en la Bandeja para que alguien lo revise. Si no cumple alguna regla, queda en la Bandeja como siempre.
-4. Con «Los médicos agregados solos entran con WhatsApp encendido» eliges con qué entran. Apagado (recomendado), sus citas entran a AgenIA pero no le sale nada al paciente hasta que alguien lo encienda en Médicos; encendido, sus pacientes reciben recordatorios y el asistente ofrece sus cupos desde el primer día.
-
-> 💡 Se revisa una vez al día, cuando el agente del hospital manda su comparación de citas (de noche). Nada se escribe en el sistema del hospital, y cada cambio de estos interruptores queda en la auditoría del espejo.
-
-##### Compartir las estadísticas con una clave
-
-1. Abre la pestaña «Estadísticas». Viene cerrada: nadie la puede ver.
-2. Escribe una clave de al menos 6 caracteres en «Clave para abrir la página» y pulsa «Abrir la página».
-3. Copia el enlace con «Copiar» y compártelo junto con la clave solo con quien deba ver las cifras. Con «Abrir» la ves tú.
-4. Quien abre el enlace escribe la clave una vez: queda dentro 30 días en ese navegador, y con «Salir» se olvida.
-5. Para cambiar la clave, escribe la nueva en «Clave nueva» y pulsa «Cambiar la clave»: quien ya había entrado debe escribir la nueva.
-6. Para cerrarla, pulsa «Cerrar la página» y confirma con «Sí, cerrar».
-
-> 💡 La página muestra recordatorios enviados y leídos, gestiones por chat (confirmar, consultar, agendar, cancelar, cambiar fecha y avisar inasistencia), citas agendadas por chat, cupos devueltos, mensajes fuera de horario, asistencia con y sin recordatorio, cuánto espera el paciente por su cita (días desde que la pide hasta el día de la cita, por chat y por el personal del hospital, con cuántas quedan dentro de 3 días; minutos de conversación para conseguirla por chat; y horas desde que entra a la lista de espera hasta que recibe el cupo) y, desde que el primer paciente recibe un aviso, los documentos de la consulta (avisos enviados, entregados y leídos por día, cuántos pacientes pidieron y recibieron sus documentos, archivos entregados y vistos, páginas abiertas, consultas que no se envían y bajas), sin datos de ningún paciente. Se recalcula cada día a las 6 a. m. con el día anterior completo: el día en curso no sale. Las gráficas por día muestran los últimos 30 días y las cifras cuentan desde el primer recordatorio. Si el equipo de AgenIA le dio a tu clínica una dirección corta para las estadísticas, esa también sirve con la misma clave.
-
-##### Configurar la voz del asistente
-
-1. En «Asistente Virtual», baja a «Voz del asistente».
-2. Elige el género de la voz y el proveedor: ElevenLabs (más natural, requiere clave de API de la clínica) o Google Cloud TTS (siempre disponible).
-3. Ajusta la voz, el tono y la velocidad si quieres.
-4. Pulsa «Guardar configuración de voz» y luego pruébala: verás la latencia y si el audio se generó.
-
-> 💡 Si ElevenLabs falla (sin cuota o sin respuesta), el asistente usa Google automáticamente.
-
-##### Conectar la inteligencia artificial
-
-1. Abre la pestaña «Integraciones (IA y Canales)».
-2. En «Integración de IA», elige el proveedor: Google Gemini, OpenAI ChatGPT o Anthropic Claude.
-3. Pega la clave de API y elige el modelo.
-4. Pulsa «Guardar integración» y luego «Probar Servicio» en «Salud de la Conexión».
-
-> 💡 La clave se guarda cifrada y nunca se vuelve a mostrar: solo sus últimos 4 caracteres. Para Gemini hay una guía paso a paso en /guia/google-ai-studio. Esta misma IA la usa el asistente de soporte de Telegram para responderle al personal de tu clínica.
-
-##### Conectar WhatsApp (Meta)
-
-1. En «Integraciones», ve a «Canal de WhatsApp (Meta)».
-2. Escribe el Phone Number ID y el WhatsApp Business Account ID (están en Meta for Developers › tu App › WhatsApp).
-3. Pega el Access Token permanente (de un System User; empieza por EAA…) y el App Secret.
-4. Copia el Verify Token y pégalo en Meta › Webhook al configurar la suscripción.
-5. Pulsa «Guardar canal de WhatsApp» y verifícalo en «Salud de la Conexión».
-
-> 💡 Hay una guía completa en /guia/whatsapp.
-
-##### Registrar las plantillas de WhatsApp
-
-1. Crea y haz aprobar la plantilla en Meta.
-2. En «Plantillas de WhatsApp», escribe en el tipo correspondiente el nombre exacto que aprobó Meta (solo minúsculas, números y guión bajo) y el idioma (por ejemplo «es»).
-3. Respeta el orden de las variables que indica cada tipo: Meta lo valida al enviar.
-4. Guarda.
-
-> 💡 Tipos: Recordatorio de cita, Oferta de cupo (lista de espera: el cupo que se liberó, a quien no ha escrito en 24 horas; de 7:00 a 19:00; tres variables: nombre, servicio, y fecha y hora; sin botones, el paciente responde SÍ o NO escribiendo), Aviso de cancelación y Recordatorio masivo (avisos masivos), Aviso al agendador (Bandeja de sincronización; su primera variable es solo el número de citas, porque el texto dice «{{1}} cita(s)»), Confirmación de una cita del hospital (Rastreo, y el aviso de un cambio de hora del hospital), Cita cancelada por el hospital (el aviso al paciente cuando el hospital cancela una cita que agendó con el asistente y no ha escrito en 24 horas; cinco variables: nombre, servicio, médico, fecha y hora, y con quién comunicarse) y Aviso al agendador (pedidos de pacientes) (a las personas de la lista de avisos de la Bandeja cuando un paciente pidió cancelar y no confirmó o avisó que no irá, con la cita a 24 horas o menos; tres variables: cuántos casos, la cita más próxima y qué pidió; sin datos del paciente) y Documentos de la consulta (resumen de la atención: «tiene listos los documentos de su consulta», categoría Utilidad, dos variables: nombre y fecha de la consulta, y un botón de respuesta rápida «Recibir mis documentos»; sin datos clínicos).
-
-##### Conectar Telegram
-
-1. En Telegram, abre @BotFather, crea un bot con el nombre que verán tus pacientes y un usuario que termine en «bot».
-2. Copia el token que te da BotFather.
-3. En «Canal de Telegram», pégalo y pulsa «Conectar bot de Telegram».
-4. Comparte el enlace o imprime el código QR para la sede.
-
-> 💡 Si la tarjeta dice que Telegram no está habilitado en este servidor, el equipo de AgenIA debe activarlo primero.
-
-##### Escribir la base de conocimiento
-
-1. Abre la pestaña «Base de Conocimiento».
-2. Escribe la información de la clínica por secciones: horarios, dirección, urgencias, tarifas, EPS con convenio, teléfonos, protocolos de visita.
-3. Pulsa «Guardar Base de Conocimiento».
-
-> 💡 El asistente solo responde lo que está escrito aquí: no inventa datos. Si está vacía, responde que no tiene información disponible.
-
-#### Qué ves en la pantalla
-
-- **Salud de la Conexión:** Prueba en el momento si la IA y Meta responden con las credenciales guardadas. No envía mensajes.
-- **Estado actual:** El proveedor, el modelo y los últimos 4 caracteres de la clave guardada.
-- **Configurada / Sin configurar:** Estado de cada plantilla de WhatsApp.
-
 #### Preguntas frecuentes
-
-##### ¿Por qué WhatsApp necesita plantillas?
-
-WhatsApp solo deja enviar texto libre en las 24 horas siguientes al último mensaje del paciente. Fuera de ese plazo (por ejemplo, un recordatorio del día anterior) hay que usar una plantilla aprobada por Meta.
-
-##### Con «recordatorios solo a pacientes que agendaron ellos mismos», ¿qué citas no reciben recordatorio?
-
-Las que agendó el personal desde el panel y las que llegaron del sistema del hospital. Una cita que el paciente agendó por el chat lo sigue recibiendo aunque después el personal le cambie la fecha.
-
-##### ¿El tono cambia lo que hace el asistente?
-
-No. Solo cambia el lenguaje y la forma de los mensajes; las reglas de agendamiento son las mismas.
 
 ##### ¿Cómo pide un paciente cancelar su cita por el chat?
 
@@ -1903,13 +1793,70 @@ Escribiendo, por ejemplo, «cancelar cita», «necesito cancelar mi cita», o «
 
 Porque el documento llegó antes de que el asistente pudiera buscar al paciente: lo escribió en el primer mensaje, o eligió un sábado sin ser de zona rural y luego otro día. Si AgenIA ya tiene su ficha completa (nombre, fecha de nacimiento, sexo y, con EPS, régimen), va directo al resumen. Si no, al elegir el horario le dice «¿me escribe de nuevo el número de documento del paciente?» y sigue el registro completo: a un paciente nuevo le pide sus nombres, apellidos, fecha de nacimiento y sexo. Si responde sin número («el mismo»), sigue con el que ya dio. Antes saltaba el registro y confirmaba con «Listo, Paciente»: el 21 de noviembre de 2026 el hospital rechazó así una cita y, al reintentar, quedó creado en su sistema un paciente con el nombre «Paciente Registrado». Una ficha con ese nombre de relleno ahora se trata como de paciente nuevo, se corrige al agendar, y AgenIA nunca le manda al hospital lo necesario para crear un paciente con ese nombre.
 
-##### ¿WhatsApp y Telegram son pacientes distintos?
+### 🗓️ Agenda que ofrece el asistente {#config-agenda}
 
-No. Es el mismo asistente en los dos canales y la ficha del paciente es una sola.
+- **Ruta:** `/dashboard/configuracion/agenda`
+- **Resumen:** Qué cupos le ofrece el asistente al paciente: hasta qué día, qué días u horas no, los sábados, qué parte de la agenda de cada médico y cuántas opciones a la vez.
+- **Relacionados:** [Configuración](#configuracion), [Agendas y cupos](#agenda), [Qué puede hacer el asistente](#config-asistente), [Canales en vivo](#canales)
+- **Palabras clave:** días sin citas, bloquear sábados, festivos, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días, reserva presencial, porcentaje, tope por médico, ventanilla, zona rural, campo, sábados, horarios que ofrece, cuántas opciones
 
-##### ¿Qué pasa con un paciente que pide cita para un día bloqueado?
+#### Para qué sirve
 
-El asistente no le ofrece horarios de ese día: le muestra los de otros días. Si alguien ya tenía la oferta en pantalla cuando bloqueaste el día, al responder se le dice que ese horario ya no está y se le ofrecen otros. Lo mismo al cambiar la fecha de una cita y en la lista de espera.
+Reúne las reglas de los cupos que ofrece el asistente, en este orden: el plazo máximo para agendar (hasta cuántos días adelante), los días u horas sin citas (un calendario), los sábados para la zona rural, qué parte de la agenda de cada médico toma el asistente y cuántos horarios muestra a la vez. Todo se guarda al instante y aplica desde el siguiente mensaje. El personal y el hospital agendan sin estas reglas.
+
+#### Paso a paso
+
+##### Limitar hasta qué día ofrece citas el asistente
+
+1. En Configuración › Agenda que ofrece el asistente, elige el «Plazo máximo para agendar» (por defecto, «Sin límite»).
+2. Los días se cuentan desde hoy, incluido, y sin contar domingos ni festivos: con 4 días, un viernes el asistente ofrece citas para el viernes, el sábado, el lunes y el martes; si el lunes es festivo, hasta el miércoles. Debajo verás las fechas reales, por ejemplo «se ofrecen citas hasta el martes 27 de octubre; desde el miércoles 28 de octubre, no», con los domingos y festivos marcados como días que no cuentan. Con «Sábados por el asistente» en «Solo zona rural», el sábado tampoco cuenta, porque el hospital abre la agenda del sábado ese mismo día: con 4 días, un jueves el asistente ofrece citas hasta el martes, y el sábado se sigue ofreciendo (en la fila aparece como «no cuenta, se ofrece igual»).
+3. Se guarda al instante y aplica al agendar, al cambiar la fecha de una cita y a la lista de espera. Cada día que pasa se abre un día nuevo.
+4. Revisa el aviso de abajo: dice cuántos cupos puede ofrecer hoy el asistente con ese plazo. Si no puede ofrecer ninguno (por ejemplo, 2 días un viernes con los sábados bloqueados), lo avisa en amarillo con el primer día que tiene cupos, desde cuándo lo verán los pacientes y el plazo mínimo para ofrecerlo desde hoy.
+5. Al pie aparece el último cambio: quién lo hizo, de cuánto a cuánto y cuándo.
+6. Para quitar el límite, elige «Sin límite».
+
+> 💡 Cuenta la fecha de la cita, no la del mensaje, y solo aplica al asistente (WhatsApp y Telegram): el personal agenda desde el panel y el hospital en su sistema para cualquier fecha, y las citas ya agendadas no cambian.
+
+##### Bloquear días u horas sin citas por el asistente
+
+1. Abre Configuración › Agenda que ofrece el asistente y baja a «Días sin citas».
+2. En el calendario, pulsa el día (los que ya pasaron no se pueden elegir).
+3. En «¿Qué quiere bloquear?», elige «Todo el día» o «Unas horas». Con «Unas horas», escribe «Desde» y «Hasta»: no se ofrecen las citas que empiecen desde la hora inicial y antes de la final (de 8:00 a 10:00 quita la de las 9:40, no la de las 10:00).
+4. Si se repite, marca «Repetir todos los …» (por ejemplo, «Repetir todos los sábados»): vale ese día y el mismo día de cada semana en adelante.
+5. Si quieres, escribe el motivo. Revisa la frase de resumen («El asistente no ofrecerá citas todos los sábados, todo el día…») y pulsa «Bloquear».
+6. Para deshacerlo, en «Bloqueos activos» pulsa «Quitar» y confirma.
+
+> 💡 Aplica solo al asistente (WhatsApp y Telegram) y cuenta la hora de la cita, no la del mensaje: un paciente que escribe un sábado sí puede agendar para el lunes. Las citas ya agendadas no cambian, y los agendadores siguen agendando esos días desde el panel y en el sistema del hospital. En el calendario, rojo es todo el día sin citas y ámbar, algunas horas.
+
+##### Abrir los sábados por el asistente solo para la zona rural
+
+1. En Configuración › Agenda que ofrece el asistente, en «Sábados por el asistente», elige «Solo zona rural» con el porcentaje que quieras (por defecto, «Sin regla especial»). Con 50 %, de un médico con 24 cupos un sábado el asistente agenda hasta 12 citas, y solo a personas del campo; el resto queda para agendar en el hospital. «Solo zona rural, sin tope» deja al asistente tomar todo lo libre del sábado, siempre solo para la zona rural.
+2. El asistente reconoce a la persona del campo por el campo «Zona» de su ficha en el hospital (pestaña «Datos Complementarios»: urbano o rural). El agente del hospital manda la lista de pacientes con zona rural una vez al día (solo los números de documento), y la primera vez en la hora siguiente a encender la regla. Mientras no llegue, el asistente no ofrece sábados; el recuadro lo avisa.
+3. Si los sábados están cerrados en «Días sin citas», quita ese bloqueo después de encender «Solo zona rural»: mientras siga, el asistente no ofrece sábados. Mientras «Solo zona rural» esté encendida, el sábado no cuenta para el «Plazo máximo para agendar» (ver arriba): así, de miércoles a viernes el asistente alcanza la agenda que el hospital ya abrió para la semana siguiente.
+4. Revisa el recuadro: dice cuántos pacientes de zona rural trae la lista y cuándo llegó, y si los sábados siguen en «Días sin citas». La tabla de «Parte de la agenda para el asistente» muestra el tope del sábado y lo marca «🌾 solo zona rural».
+5. Al pie aparece el último cambio: quién lo hizo, de cuánto a cuánto y cuándo.
+6. Para volver a lo de antes, elige «Sin regla especial» (y, si quieres los sábados cerrados, vuelve a ponerlos en «Días sin citas»).
+
+> 💡 El asistente ofrece los sábados a todos, como un día más, y no dice que son para la zona rural. Al dar el documento de quien va a la cita, revisa la zona; si no dice rural, le pide con amabilidad comunicarse con el hospital (con su teléfono) o acercarse a la ventanilla para la cita del sábado, y le muestra los horarios de otros días, ya sin sábados. Si elige uno y AgenIA todavía no tiene su ficha completa, le pide escribir de nuevo el documento para registrarle con su nombre, fecha de nacimiento y sexo. Solo limita al asistente: el personal y el hospital agendan sábados como siempre. Requiere que el agente del hospital esté actualizado.
+
+##### Reservar parte de la agenda para agendar en el hospital
+
+1. En Configuración › Agenda que ofrece el asistente, elige la «Parte de la agenda para el asistente» (por defecto, «Sin reserva»).
+2. El porcentaje es lo máximo que el asistente puede agendar de cada médico, cada día. Con 80 %, de un médico con 20 cupos un día el asistente agenda hasta 16 citas; los otros 4 cupos solo se agendan en el hospital (ventanilla o teléfono).
+3. Se guarda al instante y aplica al agendar, al cambiar la fecha de una cita y a la lista de espera.
+4. Revisa la tabla de abajo: por cada uno de los próximos días muestra los cupos de la agenda, cuántas citas lleva el asistente y cuál es su tope, cuántas dio el hospital, cuántos cupos quedan libres y si el asistente todavía puede agendar.
+5. Al pie aparece el último cambio: quién lo hizo, de cuánto a cuánto y cuándo.
+6. Para quitar la reserva, elige «Sin reserva».
+
+> 💡 Solo limita al asistente (WhatsApp y Telegram). El personal agenda desde el panel y el hospital en su sistema sin tope; el sistema del hospital no cambia ni muestra la reserva, y las citas ya agendadas se conservan aunque bajes el porcentaje. Se redondea a favor del hospital: con 7 cupos, el asistente agenda 5; una agenda de un solo cupo queda para el hospital.
+
+##### Elegir cuántos horarios ofrece el asistente
+
+1. En Configuración › Agenda que ofrece el asistente, baja a «Horarios que ofrece el asistente».
+2. Elige cuántas opciones de cita muestra cuando el paciente agenda o cambia la fecha: entre 2 y 12 (se recomiendan 6).
+3. Se guarda al instante: el recuadro dice cómo se reparten entre mañana y tarde, y aplica desde la siguiente búsqueda de cupos.
+
+#### Preguntas frecuentes
 
 ##### ¿Qué pasa si un paciente pide una cita más allá del plazo máximo para agendar?
 
@@ -1922,6 +1869,22 @@ Si dentro del plazo no hay otro horario pero sí más adelante, el asistente le 
 ##### ¿Dónde veo quién cambió el plazo?
 
 Al pie de «Plazo máximo para agendar» aparece el último cambio, con quién lo hizo y cuándo. Cada cambio queda además en la auditoría del espejo.
+
+##### ¿Qué pasa con un paciente que pide cita para un día bloqueado?
+
+El asistente no le ofrece horarios de ese día: le muestra los de otros días. Si alguien ya tenía la oferta en pantalla cuando bloqueaste el día, al responder se le dice que ese horario ya no está y se le ofrecen otros. Lo mismo al cambiar la fecha de una cita y en la lista de espera.
+
+##### ¿«Días sin citas» es lo mismo que apagar «Agendar citas por el asistente»?
+
+No. Apagar «Agendar» detiene todas las citas nuevas por el asistente, de cualquier día. «Días sin citas» solo quita los días u horas elegidos; el resto se sigue ofreciendo.
+
+##### ¿Cómo sabe el asistente quién vive en el campo?
+
+Por el campo «Zona» de la ficha del paciente en el sistema del hospital (urbano o rural), el mismo que llena recepción. El agente del hospital manda cada día la lista de documentos con zona rural. En noviembre de 2026 casi todas las fichas lo tenían lleno y coincidía con la zona del barrio en 97 de cada 100. El asistente no le pregunta a la persona si vive en el campo.
+
+##### ¿Por qué el asistente no le dio el sábado a una persona del campo?
+
+Porque su ficha en el hospital no dice zona rural (o es un paciente que el hospital todavía no tiene). El asistente no le dice eso: le pide comunicarse con el hospital o acercarse a la ventanilla para la cita del sábado. Para que pueda agendar el sábado por el chat, recepción debe corregir la zona en su ficha; el cambio se ve en AgenIA al día siguiente.
 
 ##### ¿Por qué el asistente dice que ya no quedan cupos si la agenda tiene cupos libres?
 
@@ -1939,29 +1902,148 @@ Se conservan todas. Si el asistente ya pasó de su nueva parte con un médico un
 
 Sí. El porcentaje solo limita al asistente. Si el hospital agenda más, lo toma de los cupos que el asistente todavía no había agendado.
 
-##### ¿Cómo sabe el asistente quién vive en el campo?
+### 🔔 Recordatorios {#config-recordatorios}
 
-Por el campo «Zona» de la ficha del paciente en el sistema del hospital (urbano o rural), el mismo que llena recepción. El agente del hospital manda cada día la lista de documentos con zona rural. En noviembre de 2026 casi todas las fichas lo tenían lleno y coincidía con la zona del barrio en 97 de cada 100. El asistente no le pregunta a la persona si vive en el campo.
+- **Ruta:** `/dashboard/configuracion/recordatorios`
+- **Resumen:** El mensaje que recibe el paciente antes de su cita: si sale, a quién y con cuánta anticipación mínima.
+- **Relacionados:** [Configuración](#configuracion), [Visión General](#vision-general), [Canales e IA](#config-canales)
+- **Palabras clave:** recordatorio, recordar cita, aviso antes de la cita, mensaje automático, anticipación, solo chat, apagar recordatorios
 
-##### ¿Por qué el asistente no le dio el sábado a una persona del campo?
+#### Para qué sirve
 
-Porque su ficha en el hospital no dice zona rural (o es un paciente que el hospital todavía no tiene). El asistente no le dice eso: le pide comunicarse con el hospital o acercarse a la ventanilla para la cita del sábado. Para que pueda agendar el sábado por el chat, recepción debe corregir la zona en su ficha; el cambio se ve en AgenIA al día siguiente.
+Tres ajustes de los recordatorios automáticos: encenderlos o apagarlos, enviarlos solo a quien agendó por el chat y la anticipación mínima (si a la cita le falta menos, no sale). Se guardan al instante. El botón de recordatorio manual de la Visión General funciona siempre.
 
-##### ¿La página de estadísticas muestra datos de pacientes?
+#### Paso a paso
 
-No. Solo cuenta: cuántos recordatorios, mensajes, citas y gestiones hubo, sin nombres, teléfonos ni cédulas. Aun así va con clave porque son cifras de la operación del hospital, y no aparece en buscadores como Google.
+##### Encender o apagar los recordatorios automáticos
 
-##### ¿Por qué la página de estadísticas no tiene las cifras de hoy?
+1. En Configuración › Recordatorios, usa el interruptor «Recordatorios automáticos de citas».
+2. Aplica de inmediato. Al encenderlos, las citas que aún estén dentro del plazo reciben el suyo.
 
-Porque se recalcula una vez al día, a las 6 a. m., con el día anterior completo. Un día a medias se vería como una caída (a media mañana van pocos recordatorios). Antes de las 6 a. m. todavía muestra el corte del día anterior.
+> 💡 Fuera de las 24 horas de conversación, WhatsApp exige la plantilla «Recordatorio de cita» (Configuración › Canales e IA).
 
-##### Olvidé la clave de las estadísticas. ¿Cómo la veo?
+##### Enviar recordatorios solo a quien agendó por el chat
 
-No se puede ver: se guarda cifrada. Pon una nueva en la pestaña «Estadísticas» y compártela; quien había entrado con la anterior tendrá que escribir la nueva.
+1. En Configuración › Recordatorios, usa el interruptor «Recordatorios solo a pacientes que agendaron ellos mismos».
+2. Encendido, el recordatorio automático solo sale para las citas que el paciente agendó por WhatsApp o Telegram. Las que agendó el personal desde el panel o el hospital no lo reciben.
+3. Aplica de inmediato. Si lo apagas, las citas que aún estén dentro del plazo reciben el suyo.
 
-##### ¿«Días sin citas» es lo mismo que apagar «Agendar citas por el asistente»?
+> 💡 Solo funciona con los recordatorios automáticos encendidos. No cambia nada más: las citas se agendan, cancelan y atienden igual, y el botón de recordatorio manual de Visión General sigue sirviendo para cualquier cita.
 
-No. Apagar «Agendar» detiene todas las citas nuevas por el asistente, de cualquier día. «Días sin citas» solo quita los días u horas elegidos; el resto se sigue ofreciendo.
+##### No enviar el recordatorio a citas que están por empezar
+
+1. En Configuración › Recordatorios, elige la «Anticipación mínima del recordatorio» (por defecto, 1 hora).
+2. Si a la cita le falta menos de ese tiempo, el recordatorio automático no sale. Sirve para las citas que el hospital agenda el mismo día, minutos antes, con el paciente ya ahí.
+3. Aplica de inmediato. «Sin mínimo» vuelve a enviar el recordatorio aunque la cita esté por empezar.
+
+> 💡 La cita no se marca como recordada: si la mueven a una hora más lejana, el recordatorio puede salir. El botón de recordatorio manual de Visión General no se afecta.
+
+#### Preguntas frecuentes
+
+##### Con «recordatorios solo a pacientes que agendaron ellos mismos», ¿qué citas no reciben recordatorio?
+
+Las que agendó el personal desde el panel y las que llegaron del sistema del hospital. Una cita que el paciente agendó por el chat lo sigue recibiendo aunque después el personal le cambie la fecha.
+
+### 🗣️ Nombre, tono y voz {#config-identidad}
+
+- **Ruta:** `/dashboard/configuracion/identidad`
+- **Resumen:** Cómo se llama el asistente, si trata de usted o de tú, y la voz con la que responde los audios.
+- **Relacionados:** [Configuración](#configuracion), [Base de conocimiento](#config-conocimiento), [Canales e IA](#config-canales)
+- **Palabras clave:** nombre del asistente, tono, formal, informal, usted, tú, voz, audio, elevenlabs, google tts, género de la voz, nota de voz
+
+#### Para qué sirve
+
+El nombre con el que se presenta el asistente y su tono (formal, de usted, o informal, de tú) se guardan con el botón «Guardar configuración». Debajo está la voz: el proveedor, el género y cómo suena, con su propio botón y una prueba.
+
+#### Paso a paso
+
+##### Cambiar el nombre y el tono del asistente
+
+1. En Configuración › Nombre, tono y voz, escribe el «Nombre del asistente virtual» (hasta 40 caracteres).
+2. Elige el tono: «Formal» (trato de usted, opciones A/B/C) o «Informal» (trato de tú, conversacional). La vista previa muestra cómo se verá.
+3. Pulsa «Guardar configuración».
+
+> 💡 Cuántos horarios ofrece el asistente ya no está aquí: se elige en Configuración › Agenda que ofrece el asistente y se guarda al instante.
+
+##### Configurar la voz del asistente
+
+1. En Configuración › Nombre, tono y voz, baja a «Voz del asistente».
+2. Elige el género de la voz y el proveedor: ElevenLabs (más natural, requiere clave de API de la clínica) o Google Cloud TTS (siempre disponible).
+3. Ajusta la voz, el tono y la velocidad si quieres.
+4. Pulsa «Guardar configuración de voz» y luego pruébala: verás la latencia y si el audio se generó.
+
+> 💡 Si ElevenLabs falla (sin cuota o sin respuesta), el asistente usa Google automáticamente.
+
+#### Preguntas frecuentes
+
+##### ¿El tono cambia lo que hace el asistente?
+
+No. Solo cambia el lenguaje y la forma de los mensajes; las reglas de agendamiento son las mismas.
+
+### 📚 Base de conocimiento {#config-conocimiento}
+
+- **Ruta:** `/dashboard/configuracion/conocimiento`
+- **Resumen:** Lo que el asistente responde sobre la clínica: horarios, dirección, tarifas, EPS con convenio y teléfonos.
+- **Relacionados:** [Configuración](#configuracion), [Nombre, tono y voz](#config-identidad)
+- **Palabras clave:** base de conocimiento, preguntas frecuentes, faq, información de la clínica, horarios, dirección, tarifas, teléfonos
+
+#### Para qué sirve
+
+Un texto con la información de la clínica que el asistente usa para responder preguntas de los pacientes. Es lo único que responde sobre la clínica: lo que no esté aquí no lo sabe.
+
+#### Paso a paso
+
+##### Escribir la base de conocimiento
+
+1. Abre Configuración › Base de conocimiento.
+2. Escribe la información de la clínica por secciones: horarios, dirección, urgencias, tarifas, EPS con convenio, teléfonos, protocolos de visita.
+3. Pulsa «Guardar Base de Conocimiento».
+
+> 💡 El asistente solo responde lo que está escrito aquí: no inventa datos. Si está vacía, responde que no tiene información disponible.
+
+#### Preguntas frecuentes
+
+##### ¿Qué pasa si algo no está en la base de conocimiento?
+
+Solo responde lo que está escrito aquí: no inventa datos. Si no lo encuentra, responde que no tiene esa información disponible. Por eso conviene escribir lo que más preguntan los pacientes: horarios, dirección, tarifas, EPS con convenio y teléfonos.
+
+### 🔒 Privacidad (Ley 1581) {#config-privacidad}
+
+- **Ruta:** `/dashboard/configuracion/privacidad`
+- **Resumen:** Si el asistente pide la autorización de tratamiento de datos antes de agendar, el enlace a la política de la clínica y la página pública de esa política.
+- **Relacionados:** [Configuración](#configuracion), [Canales en vivo](#canales), [Qué puede hacer el asistente](#config-asistente)
+- **Palabras clave:** habeas data, ley 1581, autorización de datos, consentimiento, política de privacidad, tratamiento de datos, protección de datos, página de la política
+
+#### Para qué sirve
+
+Con la autorización encendida, el asistente le pide al paciente un sí o un no antes de agendar, con el enlace a la política de tratamiento de datos de la clínica. Si la clínica no tiene una política publicada, aquí mismo se arma y se publica la página de AgenIA con los datos de la clínica.
+
+#### Paso a paso
+
+##### Pedir la autorización de datos antes de agendar
+
+1. Abre Configuración › Privacidad (Ley 1581): ahí está «Autorización de datos (Ley 1581)».
+2. Escribe el enlace de la política de tratamiento de datos de la clínica (por ejemplo, la página de protección de datos de su sitio web). Si la clínica no tiene una al día, publica la de AgenIA (la guía siguiente) y pulsa «Usar este enlace en la autorización». Sin el enlace no se puede encender.
+3. Deja la versión de la política en 1, o escribe la que use la clínica.
+4. Enciende el interruptor y pulsa «Guardar». Aplica desde el siguiente mensaje de cada paciente.
+5. Pulsa «Ver el mensaje que recibe el paciente» para leer el texto exacto: saludo, para qué se usan los datos, que los de salud son sensibles y no está obligado a autorizarlos, sus derechos, la ley, el enlace y la pregunta SÍ o NO.
+6. Al pie aparece el último cambio: quién lo hizo y cuándo. El cambio también queda en la Actividad de usuarios.
+7. Si la política cambia de fondo, cambia la versión (por ejemplo, de 1 a 2) y guarda: a todos los que ya habían autorizado se les volverá a preguntar la próxima vez que quieran agendar.
+
+> 💡 El texto lo debe aprobar la oficina jurídica o el oficial de protección de datos de la clínica, que es la responsable de los datos. Las cifras de quién aceptó, quién no y quién no respondió están en Canales en vivo, y en Pacientes se ve con qué autorización se registró cada paciente por el chat.
+
+##### Publicar la política de tratamiento de datos en AgenIA
+
+1. En Configuración › Privacidad (Ley 1581), dentro de «Autorización de datos (Ley 1581)», busca el recuadro «Página de la política en AgenIA».
+2. Escribe los datos de la clínica, que es la responsable de los datos: nombre o razón social, municipio y departamento, dirección, teléfonos, correo para consultas y reclamos de datos personales, el área o cargo que los atiende y la fecha de entrada en vigencia. El NIT y el horario de atención son opcionales.
+3. Pulsa «Publicar la página». Si falta un dato, el mensaje dice cuál y el campo se marca en rojo.
+4. Ya publicada, el recuadro muestra el enlace con «Ver la página» y «Copiar el enlace».
+5. Pulsa «Usar este enlace en la autorización» para que el asistente, el resumen de la cita y los formularios de solicitud enlacen esta página. Desde ahí dice «es el enlace que usa el asistente».
+6. Para corregir un dato, pulsa «Editar los datos de la clínica», cámbialo y pulsa «Guardar los cambios». La página se actualiza al instante y el cambio queda en la Actividad de usuarios.
+
+> 💡 El texto es el mismo para todas las clínicas y describe lo que hace AgenIA: qué datos se tratan y para qué, datos de salud y de menores, cómo se pide la autorización, uso de inteligencia artificial, con quién se comparten, derechos, cómo reclamar y en qué plazos, cuánto tiempo se guarda cada cosa y seguridad (Ley 1581 de 2012 y Decreto 1377 de 2013). La versión y el nombre del asistente salen de esta misma pantalla. Antes de usarla, la debe aprobar la oficina jurídica de la clínica. Mientras falte un dato obligatorio, la página no existe.
+
+#### Preguntas frecuentes
 
 ##### ¿Cuándo pide el asistente la autorización de datos?
 
@@ -2001,6 +2083,74 @@ Escribe el enlace completo de la política de tratamiento de datos de la clínic
 
 Falta un dato obligatorio o la clínica está suspendida. Abre «Editar los datos de la clínica» en el recuadro «Página de la política en AgenIA», completa lo marcado con asterisco y pulsa «Guardar los cambios».
 
+### 🔌 Canales e IA {#config-canales}
+
+- **Ruta:** `/dashboard/configuracion/canales`
+- **Resumen:** El proveedor de inteligencia artificial, el número de WhatsApp y sus plantillas, y Telegram, con la prueba de la conexión.
+- **Relacionados:** [Configuración](#configuracion), [Canales en vivo](#canales), [Recordatorios](#config-recordatorios)
+- **Palabras clave:** whatsapp, telegram, meta, token, gemini, openai, chatgpt, claude, inteligencia artificial, plantillas, conexión, probar servicio, integraciones, bot, chatbot, no contesta, sin respuesta
+
+#### Para qué sirve
+
+Lo que conecta al asistente: arriba, la salud de la conexión, que prueba en el momento si la IA y Meta responden; luego el proveedor de inteligencia artificial, el canal de WhatsApp, sus plantillas y el canal de Telegram. Se configura al instalar la clínica y casi no se toca.
+
+#### Paso a paso
+
+##### Conectar la inteligencia artificial
+
+1. Abre Configuración › Canales e IA.
+2. En «Integración de IA», elige el proveedor: Google Gemini, OpenAI ChatGPT o Anthropic Claude.
+3. Pega la clave de API y elige el modelo.
+4. Pulsa «Guardar integración» y luego «Probar Servicio» en «Salud de la Conexión».
+
+> 💡 La clave se guarda cifrada y nunca se vuelve a mostrar: solo sus últimos 4 caracteres. Para Gemini hay una guía paso a paso en /guia/google-ai-studio. Esta misma IA la usa el asistente de soporte de Telegram para responderle al personal de tu clínica.
+
+##### Conectar WhatsApp (Meta)
+
+1. En Configuración › Canales e IA, ve a «Canal de WhatsApp (Meta)».
+2. Escribe el Phone Number ID y el WhatsApp Business Account ID (están en Meta for Developers › tu App › WhatsApp).
+3. Pega el Access Token permanente (de un System User; empieza por EAA…) y el App Secret.
+4. Copia el Verify Token y pégalo en Meta › Webhook al configurar la suscripción.
+5. Pulsa «Guardar canal de WhatsApp» y verifícalo en «Salud de la Conexión».
+
+> 💡 Hay una guía completa en /guia/whatsapp.
+
+##### Registrar las plantillas de WhatsApp
+
+1. Crea y haz aprobar la plantilla en Meta.
+2. En «Plantillas de WhatsApp», escribe en el tipo correspondiente el nombre exacto que aprobó Meta (solo minúsculas, números y guión bajo) y el idioma (por ejemplo «es»).
+3. Respeta el orden de las variables que indica cada tipo: Meta lo valida al enviar.
+4. Guarda.
+
+> 💡 Tipos: Recordatorio de cita, Oferta de cupo (lista de espera: el cupo que se liberó, a quien no ha escrito en 24 horas; de 7:00 a 19:00; tres variables: nombre, servicio, y fecha y hora; sin botones, el paciente responde SÍ o NO escribiendo), Aviso de cancelación y Recordatorio masivo (avisos masivos), Aviso al agendador (Bandeja de sincronización; su primera variable es solo el número de citas, porque el texto dice «{{1}} cita(s)»), Confirmación de una cita del hospital (Rastreo, y el aviso de un cambio de hora del hospital), Cita cancelada por el hospital (el aviso al paciente cuando el hospital cancela una cita que agendó con el asistente y no ha escrito en 24 horas; cinco variables: nombre, servicio, médico, fecha y hora, y con quién comunicarse) y Aviso al agendador (pedidos de pacientes) (a las personas de la lista de avisos de la Bandeja cuando un paciente pidió cancelar y no confirmó o avisó que no irá, con la cita a 24 horas o menos; tres variables: cuántos casos, la cita más próxima y qué pidió; sin datos del paciente) y Documentos de la consulta (resumen de la atención: «tiene listos los documentos de su consulta», categoría Utilidad, dos variables: nombre y fecha de la consulta, y un botón de respuesta rápida «Recibir mis documentos»; sin datos clínicos).
+
+##### Conectar Telegram
+
+1. En Telegram, abre @BotFather, crea un bot con el nombre que verán tus pacientes y un usuario que termine en «bot».
+2. Copia el token que te da BotFather.
+3. En «Canal de Telegram», pégalo y pulsa «Conectar bot de Telegram».
+4. Comparte el enlace o imprime el código QR para la sede.
+
+> 💡 Si la tarjeta dice que Telegram no está habilitado en este servidor, el equipo de AgenIA debe activarlo primero.
+
+#### Qué ves en la pantalla
+
+- **Salud de la Conexión:** Prueba en el momento si la IA y Meta responden con las credenciales guardadas. No envía mensajes.
+- **Estado actual:** El proveedor, el modelo y los últimos 4 caracteres de la clave guardada.
+- **Configurada / Sin configurar:** Estado de cada plantilla de WhatsApp.
+
+#### Preguntas frecuentes
+
+##### ¿Por qué WhatsApp necesita plantillas?
+
+WhatsApp solo deja enviar texto libre en las 24 horas siguientes al último mensaje del paciente. Fuera de ese plazo (por ejemplo, un recordatorio del día anterior) hay que usar una plantilla aprobada por Meta.
+
+##### ¿WhatsApp y Telegram son pacientes distintos?
+
+No. Es el mismo asistente en los dos canales y la ficha del paciente es una sola.
+
+#### Si algo no sale bien
+
 ##### La prueba de IA falla.
 
 Revisa la clave de API (que no esté vencida ni sin saldo) y el modelo elegido. Copia el error con el botón del resultado y repórtalo en Soporte y ayuda si no se aclara.
@@ -2013,21 +2163,38 @@ El Access Token pudo vencer o el Phone Number ID es incorrecto. Usa un token per
 
 Si el bot no les contesta a los pacientes, pulsa «Probar Servicio» en Salud de la Conexión: si falla la IA, revisa la clave de API; si falla Meta, renueva el Access Token. Mira también la Caja Negra (motivos «IA caída», «Error de WhatsApp» o «Token Meta expirado») y que el canal esté guardado.
 
-##### Sale «No pudimos cargar…» en una sección.
-
-Las demás secciones siguen funcionando. Recarga la página; si persiste, repórtalo en Soporte y ayuda.
-
 ##### Telegram dice que no logra entregar los mensajes al servidor.
 
 Pulsa «Verificar conexión». Si sigue, avisa al equipo técnico desde Soporte y ayuda.
 
-##### La página de estadísticas dice «Demasiados intentos con una clave equivocada».
+### 🏥 Hospital (espejo) {#config-hospital}
 
-Tras 5 claves equivocadas desde la misma conexión en 15 minutos (o 30 en total para la clínica) la página deja de comprobar por 15 minutos, para que nadie la adivine probando. Espera y escribe la clave correcta; si no la sabes, pídela al administrador.
+- **Ruta:** `/dashboard/configuracion/hospital`
+- **Resumen:** Lo que se configura de la conexión con el sistema del hospital: los médicos nuevos del hospital y el enlace a lo que se cambia en otras pantallas.
+- **Disponibilidad:** Solo en las clínicas conectadas al sistema del hospital (HIS). Si no la ves, tu clínica no tiene esa conexión.
+- **Relacionados:** [Configuración](#configuracion), [Espejo con el HIS](#espejo), [Bandeja de sincronización](#bandeja), [Médicos](#medicos)
+- **Palabras clave:** espejo, his, hospital, médicos nuevos, homologar automáticamente, agregar médicos, modo de agenda, avisos a agendadores
 
-##### El enlace de las estadísticas muestra «404» o «página no encontrada».
+#### Para qué sirve
 
-La página está cerrada: el administrador la abre poniendo una clave en Configuración › Estadísticas. También pasa si el enlace quedó incompleto al copiarlo.
+Aquí se decide si AgenIA agrega sola los médicos nuevos del hospital que cumplen las reglas, y con qué WhatsApp entran. Debajo dice cómo está el modo de agenda y lleva a lo que todavía se cambia en otra pantalla: el modo de agenda en Espejo con el HIS, los avisos a los agendadores en la Bandeja y, si la clínica los tiene, el resumen de la atención y los avisos masivos.
+
+#### Paso a paso
+
+##### Agregar solos los médicos nuevos del hospital
+
+1. Abre Configuración › Hospital (espejo) y busca «Agregar solos los médicos nuevos del hospital». La sección solo aparece si la clínica está conectada al sistema de un hospital, y el interruptor, con el espejo encendido.
+2. Apagado (como viene), cada médico del hospital que tenga citas de un servicio que AgenIA maneja y todavía no esté en AgenIA queda como caso en la Bandeja, con el botón «Crear y homologar».
+3. Encendido, AgenIA lo crea y homologa sola cuando cumple todas las reglas: cédula única en el hospital, cargo de médico, su servicio principal es uno que AgenIA maneja y está activo en el hospital. Deja un caso en la Bandeja para que alguien lo revise. Si no cumple alguna regla, queda en la Bandeja como siempre.
+4. Con «Los médicos agregados solos entran con WhatsApp encendido» eliges con qué entran. Apagado (recomendado), sus citas entran a AgenIA pero no le sale nada al paciente hasta que alguien lo encienda en Médicos; encendido, sus pacientes reciben recordatorios y el asistente ofrece sus cupos desde el primer día.
+
+> 💡 Se revisa una vez al día, cuando el agente del hospital manda su comparación de citas (de noche). Nada se escribe en el sistema del hospital, y cada cambio de estos interruptores queda en la auditoría del espejo.
+
+#### Preguntas frecuentes
+
+##### ¿Por qué el modo de agenda y los avisos a los agendadores no se cambian aquí?
+
+Por ahora se cambian en su pantalla: el modo de agenda en Espejo con el HIS, y los avisos a los agendadores en la Bandeja de sincronización, con «Configurar avisos». Esta sección dice cómo está el modo de agenda y lleva a cada una con su enlace.
 
 ### 🚦 Límite de citas {#limites-citas}
 
@@ -2281,7 +2448,7 @@ El espejo mantiene sincronizadas las citas entre AgenIA y el sistema del hospita
 4. En ese celular llega el aviso con el botón «Recibir mis documentos». Al tocarlo, el asistente pide la fecha de nacimiento del paciente y luego manda cada documento en PDF y en imagen, con un enlace para volver a descargarlos. Los PDF llegan con clave: el número de documento del paciente, sin puntos ni ceros a la izquierda (las imágenes no llevan clave). El primero es «Historia clínica · Resumen de la atención» (en WhatsApp, el PDF se llama «Historia_clinica_» con la fecha de la consulta). Por Telegram llegan igual: el PDF y las imágenes juntas en un álbum. Por correo llega un solo PDF con todos los documentos, protegido con el número de documento del paciente (sin puntos ni espacios), y el enlace a la página.
 5. En «Seguimiento de envíos» ves si salió el aviso, si se entregaron los documentos y, si no, por qué.
 
-> ⚠️ Mientras no se apruebe el piloto (paso siguiente), «Enviar a pacientes» solo funciona con números del equipo: el aviso sale solo a ellos, nunca a un paciente. Las atenciones con temas sensibles (salud mental, VIH, violencia, infecciones de transmisión sexual, interrupción del embarazo, psicología y psiquiatría) no se envían. Hace falta la plantilla «Documentos de la consulta» en Configuración › Integraciones › Plantillas de WhatsApp; sin ella, el aviso solo le llega a quien escribió en las últimas 24 horas. Quien usa el asistente por Telegram lo recibe por ahí; si bloqueó el bot, le llega por WhatsApp. El correo sale además de WhatsApp o Telegram, solo si el paciente tiene un correo propio: los de relleno del hospital (lista «Correos de relleno», que puedes editar) no se usan. Si el panel dice que el servidor no tiene correo configurado, avísale al equipo técnico.
+> ⚠️ Mientras no se apruebe el piloto (paso siguiente), «Enviar a pacientes» solo funciona con números del equipo: el aviso sale solo a ellos, nunca a un paciente. Las atenciones con temas sensibles (salud mental, VIH, violencia, infecciones de transmisión sexual, interrupción del embarazo, psicología y psiquiatría) no se envían. Hace falta la plantilla «Documentos de la consulta» en Configuración › Canales e IA › Plantillas de WhatsApp; sin ella, el aviso solo le llega a quien escribió en las últimas 24 horas. Quien usa el asistente por Telegram lo recibe por ahí; si bloqueó el bot, le llega por WhatsApp. El correo sale además de WhatsApp o Telegram, solo si el paciente tiene un correo propio: los de relleno del hospital (lista «Correos de relleno», que puedes editar) no se usan. Si el panel dice que el servidor no tiene correo configurado, avísale al equipo técnico.
 
 ##### Aprobar el piloto (enviar a los pacientes)
 
@@ -2517,7 +2684,7 @@ El menú de cada rol sale de `packages/shared/src/menus.ts` (la web lo reexporta
 
 ### 3.2 Qué puede hacer el paciente
 
-| Operación | Interruptor (Configuración › Asistente Virtual) | Notas |
+| Operación | Interruptor (Configuración › Qué puede hacer el asistente) | Notas |
 |---|---|---|
 | Agendar una cita nueva (y aceptar un cupo de la lista de espera) | `bookingEnabled` | Sujeto al límite de citas por paciente. |
 | Cancelar una cita | `cancelEnabled` | Solo citas del propio remitente. |
@@ -2532,11 +2699,11 @@ Con una operación apagada, el asistente dice cuál no está disponible, con qui
 
 ### 3.3 Agendar
 
-El asistente pide la especialidad (solo servicios activos), la EPS o si es particular, ofrece horarios libres —menos los de los días u horas que la clínica bloqueó en Configuración › Días sin citas (tabla `BookingBlock`, regla en `packages/shared/src/bloqueos-agenda.ts`: cuenta la hora de inicio de la cita en la zona de la clínica; se quitan en la consulta misma y se revisan otra vez al reservar, al cambiar la fecha y en la lista de espera; el panel y el HIS no tienen bloqueos)— (por defecto 6, entre 2 y 12, repartidos entre mañana y tarde) que empiecen al menos 60 minutos después (`ANTICIPACION_MINIMA_AGENDAR_MIN`, en `packages/shared/src/cupos-ofrecidos.ts`) e identifica al paciente por su cédula. Al confirmar, al cupo todavía le deben faltar al menos 30 minutos; si no, ofrece otros. La misma regla aplica al cambiar la fecha y a la lista de espera; el personal y el hospital no tienen mínimo. Si la clínica fijó un plazo máximo para agendar (Configuración › Asistente Virtual, `OrganizationSettings.bookingMaxDaysAhead`, regla en `packages/shared/src/plazo-agendar.ts`), solo ofrece citas hasta el último día del plazo, contando hoy como el primero en la zona de la clínica y sin contar domingos ni festivos de Colombia (2026-10-31, `diaCuentaParaElPlazo` en `packages/shared/src/plazo-agendar.ts`; festivos calculados, sin lista que mantener, en `festivos-colombia.ts`: los fijos, los que la Ley Emiliani pasa al lunes y los de Pascua). Con 4, un viernes: viernes, sábado, lunes y martes; si el lunes es festivo, hasta el miércoles. El sábado cuenta aunque la clínica lo tenga en Días sin citas, salvo con «Sábados por el asistente» encendida (2026-11-21, opción `{ sabadoNoCuenta }` de todas las funciones del plazo; `sabadoNoCuentaParaElPlazo` en `sabado-rural.ts`, que `plazoDeLaClinica` en `apps/api/src/appointments/plazo-agendar.ts` y el resumen del panel leen de `saturdayRuralSharePercent`): entonces el sábado no cuenta, como el domingo, pero queda dentro del plazo y se sigue ofreciendo. Motivo: el hospital abre la agenda del sábado ese mismo sábado (112 de 116 cupos del 21-nov, a las 6 a. m.) y es para la zona rural, así que de miércoles a viernes el sábado se comía uno de los cuatro días; el jueves 19 el plazo llegaba al lunes 23 (un médico, lleno) mientras el hospital ya agendaba el martes 24 (70 cupos abiertos el jueves, 52 agendados en la ventanilla ese día): 46 de 51 «no hay cupos» del jueves y 39 de 54 del viernes fueron por el plazo, y la lista de espera pasó de 35 a cerca de 74. Siempre activo, sin interruptor. Antes se contaban días de calendario: el jueves 29 y el viernes 30 de octubre (lunes 2 festivo) el plazo llegaba al domingo o al lunes y 62 personas recibieron «no quedan cupos» con la agenda del martes ya abierta en el hospital; el tope va en la consulta misma y se revisa otra vez al reservar, al cambiar la fecha y en la lista de espera. Sin valor (lo de fábrica) no hay límite, y el panel y el HIS no lo tienen. Si dentro del plazo no queda ningún cupo pero sí más adelante (`AppointmentsService.cupoMasAllaDelPlazo`, que busca sin el plazo solo para eso), el asistente no dice «agenda completa»: dice hasta qué día se agenda y desde cuál escribir (el primer día desde el que el plazo alcanza al cupo, sin contar domingos ni festivos, `primerDiaParaVerElCupo`) y ofrece la lista de espera como siempre; al cambiar la fecha, deja la cita como está y no ofrece cancelarla. En el panel, el control muestra los cupos que el asistente puede ofrecer hoy con el plazo guardado (`apps/web/lib/plazo-agendar/resumen.ts`, con las mismas reglas: libres, servicio activo, médico con WhatsApp ON y homologado, anticipación mínima y días sin citas) y avisa si no queda ninguno; cada cambio del plazo queda en `SyncAudit` (`CONFIG`, `BOOKING_MAX_DAYS_CHANGE`, con el valor anterior, el nuevo y quién). A un paciente nuevo —o a uno existente al que le falte algo en la ficha— le pide nombre, apellidos, fecha de nacimiento, sexo y régimen. El nombre va en dos pasos marcados «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS», porque el HIS los guarda en columnas aparte. Si en los nombres escribió también los apellidos («Juan Camilo Hurtado Ramos» y luego «Hurtado Ramos»), los separa cuando lo repetido son dos palabras o más; si escribe lo mismo en los dos pasos, le vuelve a pedir solo los apellidos (`apps/api/src/chatbot/nombre-paciente-nuevo.ts`). Cada vez que escribe sus nombres se le vuelven a pedir los apellidos, y si responde NO al resumen, el siguiente intento le vuelve a preguntar nombre, apellidos, nacimiento, sexo y régimen: nada de un intento anterior se reusa en silencio. Si en el menú de servicios nombra uno que la clínica no agenda por el asistente (odontología, ecografías, laboratorio, especialistas…; lista en `apps/api/src/chatbot/servicio-no-agendable.ts`, y solo si no está en el menú de la clínica), le dice que por este medio no se agenda, con quién comunicarse y le deja el menú, sin gastar intentos. En los nombres y los apellidos rechaza lo que no puede ser un nombre —dígitos, una pregunta o palabras como «horario», «cita», «mañana», «gracias» (`noEsUnNombre`; nombres que son palabras, como Luz, Dolores o Domingo, pasan)— y se los vuelve a pedir sin guardarlo, con la pista de escribir «Cancelar» si lo que quería era otro horario (2026-10-26: «Otro horario» quedó como los nombres de una paciente nueva).
+El asistente pide la especialidad (solo servicios activos), la EPS o si es particular, ofrece horarios libres —menos los de los días u horas que la clínica bloqueó en Configuración › Agenda que ofrece el asistente › Días sin citas (tabla `BookingBlock`, regla en `packages/shared/src/bloqueos-agenda.ts`: cuenta la hora de inicio de la cita en la zona de la clínica; se quitan en la consulta misma y se revisan otra vez al reservar, al cambiar la fecha y en la lista de espera; el panel y el HIS no tienen bloqueos)— (por defecto 6, entre 2 y 12, repartidos entre mañana y tarde) que empiecen al menos 60 minutos después (`ANTICIPACION_MINIMA_AGENDAR_MIN`, en `packages/shared/src/cupos-ofrecidos.ts`) e identifica al paciente por su cédula. Al confirmar, al cupo todavía le deben faltar al menos 30 minutos; si no, ofrece otros. La misma regla aplica al cambiar la fecha y a la lista de espera; el personal y el hospital no tienen mínimo. Si la clínica fijó un plazo máximo para agendar (Configuración › Agenda que ofrece el asistente, `OrganizationSettings.bookingMaxDaysAhead`, regla en `packages/shared/src/plazo-agendar.ts`), solo ofrece citas hasta el último día del plazo, contando hoy como el primero en la zona de la clínica y sin contar domingos ni festivos de Colombia (2026-10-31, `diaCuentaParaElPlazo` en `packages/shared/src/plazo-agendar.ts`; festivos calculados, sin lista que mantener, en `festivos-colombia.ts`: los fijos, los que la Ley Emiliani pasa al lunes y los de Pascua). Con 4, un viernes: viernes, sábado, lunes y martes; si el lunes es festivo, hasta el miércoles. El sábado cuenta aunque la clínica lo tenga en Días sin citas, salvo con «Sábados por el asistente» encendida (2026-11-21, opción `{ sabadoNoCuenta }` de todas las funciones del plazo; `sabadoNoCuentaParaElPlazo` en `sabado-rural.ts`, que `plazoDeLaClinica` en `apps/api/src/appointments/plazo-agendar.ts` y el resumen del panel leen de `saturdayRuralSharePercent`): entonces el sábado no cuenta, como el domingo, pero queda dentro del plazo y se sigue ofreciendo. Motivo: el hospital abre la agenda del sábado ese mismo sábado (112 de 116 cupos del 21-nov, a las 6 a. m.) y es para la zona rural, así que de miércoles a viernes el sábado se comía uno de los cuatro días; el jueves 19 el plazo llegaba al lunes 23 (un médico, lleno) mientras el hospital ya agendaba el martes 24 (70 cupos abiertos el jueves, 52 agendados en la ventanilla ese día): 46 de 51 «no hay cupos» del jueves y 39 de 54 del viernes fueron por el plazo, y la lista de espera pasó de 35 a cerca de 74. Siempre activo, sin interruptor. Antes se contaban días de calendario: el jueves 29 y el viernes 30 de octubre (lunes 2 festivo) el plazo llegaba al domingo o al lunes y 62 personas recibieron «no quedan cupos» con la agenda del martes ya abierta en el hospital; el tope va en la consulta misma y se revisa otra vez al reservar, al cambiar la fecha y en la lista de espera. Sin valor (lo de fábrica) no hay límite, y el panel y el HIS no lo tienen. Si dentro del plazo no queda ningún cupo pero sí más adelante (`AppointmentsService.cupoMasAllaDelPlazo`, que busca sin el plazo solo para eso), el asistente no dice «agenda completa»: dice hasta qué día se agenda y desde cuál escribir (el primer día desde el que el plazo alcanza al cupo, sin contar domingos ni festivos, `primerDiaParaVerElCupo`) y ofrece la lista de espera como siempre; al cambiar la fecha, deja la cita como está y no ofrece cancelarla. En el panel, el control muestra los cupos que el asistente puede ofrecer hoy con el plazo guardado (`apps/web/lib/plazo-agendar/resumen.ts`, con las mismas reglas: libres, servicio activo, médico con WhatsApp ON y homologado, anticipación mínima y días sin citas) y avisa si no queda ninguno; cada cambio del plazo queda en `SyncAudit` (`CONFIG`, `BOOKING_MAX_DAYS_CHANGE`, con el valor anterior, el nuevo y quién). A un paciente nuevo —o a uno existente al que le falte algo en la ficha— le pide nombre, apellidos, fecha de nacimiento, sexo y régimen. El nombre va en dos pasos marcados «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS», porque el HIS los guarda en columnas aparte. Si en los nombres escribió también los apellidos («Juan Camilo Hurtado Ramos» y luego «Hurtado Ramos»), los separa cuando lo repetido son dos palabras o más; si escribe lo mismo en los dos pasos, le vuelve a pedir solo los apellidos (`apps/api/src/chatbot/nombre-paciente-nuevo.ts`). Cada vez que escribe sus nombres se le vuelven a pedir los apellidos, y si responde NO al resumen, el siguiente intento le vuelve a preguntar nombre, apellidos, nacimiento, sexo y régimen: nada de un intento anterior se reusa en silencio. Si en el menú de servicios nombra uno que la clínica no agenda por el asistente (odontología, ecografías, laboratorio, especialistas…; lista en `apps/api/src/chatbot/servicio-no-agendable.ts`, y solo si no está en el menú de la clínica), le dice que por este medio no se agenda, con quién comunicarse y le deja el menú, sin gastar intentos. En los nombres y los apellidos rechaza lo que no puede ser un nombre —dígitos, una pregunta o palabras como «horario», «cita», «mañana», «gracias» (`noEsUnNombre`; nombres que son palabras, como Luz, Dolores o Domingo, pasan)— y se los vuelve a pedir sin guardarlo, con la pista de escribir «Cancelar» si lo que quería era otro horario (2026-10-26: «Otro horario» quedó como los nombres de una paciente nueva).
 
 **El atajo de la cédula ya conocida (2026-11-21).** Al elegir un cupo con un documento en la sesión, `advanceAfterSlotSelected` va directo al resumen (tras padrón, sábado rural y límite de citas) solo si `documentoListoParaElResumen` lo permite: ese documento ya pasó por el paso del documento en esta conversación (`temp_alta_cedula` = el documento; ahí se busca al paciente y se pide lo que falta), o AgenIA tiene su ficha con nombre de verdad, nacimiento, sexo y —con EPS que no sea Particular— régimen (solo la ficha: los datos del alta en la sesión pueden ser de otra persona del mismo número). Si no, pide el documento otra vez (`pedirCedulaDeNuevoPostSlot`, Caja Negra `SLOT_SELECTED_ASK_CEDULA` con `documentoSinBuscar`) y conserva el que tenía: si responde sin número, sigue con ese. Antes el documento dado en el primer mensaje (`TURN1_ACK`) o al elegir un sábado sin ser rural (`rejectIfSabadoSoloRural` va antes de buscar al paciente) tomaba el atajo sin registro: «Listo, Paciente», ficha «Paciente Registrado» sin nacimiento ni sexo (19 de 43 atajos en 45 días). **Nombre de relleno:** `esNombreDeRelleno` (`apps/api/src/common/nombre-de-relleno.ts`: «Paciente», «Paciente Registrado» o vacío). Una ficha así se atiende en el paso del documento como paciente nuevo (nombres y apellidos; lo que le falte del alta) y también en la lista de espera; `ensurePatientPersisted` le pone el nombre que dio (solo a una ficha de relleno: un nombre de verdad no se toca; las fichas no viajan al HIS). Y `MirrorDispatchService` no manda nacimiento ni sexo de un paciente sin nombre de verdad (sin `nombres`): el agente no puede crearlo en `PACIENTES` y la cita no entra (se le avisa al paciente que no quedó registrada); si el hospital ya lo tiene, entra igual (§5.2). El 21-nov así nació en el HIS un «PACIENTE REGISTRADO» (cita del miércoles 25 a las 11:30 a. m.): se corrige a mano en el hospital.
 
-**Reserva para la atención presencial (2026-11-13).** La clínica puede fijar qué parte de la agenda toma el asistente (Configuración › Asistente Virtual, «Parte de la agenda para el asistente», `OrganizationSettings.botAgendaSharePercent`, de 10 a 100; vacío o 100 = sin reserva, lo de fábrica). Es un tope por médico y día en la zona de la clínica: citas vigentes del asistente (origen `WHATSAPP` o `TELEGRAM`) ≤ piso(capacidad × porcentaje), donde la capacidad son los cupos libres más los cupos con una cita vigente de cualquier origen y servicio (los cupos cerrados sin cita no cuentan). Con 20 cupos al 80 %, 16; con 7, 5; con 1, ninguno. La regla es pura y vive en `packages/shared/src/reserva-presencial.ts`; lo que lee de la base, en `apps/api/src/appointments/reserva-presencial.ts`. No guarda estado: se cuenta en cada consulta, así que un turno que el hospital abre, cierra o borra cambia el tope solo, y nunca toca citas ya dadas. Se aplica en los mismos caminos que el plazo: al buscar cupos (`getAvailableSlots` quita en la consulta misma los médico-días en el tope, para que un médico lleno por el chat no esconda a los demás; ahí los cupos apartados por otros pacientes y los ofrecidos a la lista de espera cuentan como del asistente), al reservar (`bookAppointment`, motivo `RESERVA_PRESENCIAL`) y al cambiar la fecha (la cita que se mueve no cuenta dos veces dentro del mismo médico y día), estos dos dentro de la transacción con un candado por médico y día (`pg_advisory_xact_lock`) para que dos pacientes que confirman a la vez el último cupo del asistente no pasen los dos, y en la lista de espera (§3.5). Solo el asistente: el panel (`MANUAL`) y el hospital (`MIRROR`) agendan sin tope, y no está en el candado de la base. No toca el HIS, el agente ni `CITAS_DISPONIBLES`. Qué oye el paciente: si eligió un cupo y el asistente llegó al tope mientras se registraba, «ese horario dejó de estar disponible por este medio» y un menú nuevo con lo que queda; si no queda ningún cupo por la reserva pero la agenda sí tiene libres (`AppointmentsService.sinCuposPorLaReserva`, que busca sin la reserva solo para eso), «por este medio ya no quedan cupos para estos días» y la lista de espera, sin mandarlo al hospital (la reserva es para quien no usa el chat); la Caja Negra lo marca con `porReserva` en `WAITLIST_OPTIN_OFFERED` y con `motivo: RESERVA_PRESENCIAL` en el rechazo. Si el conteo falla al buscar o al ofrecer a la lista, se sigue sin la reserva (la reserva de la cita lo revalida): un error nunca deja al asistente sin cupos. En el panel, el control muestra por día la capacidad, el tope y las citas del asistente, las del hospital y los libres (`apps/web/lib/reserva-presencial/resumen.ts`), y el aviso de cupos del plazo descuenta los médico-días en el tope; cada cambio queda en `SyncAudit` (`CONFIG`, `BOT_SHARE_CHANGE`) y en la Actividad de usuarios. Medición previa (30-oct a 13-nov de 2026, días hábiles): el hospital tomó el 72 % de la agenda, el asistente el 24 % y ningún médico pasó del 60 % por el asistente en un día; con 80 % el tope no habría frenado ninguna cita: queda como garantía para el hospital. Plan y decisiones: `docs/PLAN_RESERVA_PRESENCIAL.md`.
+**Reserva para la atención presencial (2026-11-13).** La clínica puede fijar qué parte de la agenda toma el asistente (Configuración › Agenda que ofrece el asistente, «Parte de la agenda para el asistente», `OrganizationSettings.botAgendaSharePercent`, de 10 a 100; vacío o 100 = sin reserva, lo de fábrica). Es un tope por médico y día en la zona de la clínica: citas vigentes del asistente (origen `WHATSAPP` o `TELEGRAM`) ≤ piso(capacidad × porcentaje), donde la capacidad son los cupos libres más los cupos con una cita vigente de cualquier origen y servicio (los cupos cerrados sin cita no cuentan). Con 20 cupos al 80 %, 16; con 7, 5; con 1, ninguno. La regla es pura y vive en `packages/shared/src/reserva-presencial.ts`; lo que lee de la base, en `apps/api/src/appointments/reserva-presencial.ts`. No guarda estado: se cuenta en cada consulta, así que un turno que el hospital abre, cierra o borra cambia el tope solo, y nunca toca citas ya dadas. Se aplica en los mismos caminos que el plazo: al buscar cupos (`getAvailableSlots` quita en la consulta misma los médico-días en el tope, para que un médico lleno por el chat no esconda a los demás; ahí los cupos apartados por otros pacientes y los ofrecidos a la lista de espera cuentan como del asistente), al reservar (`bookAppointment`, motivo `RESERVA_PRESENCIAL`) y al cambiar la fecha (la cita que se mueve no cuenta dos veces dentro del mismo médico y día), estos dos dentro de la transacción con un candado por médico y día (`pg_advisory_xact_lock`) para que dos pacientes que confirman a la vez el último cupo del asistente no pasen los dos, y en la lista de espera (§3.5). Solo el asistente: el panel (`MANUAL`) y el hospital (`MIRROR`) agendan sin tope, y no está en el candado de la base. No toca el HIS, el agente ni `CITAS_DISPONIBLES`. Qué oye el paciente: si eligió un cupo y el asistente llegó al tope mientras se registraba, «ese horario dejó de estar disponible por este medio» y un menú nuevo con lo que queda; si no queda ningún cupo por la reserva pero la agenda sí tiene libres (`AppointmentsService.sinCuposPorLaReserva`, que busca sin la reserva solo para eso), «por este medio ya no quedan cupos para estos días» y la lista de espera, sin mandarlo al hospital (la reserva es para quien no usa el chat); la Caja Negra lo marca con `porReserva` en `WAITLIST_OPTIN_OFFERED` y con `motivo: RESERVA_PRESENCIAL` en el rechazo. Si el conteo falla al buscar o al ofrecer a la lista, se sigue sin la reserva (la reserva de la cita lo revalida): un error nunca deja al asistente sin cupos. En el panel, el control muestra por día la capacidad, el tope y las citas del asistente, las del hospital y los libres (`apps/web/lib/reserva-presencial/resumen.ts`), y el aviso de cupos del plazo descuenta los médico-días en el tope; cada cambio queda en `SyncAudit` (`CONFIG`, `BOT_SHARE_CHANGE`) y en la Actividad de usuarios. Medición previa (30-oct a 13-nov de 2026, días hábiles): el hospital tomó el 72 % de la agenda, el asistente el 24 % y ningún médico pasó del 60 % por el asistente en un día; con 80 % el tope no habría frenado ninguna cita: queda como garantía para el hospital. Plan y decisiones: `docs/PLAN_RESERVA_PRESENCIAL.md`.
 
 **Sábados solo para la zona rural (2026-11-19).** Con «Sábados por el asistente» en «Solo zona rural» (`OrganizationSettings.saturdayRuralSharePercent`, de 10 a 100; vacío = sin regla especial, lo de fábrica; 100 = sin tope), el asistente agenda citas de sábado (en la zona de la clínica) solo a pacientes que el hospital tiene con zona de residencia rural, y como mucho ese porcentaje de la agenda de cada médico ese día: es el tope de la reserva (`porcentajeDelDia`: el sábado lleva el suyo, los demás días el de la reserva). Regla pura en `packages/shared/src/sabado-rural.ts`; lo que lee de la base, en `apps/api/src/appointments/sabado-rural.ts`. Quién es rural lo dice la tabla `RuralPatient` (solo el documento, guardado con solo dígitos y sin ceros a la izquierda), que llena el agente: en cnt-sanvicente-anserma, `PACIENTES.CD_CODI_ZORE_PAC = 'R'` (catálogo `ZONARESIDENCIA`; medido en ESEHSVP el 19-nov: 99,9 % lleno, 97 % coincide con la zona del barrio, 77 % de las citas del sábado son de pacientes rurales; `sql/ZONA_RURAL_DESCUBRIMIENTO_SOLO_LECTURA.sql`). Sin lista (`HospitalMirrorConfig.ruralListCount` vacío o 0) nadie es rural y no se ofrecen sábados. Cómo se aplica: el chat NO dice que los sábados son para la zona rural (decisión del 19-nov): con la lista, `getAvailableSlots` ofrece los sábados a todos como un día más; sin la lista, los quita de la consulta (nadie podría tomarlos). Opción `sabados`: `'EXCLUIR'` cuando ya se sabe que la persona no es rural, `'INCLUIR'` cuando sí lo es (al cambiar la fecha de su cita, según el paciente de la cita). El documento se revisa al darlo, antes de pedir nombre o nacimiento (`rejectIfSabadoSoloRural`, también en el atajo con el documento ya conocido): si no es rural, se suelta el cupo, se le pide con amabilidad comunicarse con el hospital (con su teléfono) o acercarse a la ventanilla para el sábado (`sabadoPorElHospitalOtrasOpciones` / `sabadoPorElHospitalSinOtros`), se le muestran los otros días y los menús que siguen en esa conversación ya no traen sábados (`temp_sin_sabado`). La reserva lo revalida (`bookAppointment`, motivo `SOLO_ZONA_RURAL`), igual que el cambio de fecha (`NEW_SLOT_SOLO_ZONA_RURAL`) y la lista de espera (§3.5). Solo el asistente: el panel y el hospital agendan sábados como siempre. Lo que diga «Días sin citas» sigue mandando: con los sábados ahí, no se ofrecen. Caja Negra: `stage: SABADO_SOLO_RURAL` y `motivo: SOLO_ZONA_RURAL` en el rechazo. En el panel, `apps/web/lib/sabado-rural/estado.ts` (lista, bloqueo de los sábados, último cambio); cada cambio queda en `SyncAudit` (`CONFIG`, `SATURDAY_RURAL_CHANGE`) y en la Actividad de usuarios. Las fechas que van a SQL crudo (la marca de cada envío de la lista y los límites de día del tope) se pasan como valor UTC explícito (`comoColumna`): la base de producción corre con `TimeZone = America/Bogota`, y un `Date` suelto quedaba 5 horas corrido.
 
@@ -2658,7 +2825,7 @@ Esto se revisa con la conversación en reposo y también dentro del agendamiento
 
 ### 3.9 Voz
 
-El paciente puede escribir o mandar notas de voz: el audio se envía al proveedor de IA (Gemini u OpenAI; Claude no acepta audio). El asistente puede contestar con voz sintetizada (ElevenLabs o Google Cloud TTS, con Google de respaldo automático), configurable en Configuración › Asistente Virtual › Voz.
+El paciente puede escribir o mandar notas de voz: el audio se envía al proveedor de IA (Gemini u OpenAI; Claude no acepta audio). El asistente puede contestar con voz sintetizada (ElevenLabs o Google Cloud TTS, con Google de respaldo automático), configurable en Configuración › Nombre, tono y voz.
 
 ### 3.10 Encuesta de satisfacción
 
@@ -2914,34 +3081,36 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
 
 ## 11. Configuración por clínica
 
+Configuración (`/dashboard/configuracion`, solo el administrador) tiene un Resumen y una sección por tema, cada una con su dirección y un ancla por ajuste (`/dashboard/configuracion/agenda#plazo`): Qué puede hacer el asistente (`asistente`), Agenda que ofrece el asistente (`agenda`), Recordatorios, Nombre, tono y voz (`identidad`), Base de conocimiento (`conocimiento`), Privacidad (Ley 1581) (`privacidad`), Canales e IA (`canales`) y, con espejo, Hospital (espejo) (`hospital`). La lista sale de `seccionesDeConfiguracion` (`packages/shared/src/menus.ts`), derivada del menú: la del hospital solo si el menú tiene el Espejo. Las páginas van en el grupo de rutas `app/dashboard/configuracion/(secciones)`, para que Encuestas (`…/integraciones/surveys`) no herede la columna. El Resumen solo lee (`apps/web/lib/configuracion/resumen.ts`, cada lectura aislada: si una falla, su línea dice «No se pudo leer») y avisa lo que falta: proveedor de IA, WhatsApp, base de conocimiento vacía, teléfono de soporte, y si el asistente quedó solo para consultar. Las pestañas de antes (`?tab=chatbot|dias|integrations|ai|kb|estadisticas`) y `/dashboard/conocimiento` redirigen a su sección; Estadísticas para compartir pasó a Analíticas (`#compartir`). Las acciones de guardar refrescan todas las secciones (`revalidatePath('/dashboard/configuracion', 'layout')`). «Horarios que ofrece» se guarda ahora al instante con su propia acción (`setMySlotsOfferedCount`); `updateMyOrgSettings` ya no lo escribe si no viene.
+
 | Ajuste | Dónde | Por defecto |
 |---|---|---|
-| Nombre del asistente | Configuración › Asistente Virtual | «AgenIA» |
-| Tono | Configuración › Asistente Virtual | Formal (usted) |
-| Horarios que ofrece | Configuración › Asistente Virtual | 6 (de 2 a 12) |
-| Agendar / Cancelar / Cambiar fecha por el asistente | Configuración › Asistente Virtual | Encendidos |
-| Plazo máximo para agendar (días adelante, contando hoy, sin domingos ni festivos; sin sábados con «Sábados por el asistente» encendida) | Configuración › Asistente Virtual | Sin límite (de 1 a 365 días) |
-| Parte de la agenda para el asistente (tope por médico y día; el resto, para agendar en el hospital) | Configuración › Asistente Virtual | Sin reserva (de 10 a 100 %) |
-| Sábados por el asistente (solo zona rural, con tope por médico) | Configuración › Asistente Virtual | Sin regla especial (de 10 a 100 %; 100 = sin tope) |
-| Autorización de datos antes de agendar, enlace y versión de la política | Configuración › Asistente Virtual | Apagada; sin enlace (el resumen usa `PRIVACY_POLICY_URL` del servidor); versión 1 |
-| Página pública de la política de datos (identificación del responsable) | Configuración › Asistente Virtual | Sin publicar (la página responde 404) |
-| Recordatorios automáticos | Configuración › Asistente Virtual | Encendidos |
-| Solo a quien agendó por el chat | Configuración › Asistente Virtual | Apagado |
-| Anticipación mínima del recordatorio | Configuración › Asistente Virtual | 1 hora (0 = sin mínimo, máximo 12 horas) |
+| Nombre del asistente | Configuración › Nombre, tono y voz | «AgenIA» |
+| Tono | Configuración › Nombre, tono y voz | Formal (usted) |
+| Horarios que ofrece | Configuración › Agenda que ofrece el asistente | 6 (de 2 a 12) |
+| Agendar / Cancelar / Cambiar fecha por el asistente | Configuración › Qué puede hacer el asistente | Encendidos |
+| Plazo máximo para agendar (días adelante, contando hoy, sin domingos ni festivos; sin sábados con «Sábados por el asistente» encendida) | Configuración › Agenda que ofrece el asistente | Sin límite (de 1 a 365 días) |
+| Parte de la agenda para el asistente (tope por médico y día; el resto, para agendar en el hospital) | Configuración › Agenda que ofrece el asistente | Sin reserva (de 10 a 100 %) |
+| Sábados por el asistente (solo zona rural, con tope por médico) | Configuración › Agenda que ofrece el asistente | Sin regla especial (de 10 a 100 %; 100 = sin tope) |
+| Autorización de datos antes de agendar, enlace y versión de la política | Configuración › Privacidad (Ley 1581) | Apagada; sin enlace (el resumen usa `PRIVACY_POLICY_URL` del servidor); versión 1 |
+| Página pública de la política de datos (identificación del responsable) | Configuración › Privacidad (Ley 1581) | Sin publicar (la página responde 404) |
+| Recordatorios automáticos | Configuración › Recordatorios | Encendidos |
+| Solo a quien agendó por el chat | Configuración › Recordatorios | Apagado |
+| Anticipación mínima del recordatorio | Configuración › Recordatorios | 1 hora (0 = sin mínimo, máximo 12 horas) |
 | Reintentos por paso | Base de datos (sin pantalla) | 3 |
 | Límite de citas por día / por mes | Límite de citas | 1 / 3, encendidos |
-| Proveedor de IA y modelo (también lo usa el asistente de soporte del personal) | Configuración › Integraciones | — |
-| WhatsApp, plantillas y Telegram | Configuración › Integraciones | — |
-| Voz | Configuración › Asistente Virtual › Voz | Google Cloud TTS |
-| Base de conocimiento de la clínica | Configuración › Base de Conocimiento | Vacía |
+| Proveedor de IA y modelo (también lo usa el asistente de soporte del personal) | Configuración › Canales e IA | — |
+| WhatsApp, plantillas y Telegram | Configuración › Canales e IA | — |
+| Voz | Configuración › Nombre, tono y voz | Google Cloud TTS |
+| Base de conocimiento de la clínica | Configuración › Base de conocimiento | Vacía |
 | Teléfono de soporte (al que el asistente remite) | Lo registra el equipo de AgenIA (sin pantalla) | Sin teléfono: el asistente dice «comuníquese con el hospital» |
 | Zona horaria | Base de datos (sin pantalla) | `America/Bogota` |
 | Espejo: modo de agenda | Espejo con el HIS | OFF |
 | Espejo: avisos al agendador | Bandeja › Configurar avisos (lista de personas, solo el Administrador) | Encendidos (requieren al menos una persona en «Avisos y recordatorios» y la plantilla; los de pedidos de pacientes, su propia plantilla) |
 | Espejo: cuándo salen esos avisos | Bandeja › Configurar avisos › ¿Cuándo se envían? | A cualquier hora (con «Solo en horario laboral»: de lunes a sábado, 7:00 a. m. a 5:00 p. m. por defecto, sin domingos ni festivos) |
-| Agregar solos los médicos nuevos del hospital / con WhatsApp ON | Configuración › Asistente Virtual (solo con espejo) | Apagados |
+| Agregar solos los médicos nuevos del hospital / con WhatsApp ON | Configuración › Hospital (espejo) (solo con espejo) | Apagados |
 | Espejo: consulta en vivo / desde el asistente | Base de datos (sin pantalla) | Apagadas |
-| Estadísticas para compartir (clave de la página pública) | Configuración › Estadísticas | Cerrada (sin clave) |
+| Estadísticas para compartir (clave de la página pública) | Analíticas › Estadísticas para compartir (solo el administrador) | Cerrada (sin clave) |
 
 ## 12. Clínicas en producción
 
@@ -3016,6 +3185,7 @@ Comunicados de la clínica por WhatsApp (`/dashboard/mensajes-masivos`, solo ORG
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-11-21** — Configuración por secciones (Fase 2 de [PLAN_NAVEGACION.md](../PLAN_NAVEGACION.md)): ya no va en pestañas. A la izquierda, un Resumen que dice de un vistazo qué está encendido y qué falta (cada línea lleva al ajuste exacto, y arriba van en amarillo WhatsApp o la IA sin conectar, la base de conocimiento vacía o la falta del teléfono de soporte), y una sección por tema: Qué puede hacer el asistente, Agenda que ofrece el asistente, Recordatorios, Nombre, tono y voz, Base de conocimiento, Privacidad (Ley 1581), Canales e IA y, con espejo, Hospital (espejo). Lo que antes estaba apilado en «Asistente Virtual» quedó repartido; «Días sin citas» y «Horarios que ofrece» (que ahora se guarda al instante, sin el botón del nombre) están en Agenda que ofrece el asistente; los médicos nuevos del hospital, en Hospital; y Estadísticas para compartir, en Analíticas, con el botón «Compartir estas cifras». Los enlaces de antes llevan a la sección nueva. El Centro de ayuda tiene un tema por sección. Analíticas se llama así también en su página (antes «Business Intelligence»). Para los administradores de todas las clínicas.
 - **2026-11-21** — Menú del panel en grupos (Fase 1 de [PLAN_NAVEGACION.md](../PLAN_NAVEGACION.md)): el del administrador pasa de una lista de hasta 22 opciones a cinco grupos con encabezado, en el orden en que se trabaja (Operación diaria, Comunicación con pacientes, Agenda y catálogos, Indicadores, Administración), con la Bandeja de sincronización y Solicitudes de más citas arriba (antes la Bandeja iba de 19.ª). La opción en la que se está queda resaltada; en el celular, las opciones ya no salen como botones encima de cada página: se abren con «☰ Menú». La Visión General muestra solo las tarjetas de Operación diaria (y Agendamiento para el agente). Nombres: Agendas y cupos, Encuestas, Padrón EPS, Analíticas, Servicios de salud, Solicitudes de alta y Soporte y ayuda (también en los mensajes del asistente de Telegram); 📄 para Envíos de documentos. Las categorías del Centro de ayuda son ahora los mismos grupos y el asistente de soporte nombra cada opción con su grupo. Ninguna pantalla cambió de dirección ni de permisos. Para el personal de todas las clínicas.
 - **2026-11-21** — Plazo para agendar con «Sábados por el asistente» encendida: el sábado ya no cuenta, como el domingo, y se sigue ofreciendo. El hospital abre la agenda del sábado ese mismo sábado y es para la zona rural; contarlo dejaba al asistente, de miércoles a viernes, con un día menos. El jueves 19 llegaba hasta el lunes 23 (un médico, lleno) mientras el hospital ya agendaba el martes 24: 46 personas oyeron «escríbanos desde el viernes» y la lista de espera llegó a unas 74. Con 4 días, un jueves ahora ofrece hasta el martes y un viernes hasta el miércoles. Aplica a los cupos que ofrece el asistente, la reserva, el cambio de fecha, la lista de espera, los mensajes «agendamos hasta el…» y el ejemplo de Configuración.
 - **2026-11-21** — Registro del paciente cuando el documento llega antes: quien dio su documento en el primer mensaje, o eligió un sábado sin ser de zona rural y luego otro día, ya no pasa sin registro («Listo, Paciente»). Si AgenIA no tiene su ficha completa, el asistente le pide escribir de nuevo el documento y le registra con nombre, apellidos, nacimiento y sexo. Una ficha con el nombre de relleno «Paciente Registrado» se trata como de paciente nuevo y se corrige al agendar, y AgenIA ya no le entrega al hospital lo necesario para crear un paciente con ese nombre. El 21-nov el hospital rechazó una cita así y, al reintentar, quedó en su sistema un paciente «Paciente Registrado» (cita del miércoles 25, 11:30 a. m.), que se corrige en el hospital.

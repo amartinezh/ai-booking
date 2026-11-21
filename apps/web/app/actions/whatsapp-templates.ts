@@ -78,7 +78,7 @@ export async function saveMyWhatsappTemplate(
                 }`,
             },
         });
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, data };
     } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) };
@@ -102,7 +102,7 @@ export async function deleteMyWhatsappTemplate(
             organizationId: session.organizationId,
             metadata: { detalle: String(kind) },
         });
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true };
     } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) };

@@ -9,12 +9,10 @@
 // estado, para que la tasa de respuesta siga teniendo sentido).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useDebounce } from 'use-debounce';
 import { toast } from 'sonner';
 import {
   ArrowDown,
-  ArrowLeft,
   ArrowUp,
   ArrowUpDown,
   Download,
@@ -355,15 +353,6 @@ export default function SurveysExplorer({ scope, organizations = [] }: Props) {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 py-2">
-      {!global && (
-        <Link
-          href="/dashboard/configuracion?tab=integrations"
-          className="inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-blue-600"
-        >
-          <ArrowLeft className="h-4 w-4" /> Volver a Integraciones
-        </Link>
-      )}
-
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">

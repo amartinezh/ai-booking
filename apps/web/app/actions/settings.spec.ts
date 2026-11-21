@@ -27,6 +27,7 @@ import {
     setMyAutoHomologacion,
     setMyAutoHomologacionWhatsapp,
     setMyCancelEnabled,
+    setMySlotsOfferedCount,
     updateMyOrgSettings,
 } from './settings';
 
@@ -399,5 +400,41 @@ describe('settings — Actividad de usuarios (2026-10-27)', () => {
         await updateMyOrgSettings({ botName: 'Vicente', communicationStyle: 'FORMAL', slotsOfferedCount: 4 });
         expect(registros()[0]).toMatchObject({ action: 'BOT_SETTINGS_CHANGED' });
         expect(registros()[0].metadata.detalle).toBe('Asistente: nombre: AgenIA → Vicente · cupos que ofrece: 6 → 4');
+    });
+
+    it('sin «cupos que ofrece» (el formulario de Nombre, tono y voz), no lo toca ni lo anota', async () => {
+        mockFindUnique.mockResolvedValue({ botName: 'AgenIA', communicationStyle: 'FORMAL', slotsOfferedCount: 4 });
+        await updateMyOrgSettings({ botName: 'Vicente', communicationStyle: 'INFORMAL' });
+        expect(mockUpsert).toHaveBeenCalledWith({
+            where: { organizationId: 'org-1' },
+            create: { organizationId: 'org-1', botName: 'Vicente', communicationStyle: 'INFORMAL' },
+            update: { botName: 'Vicente', communicationStyle: 'INFORMAL' },
+        });
+        expect(registros()[0].metadata.detalle).toBe('Asistente: nombre: AgenIA → Vicente · estilo: FORMAL → INFORMAL');
+    });
+
+    it('«Horarios que ofrece» se guarda solo, acotado de 2 a 12, y dice antes y después', async () => {
+        mockFindUnique.mockResolvedValue({ slotsOfferedCount: 6 });
+        expect(await setMySlotsOfferedCount(8)).toEqual({ success: true, slotsOfferedCount: 8 });
+        expect(mockUpsert).toHaveBeenCalledWith({
+            where: { organizationId: 'org-1' },
+            create: { organizationId: 'org-1', slotsOfferedCount: 8 },
+            update: { slotsOfferedCount: 8 },
+        });
+        expect(registros()[0]).toMatchObject({ action: 'BOT_SETTINGS_CHANGED' });
+        expect(registros()[0].metadata.detalle).toBe('Asistente: cupos que ofrece: 6 → 8');
+
+        jest.clearAllMocks();
+        mockGetSession.mockResolvedValue(ADMIN);
+        mockUpsert.mockResolvedValue({});
+        mockFindUnique.mockResolvedValue({ slotsOfferedCount: 6 });
+        await setMySlotsOfferedCount(6);
+        expect(registros()).toHaveLength(0);
+    });
+
+    it('«Horarios que ofrece»: solo el administrador', async () => {
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        expect(await setMySlotsOfferedCount(4)).toEqual({ success: false, error: 'Acceso denegado' });
+        expect(mockUpsert).not.toHaveBeenCalled();
     });
 });

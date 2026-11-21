@@ -168,7 +168,7 @@ async function guardarClave(
             .catch((e: unknown) =>
                 console.error('[configuración] no se pudo anotar el cambio en la auditoría', { error: getErrorMessage(e) }),
             );
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/analytics');
         return { success: true, cambiadaEn: cambiadaEn.toISOString(), cambiadaPor: actor };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };

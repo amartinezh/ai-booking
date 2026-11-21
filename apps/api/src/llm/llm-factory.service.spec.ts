@@ -129,7 +129,7 @@ describe('LlmFactoryService', () => {
       await expect(service.forOrg(ORG)).rejects.toBeInstanceOf(
         NoActiveLlmProviderError,
       );
-      await expect(service.forOrg(ORG)).rejects.toThrow(/Integración de IA/);
+      await expect(service.forOrg(ORG)).rejects.toThrow(/Configuración › Canales e IA/);
     });
   });
 

@@ -112,8 +112,9 @@ describe('buscar', () => {
   });
 
   it('describir un problema lleva a su solución', () => {
+    // Desde la Fase 2 de PLAN_NAVEGACION.md, el problema vive en Configuración › Canales e IA.
     expect(primero('el bot no responde')).toMatchObject({
-      temaId: 'configuracion',
+      temaId: 'config-canales',
       tipo: 'problema',
     });
     expect(primero('la cita no llegó al hospital')?.temaId).toBe('bandeja');

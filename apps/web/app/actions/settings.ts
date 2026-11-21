@@ -206,7 +206,7 @@ export async function setMyAutorizacionDatos(entrada: { encendida: boolean; urlP
                 });
             }
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true as const, autorizacionDatos: autorizacionDatosDe(guardado) };
     } catch (e) {
         return { success: false as const, error: getErrorMessage(e) };
@@ -240,7 +240,7 @@ export async function setMyRemindersEnabled(enabled: boolean) {
                 despues: remindersEnabled,
             });
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, remindersEnabled };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
@@ -281,7 +281,7 @@ export async function setMyRemindersOnlySelfBooked(enabled: boolean) {
                 { despues: remindersOnlySelfBooked },
             );
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, remindersOnlySelfBooked };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
@@ -318,7 +318,7 @@ export async function setMyReminderMinLead(minutos: number) {
                 { antes: antes?.reminderMinLeadMinutes ?? null, despues: reminderMinLeadMinutes },
             );
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, reminderMinLeadMinutes };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
@@ -361,7 +361,7 @@ export async function setMyBookingMaxDaysAhead(dias: number | null) {
                 nuevo: bookingMaxDaysAhead,
             });
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, bookingMaxDaysAhead };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
@@ -444,7 +444,7 @@ export async function setMyBotAgendaSharePercent(porcentaje: number | null) {
                 });
             }
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true as const, botAgendaSharePercent };
     } catch (e) {
         return { success: false as const, error: getErrorMessage(e) };
@@ -514,7 +514,7 @@ export async function setMySaturdayRuralSharePercent(porcentaje: number | null) 
                 });
             }
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true as const, saturdayRuralSharePercent };
     } catch (e) {
         return { success: false as const, error: getErrorMessage(e) };
@@ -610,7 +610,7 @@ export async function setMyBookingEnabled(enabled: boolean) {
                 encendido: bookingEnabled,
             });
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, bookingEnabled };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
@@ -647,7 +647,7 @@ export async function setMyCancelEnabled(enabled: boolean) {
                 encendido: cancelEnabled,
             });
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, cancelEnabled };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
@@ -759,13 +759,19 @@ export async function setMyRescheduleEnabled(enabled: boolean) {
                 encendido: rescheduleEnabled,
             });
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, rescheduleEnabled };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }
 }
 
+/**
+ * Nombre y tono del asistente (Configuración › Nombre, tono y voz), con su botón
+ * «Guardar». «Horarios que ofrece» se guarda aparte, al instante
+ * (`setMySlotsOfferedCount`, en Agenda que ofrece el asistente): si no viene, no
+ * se toca (antes iba en el mismo formulario y se escribía siempre).
+ */
 export async function updateMyOrgSettings(data: {
     botName: string;
     communicationStyle?: CommStyle;
@@ -778,7 +784,13 @@ export async function updateMyOrgSettings(data: {
     const communicationStyle: CommunicationStyle = data.communicationStyle === 'INFORMAL' ? 'INFORMAL' : 'FORMAL';
     // Se acota aquí (2-12) y no solo en el <input>: la server action se puede
     // llamar con cualquier número. El bot vuelve a acotar al leerlo.
-    const slotsOfferedCount = normalizarCuposOfrecidos(data.slotsOfferedCount);
+    const campos = {
+        botName,
+        communicationStyle,
+        ...(data.slotsOfferedCount === undefined
+            ? {}
+            : { slotsOfferedCount: normalizarCuposOfrecidos(data.slotsOfferedCount) }),
+    };
     try {
         const antes = await prisma.organizationSettings.findUnique({
             where: { organizationId: session.organizationId! },
@@ -786,17 +798,46 @@ export async function updateMyOrgSettings(data: {
         });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
-            create: { organizationId: session.organizationId!, botName, communicationStyle, slotsOfferedCount },
-            update: { botName, communicationStyle, slotsOfferedCount },
+            create: { organizationId: session.organizationId!, ...campos },
+            update: campos,
         });
         const cambios = listarCambios(
             antes ?? {},
-            { botName, communicationStyle, slotsOfferedCount },
+            campos,
             { botName: 'nombre', communicationStyle: 'estilo', slotsOfferedCount: 'cupos que ofrece' },
         );
         if (cambios.length) await anotarAjuste(session, 'BOT_SETTINGS_CHANGED', `Asistente: ${cambios.join(' · ')}`);
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * 🕐 Horarios que ofrece el asistente: cuántas opciones de cita muestra al
+ * agendar o al cambiar la fecha (de 2 a 12). Guarda al instante, como los demás
+ * ajustes de Agenda que ofrece el asistente; el bot lo lee en cada búsqueda.
+ */
+export async function setMySlotsOfferedCount(cantidad: number) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    const slotsOfferedCount = normalizarCuposOfrecidos(cantidad);
+    try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { slotsOfferedCount: true },
+        });
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, slotsOfferedCount },
+            update: { slotsOfferedCount },
+        });
+        const cambios = listarCambios(antes ?? {}, { slotsOfferedCount }, { slotsOfferedCount: 'cupos que ofrece' });
+        if (cambios.length) await anotarAjuste(session, 'BOT_SETTINGS_CHANGED', `Asistente: ${cambios.join(' · ')}`);
+        revalidatePath('/dashboard/configuracion', 'layout');
+        return { success: true, slotsOfferedCount };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }
@@ -909,7 +950,7 @@ async function guardarHomologacionAutomatica(
                     console.error('[configuración] no se pudo anotar el cambio en la auditoría', { error: getErrorMessage(e) }),
                 );
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };

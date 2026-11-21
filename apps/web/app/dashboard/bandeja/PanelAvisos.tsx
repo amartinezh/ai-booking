@@ -386,8 +386,8 @@ function Editor({
                         ? 'Falta la plantilla «Aviso al agendador (excepciones de sincronización)»'
                         : 'Falta la plantilla «Aviso al agendador (pedidos de pacientes)»'}
                     : se registra, con el nombre exacto que aprobó Meta, en{' '}
-                    <Link href="/dashboard/configuracion" className="underline">
-                        Configuración
+                    <Link href="/dashboard/configuracion/canales#plantillas" className="underline">
+                        Configuración › Canales e IA
                     </Link>
                     .
                 </p>

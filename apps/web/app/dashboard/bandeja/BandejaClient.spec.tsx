@@ -722,7 +722,10 @@ describe('BandejaClient — avisos a los agendadores (docs/PLAN_AVISOS_AGENDADOR
         it('si falta una plantilla, manda a Configuración', async () => {
             await abrir({ plantillaPacientes: false });
             expect(screen.getByText(/Falta la plantilla «Aviso al agendador \(pedidos de pacientes\)»/)).toBeInTheDocument();
-            expect(screen.getByRole('link', { name: 'Configuración' })).toHaveAttribute('href', '/dashboard/configuracion');
+            expect(screen.getByRole('link', { name: 'Configuración › Canales e IA' })).toHaveAttribute(
+                'href',
+                '/dashboard/configuracion/canales#plantillas',
+            );
         });
 
         it('deja claro que son teléfonos personales y sin datos de pacientes', async () => {

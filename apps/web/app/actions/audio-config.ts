@@ -103,7 +103,7 @@ export async function updateMyAudioConfig(
                 },
             });
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, data };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };

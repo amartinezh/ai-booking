@@ -212,6 +212,38 @@ describe('armarManualDelAsistente con el archivo real', () => {
     );
   });
 
+  it('las secciones de Configuración son temas del administrador, no del agendador (docs/PLAN_NAVEGACION.md §5)', () => {
+    const admin = armarManualDelAsistente({
+      markdown: AGENIA_MD,
+      contenido: CONTENIDO,
+      rol: 'ORG_ADMIN',
+      menus: getMenusForRole('ORG_ADMIN', { conEspejo: true }),
+    });
+    expect(admin.temasDelUsuario).toEqual(expect.arrayContaining(['config-agenda', 'config-canales', 'config-hospital']));
+    expect(admin.delUsuario).toContain(
+      '- Secciones de su Configuración (en la columna de la izquierda, con «Resumen» arriba): Qué puede hacer el asistente, Agenda que ofrece el asistente,',
+    );
+
+    const sinEspejo = armarManualDelAsistente({
+      markdown: AGENIA_MD,
+      contenido: CONTENIDO,
+      rol: 'ORG_ADMIN',
+      menus: getMenusForRole('ORG_ADMIN'),
+    });
+    // Sin espejo, la sección del hospital queda fuera como las demás opciones del espejo; las otras, no.
+    expect(sinEspejo.temasDeOtroRol).toContain('config-hospital');
+    expect(sinEspejo.temasDeOtroRol.filter((t) => t.startsWith('config-'))).toEqual(['config-hospital']);
+
+    const agente = armarManualDelAsistente({
+      markdown: AGENIA_MD,
+      contenido: CONTENIDO,
+      rol: 'BOOKING_AGENT',
+      menus: getMenusForRole('BOOKING_AGENT', { conEspejo: true }),
+    });
+    expect(agente.temasDeOtroRol).toEqual(expect.arrayContaining(['configuracion', 'config-agenda']));
+    expect(agente.delUsuario).not.toContain('Secciones de su Configuración');
+  });
+
   it('se puede citar cualquier tema, el glosario y las secciones permitidas de la Parte 2', () => {
     expect(agente.temasValidos.has('agenda')).toBe(true);
     expect(agente.temasValidos.has('glosario')).toBe(true);

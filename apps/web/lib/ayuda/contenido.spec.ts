@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { GRUPOS_DEL_MENU, getMenusForRole } from '../menus';
+import { GRUPOS_DEL_MENU, getMenusForRole, seccionesDeConfiguracion } from '../menus';
 import { cargarConocimiento, rutaDelConocimiento } from './cargar-conocimiento';
 import { MARCA_FIN, temaDeRuta, validarConocimiento } from './conocimiento';
 import { GLOSARIO_ID, buscar, crearIndice } from './buscador';
@@ -14,6 +14,9 @@ describe('Contenido del centro de ayuda (docs/conocimiento/AGENIA.md)', () => {
     const { temas, categorias, glosario, portada } = contenido;
     // Con todas las opciones condicionales encendidas: la ayuda las explica todas.
     const menuCompleto = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true, conResumen: true });
+    // Las secciones de Configuración tienen su propio tema (docs/PLAN_NAVEGACION.md §5).
+    const secciones = seccionesDeConfiguracion(menuCompleto);
+    const CONFIGURACION = '/dashboard/configuracion';
 
     it('el archivo es coherente: enlaces que existen, categorías con temas, guías y preguntas en cada tema', () => {
         expect(validarConocimiento(contenido)).toEqual([]);
@@ -25,8 +28,22 @@ describe('Contenido del centro de ayuda (docs/conocimiento/AGENIA.md)', () => {
         expect(tema?.titulo).toBe(label);
     });
 
-    it('no hay temas de rutas que el menú del administrador no tiene', () => {
-        const rutas = new Set(menuCompleto.map((m) => m.href));
+    it.each(secciones.map((s) => [s.titulo, s.href]))('la sección de Configuración «%s» (%s) tiene su tema, con el mismo título', (titulo, href) => {
+        const tema = temaDeRuta(temas, href);
+        expect(tema).toBeDefined();
+        expect(tema?.titulo).toBe(titulo);
+        expect(tema?.categoria).toBe(menuCompleto.find((m) => m.href === CONFIGURACION)?.grupo);
+    });
+
+    it('la sección del hospital dice cuándo aparece (solo con espejo)', () => {
+        const sinEspejo = new Set(seccionesDeConfiguracion(getMenusForRole('ORG_ADMIN')).map((s) => s.href));
+        for (const s of secciones.filter((x) => !sinEspejo.has(x.href))) {
+            expect(temaDeRuta(temas, s.href)?.disponibilidad).toBeTruthy();
+        }
+    });
+
+    it('no hay temas de rutas que el menú del administrador no tiene (ni secciones de Configuración)', () => {
+        const rutas = new Set([...menuCompleto, ...secciones].map((m) => m.href));
         for (const t of temas.filter((tema) => tema.href)) {
             expect(rutas.has(t.href as string)).toBe(true);
         }
@@ -46,7 +63,10 @@ describe('Contenido del centro de ayuda (docs/conocimiento/AGENIA.md)', () => {
     it('dentro de cada categoría, los temas van en el orden del menú', () => {
         for (const c of categorias) {
             const enLaAyuda = temas.filter((t) => t.categoria === c.id && t.href).map((t) => t.href);
-            const enElMenu = menuCompleto.filter((m) => (m.grupo ?? 'inicio') === c.id).map((m) => m.href);
+            // Las secciones de Configuración, justo después de Configuración y en su orden.
+            const enElMenu = menuCompleto
+                .filter((m) => (m.grupo ?? 'inicio') === c.id)
+                .flatMap((m) => (m.href === CONFIGURACION ? [m.href, ...secciones.map((s) => s.href)] : [m.href]));
             expect(enLaAyuda).toEqual(enElMenu);
         }
     });

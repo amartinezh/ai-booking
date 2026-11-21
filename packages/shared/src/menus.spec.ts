@@ -1,9 +1,11 @@
 import {
   GRUPOS_DEL_MENU,
+  GRUPOS_DE_CONFIGURACION,
   accesosRapidos,
   banderasDelEspejo,
   getMenusForRole,
   nombresEnElMenu,
+  seccionesDeConfiguracion,
   seccionesDelMenu,
   type UserRole,
 } from './menus';
@@ -696,5 +698,59 @@ describe('Accesos rápidos de la Visión General (N10)', () => {
     ['GENERAL_OBSERVER', ['Analíticas', 'Canales en vivo', 'Soporte y ayuda']],
   ] as const)('%s, sin grupos: todo menos la Visión General, como antes', (rol, esperado) => {
     expect(labels(accesosRapidos(getMenusForRole(rol)))).toEqual(esperado);
+  });
+});
+
+describe('Secciones de Configuración (docs/PLAN_NAVEGACION.md §5)', () => {
+  const rutas = (s: { href: string }[]) => s.map((x) => x.href);
+
+  it('el administrador de una clínica sin espejo: las secciones, sin la del hospital', () => {
+    expect(rutas(seccionesDeConfiguracion(getMenusForRole('ORG_ADMIN')))).toEqual([
+      '/dashboard/configuracion/asistente',
+      '/dashboard/configuracion/agenda',
+      '/dashboard/configuracion/recordatorios',
+      '/dashboard/configuracion/identidad',
+      '/dashboard/configuracion/conocimiento',
+      '/dashboard/configuracion/privacidad',
+      '/dashboard/configuracion/canales',
+    ]);
+  });
+
+  it('con espejo, también la del hospital, al final', () => {
+    const secciones = seccionesDeConfiguracion(
+      getMenusForRole('ORG_ADMIN', { conEspejo: true }),
+    );
+    expect(secciones[secciones.length - 1]).toMatchObject({
+      titulo: 'Hospital (espejo)',
+      href: '/dashboard/configuracion/hospital',
+      grupo: 'conexiones',
+    });
+    expect(secciones[secciones.length - 1]).not.toHaveProperty('soloConEspejo');
+  });
+
+  it.each(['BOOKING_AGENT', 'DOCTOR', 'PATIENT', 'GENERAL_OBSERVER', 'SUPER_ADMIN'] as const)(
+    '%s no tiene Configuración: ninguna sección',
+    (rol) => {
+      expect(
+        seccionesDeConfiguracion(getMenusForRole(rol, { conEspejo: true })),
+      ).toEqual([]);
+    },
+  );
+
+  it('van grupo por grupo, en el orden de GRUPOS_DE_CONFIGURACION, y todas cuelgan de Configuración', () => {
+    const secciones = seccionesDeConfiguracion(
+      getMenusForRole('ORG_ADMIN', { conEspejo: true }),
+    );
+    const grupos = secciones.map((s) => s.grupo);
+    expect([...new Set(grupos)]).toEqual(GRUPOS_DE_CONFIGURACION.map((g) => g.id));
+    expect(grupos).toEqual([...grupos].sort(
+      (a, b) =>
+        GRUPOS_DE_CONFIGURACION.findIndex((g) => g.id === a) -
+        GRUPOS_DE_CONFIGURACION.findIndex((g) => g.id === b),
+    ));
+    for (const s of secciones) {
+      expect(s.href.startsWith('/dashboard/configuracion/')).toBe(true);
+    }
+    expect(new Set(secciones.map((s) => s.titulo)).size).toBe(secciones.length);
   });
 });

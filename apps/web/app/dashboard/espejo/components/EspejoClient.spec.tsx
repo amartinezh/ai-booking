@@ -78,7 +78,10 @@ describe('EspejoClient — qué escribe AgenIA en el hospital', () => {
         expect(screen.getByText('Agendar citas')).toBeInTheDocument();
         expect(screen.getByText('Cancelar citas').parentElement).toHaveTextContent('encendido');
         expect(screen.getByText('Agendar citas').parentElement).toHaveTextContent('apagado');
-        expect(screen.getByRole('link', { name: 'Configuración' })).toHaveAttribute('href', '/dashboard/configuracion');
+        expect(screen.getByRole('link', { name: 'Configuración › Qué puede hacer el asistente' })).toHaveAttribute(
+            'href',
+            '/dashboard/configuracion/asistente',
+        );
         expect(screen.queryAllByRole('switch')).toHaveLength(0);
     });
 

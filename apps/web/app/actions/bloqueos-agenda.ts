@@ -145,7 +145,7 @@ export async function crearBloqueoAgenda(entrada: {
             ...v.regla,
         });
 
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, ...(await estado(admin.organizationId)) };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) || 'No se pudo guardar el bloqueo.' };
@@ -167,7 +167,7 @@ export async function quitarBloqueoAgenda(id: string): Promise<ResultadoBloqueos
         await prisma.bookingBlock.delete({ where: { id: fila.id } });
         await registrar(admin, 'BOOKING_BLOCK_DELETED', 'Se quitó un día u horas sin citas', { ...fila });
 
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, ...(await estado(admin.organizationId)) };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) || 'No se pudo quitar el bloqueo.' };

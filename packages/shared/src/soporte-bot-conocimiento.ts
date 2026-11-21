@@ -18,7 +18,12 @@
 import { MARCA_FIN, MARCA_INICIO } from './conocimiento';
 import { GLOSARIO_ID } from './conocimiento-buscador';
 import type { ContenidoAyuda } from './conocimiento-tipos';
-import { nombresEnElMenu, type MenuItem, type UserRole } from './menus';
+import {
+  nombresEnElMenu,
+  seccionesDeConfiguracion,
+  type MenuItem,
+  type UserRole,
+} from './menus';
 import { ROL_LEGIBLE } from './soporte-caso';
 
 /**
@@ -161,8 +166,15 @@ export function armarManualDelAsistente(p: {
   menus: MenuItem[];
 }): ManualDelAsistente {
   const { contenido, menus } = p;
+  // Las opciones del menú y, para quien tiene Configuración, sus secciones:
+  // cada una tiene su tema con el mismo título (docs/PLAN_NAVEGACION.md §5).
+  const secciones = seccionesDeConfiguracion(menus);
+  const opciones = [
+    ...menus.map((m) => ({ href: m.href, titulo: m.label })),
+    ...secciones,
+  ];
   const delMenu = (href: string, titulo: string) =>
-    menus.some((m) => m.href === href && m.label === titulo);
+    opciones.some((o) => o.href === href && o.titulo === titulo);
 
   const temasDelUsuario: string[] = [];
   const temasDeOtroRol: string[] = [];
@@ -204,6 +216,11 @@ export function armarManualDelAsistente(p: {
     `- Rol: ${ROL_LEGIBLE[p.rol]}.`,
     // Con su grupo, como las ve en el menú lateral («Administración › Configuración»).
     `- Opciones de su menú: ${lista(nombresEnElMenu(menus))}.`,
+    ...(secciones.length > 0
+      ? [
+          `- Secciones de su Configuración (en la columna de la izquierda, con «Resumen» arriba): ${lista(secciones.map((x) => x.titulo))}.`,
+        ]
+      : []),
     `- Temas del manual que puede seguir paso a paso: ${lista(temasDelUsuario)}.`,
     `- Temas de opciones que su rol NO tiene (no des el paso a paso; di quién lo hace): ${lista(temasDeOtroRol)}.`,
     `- Opciones de su menú que el manual no explica en detalle: ${lista(opcionesSinTema)}.`,

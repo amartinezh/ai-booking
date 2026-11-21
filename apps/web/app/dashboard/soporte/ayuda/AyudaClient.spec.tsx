@@ -4,11 +4,13 @@ import AyudaClient from './AyudaClient';
 import { cargarConocimiento } from '@/lib/ayuda/cargar-conocimiento';
 import { parsearConocimiento } from '@/lib/ayuda/conocimiento';
 import { MD_MINIMO } from '@/lib/ayuda/conocimiento.fixture';
-import { getMenusForRole } from '@/lib/menus';
+import { getMenusForRole, seccionesDeConfiguracion } from '@/lib/menus';
 
 const CONTENIDO = cargarConocimiento();
-const TODAS = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true }).map((m) => m.href);
-const SIN_ESPEJO = getMenusForRole('ORG_ADMIN').map((m) => m.href);
+/** Como la página: las opciones del menú y las secciones de Configuración. */
+const rutasDe = (menus: ReturnType<typeof getMenusForRole>) => [...menus, ...seccionesDeConfiguracion(menus)].map((m) => m.href);
+const TODAS = rutasDe(getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true, conResumen: true }));
+const SIN_ESPEJO = rutasDe(getMenusForRole('ORG_ADMIN'));
 
 function abrir(props: Partial<Parameters<typeof AyudaClient>[0]> = {}) {
     return render(<AyudaClient contenido={CONTENIDO} temaInicial={null} consultaInicial="" rutasDisponibles={TODAS} {...props} />);
@@ -38,8 +40,8 @@ describe('AyudaClient', () => {
 
     it('marca las opciones que no están en el menú de la clínica', () => {
         abrir({ rutasDisponibles: SIN_ESPEJO });
-        // Espejo, Bandeja, Avisos masivos y Envíos de documentos.
-        expect(screen.getAllByText('No está en el menú de tu clínica')).toHaveLength(4);
+        // Espejo, Bandeja, Avisos masivos, Envíos de documentos y Configuración › Hospital (espejo).
+        expect(screen.getAllByText('No está en el menú de tu clínica')).toHaveLength(5);
     });
 
     it('buscar muestra resultados y abrir uno lleva a su guía paso a paso', async () => {

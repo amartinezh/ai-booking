@@ -121,7 +121,7 @@ export async function connectMyTelegram(
     const res = await callBackend('POST', '/telegram-config', { botToken: token });
     if (!res.ok) return { success: false, error: res.message };
     await anotarTelegram('TELEGRAM_CONNECTED', res.body as PublicTelegramConfig);
-    revalidatePath('/dashboard/configuracion');
+    revalidatePath('/dashboard/configuracion', 'layout');
     return { success: true, data: res.body as PublicTelegramConfig };
 }
 
@@ -129,7 +129,7 @@ export async function verifyMyTelegram(): Promise<TelegramActionResult<TelegramW
     if (!(await esAdmin())) return { success: false, error: 'Acceso denegado' };
     const res = await callBackend('POST', '/telegram-config/verify');
     if (!res.ok) return { success: false, error: res.message };
-    revalidatePath('/dashboard/configuracion');
+    revalidatePath('/dashboard/configuracion', 'layout');
     return { success: true, data: res.body as TelegramWebhookStatus };
 }
 
@@ -138,6 +138,6 @@ export async function disconnectMyTelegram(): Promise<TelegramActionResult<Publi
     const res = await callBackend('DELETE', '/telegram-config');
     if (!res.ok) return { success: false, error: res.message };
     await anotarTelegram('TELEGRAM_DISCONNECTED', null);
-    revalidatePath('/dashboard/configuracion');
+    revalidatePath('/dashboard/configuracion', 'layout');
     return { success: true, data: res.body as PublicTelegramConfig };
 }

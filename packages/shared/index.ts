@@ -554,18 +554,22 @@ export type {
 // Menú del panel por rol.
 export {
   GRUPOS_DEL_MENU,
+  GRUPOS_DE_CONFIGURACION,
   accesosRapidos,
   banderasDelEspejo,
   getMenusForRole,
   nombresEnElMenu,
+  seccionesDeConfiguracion,
   seccionesDelMenu,
 } from './src/menus';
 export type {
   BanderasDelEspejo,
+  GrupoDeConfiguracion,
   MenuAccent,
   MenuGrupo,
   MenuItem,
   OpcionesDelMenu,
+  SeccionDeConfiguracion,
   SeccionDelMenu,
   UserRole,
 } from './src/menus';

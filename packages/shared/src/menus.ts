@@ -528,6 +528,109 @@ export function accesosRapidos(menus: readonly MenuItem[]): MenuItem[] {
   return [...deArriba, ...sinInicio.filter((m) => m.grupo === 'operacion')];
 }
 
+// ── Las secciones de Configuración (docs/PLAN_NAVEGACION.md §5) ──────────
+
+/** Los grupos de la columna de Configuración. */
+export type GrupoDeConfiguracion = 'asistente' | 'clinica' | 'conexiones';
+
+export const GRUPOS_DE_CONFIGURACION: ReadonlyArray<{
+  id: GrupoDeConfiguracion;
+  titulo: string;
+}> = [
+  { id: 'asistente', titulo: 'El asistente' },
+  { id: 'clinica', titulo: 'La clínica' },
+  { id: 'conexiones', titulo: 'Conexiones' },
+];
+
+export interface SeccionDeConfiguracion {
+  /** El título de la sección; es también el de su tema en el Centro de ayuda. */
+  titulo: string;
+  href: string;
+  icono: string;
+  descripcion: string;
+  grupo: GrupoDeConfiguracion;
+}
+
+const RUTA_CONFIGURACION = CONFIGURACION.href;
+
+const SECCIONES_DE_CONFIGURACION: ReadonlyArray<
+  SeccionDeConfiguracion & { soloConEspejo?: true }
+> = [
+  {
+    titulo: 'Qué puede hacer el asistente',
+    href: `${RUTA_CONFIGURACION}/asistente`,
+    icono: '🤖',
+    descripcion: 'Agendar, cancelar y cambiar la fecha por el chat',
+    grupo: 'asistente',
+  },
+  {
+    titulo: 'Agenda que ofrece el asistente',
+    href: `${RUTA_CONFIGURACION}/agenda`,
+    icono: '🗓️',
+    descripcion: 'Plazo, días sin citas, sábados, parte de la agenda y horarios',
+    grupo: 'asistente',
+  },
+  {
+    titulo: 'Recordatorios',
+    href: `${RUTA_CONFIGURACION}/recordatorios`,
+    icono: '🔔',
+    descripcion: 'El mensaje antes de la cita, a quién y con cuánta anticipación',
+    grupo: 'asistente',
+  },
+  {
+    titulo: 'Nombre, tono y voz',
+    href: `${RUTA_CONFIGURACION}/identidad`,
+    icono: '🗣️',
+    descripcion: 'Cómo se llama el asistente, cómo habla y su voz',
+    grupo: 'asistente',
+  },
+  {
+    titulo: 'Base de conocimiento',
+    href: `${RUTA_CONFIGURACION}/conocimiento`,
+    icono: '📚',
+    descripcion: 'Lo que el asistente responde sobre la clínica',
+    grupo: 'asistente',
+  },
+  {
+    titulo: 'Privacidad (Ley 1581)',
+    href: `${RUTA_CONFIGURACION}/privacidad`,
+    icono: '🔒',
+    descripcion: 'Autorización de datos y la página pública de la política',
+    grupo: 'clinica',
+  },
+  {
+    titulo: 'Canales e IA',
+    href: `${RUTA_CONFIGURACION}/canales`,
+    icono: '🔌',
+    descripcion: 'Inteligencia artificial, WhatsApp, plantillas y Telegram',
+    grupo: 'conexiones',
+  },
+  {
+    titulo: 'Hospital (espejo)',
+    href: `${RUTA_CONFIGURACION}/hospital`,
+    icono: '🏥',
+    descripcion: 'Médicos nuevos del hospital y lo que se cambia en el espejo',
+    grupo: 'conexiones',
+    soloConEspejo: true,
+  },
+];
+
+/**
+ * Las secciones de Configuración de quien tiene ese menú. Salen del menú mismo:
+ * ninguna si no tiene Configuración (solo el administrador la tiene), y la del
+ * hospital solo si tiene el Espejo (la clínica tiene espejo). Las usan la
+ * columna de Configuración, el Centro de ayuda y el asistente de soporte.
+ */
+export function seccionesDeConfiguracion(
+  menus: readonly Pick<MenuItem, 'href'>[],
+): SeccionDeConfiguracion[] {
+  if (!menus.some((m) => m.href === RUTA_CONFIGURACION)) return [];
+  const conEspejo = menus.some((m) => m.href === ESPEJO.href);
+  return SECCIONES_DE_CONFIGURACION.filter(
+    (s) => !s.soloConEspejo || conEspejo,
+  ).map(({ soloConEspejo: _, ...s }) => s);
+}
+
 /** Las banderas del menú que dependen del espejo de una clínica (ver `getMenusForRole`). */
 export interface BanderasDelEspejo {
   /** Hay espejo configurado (aunque esté apagado: el administrador lo ve para reactivarlo). */

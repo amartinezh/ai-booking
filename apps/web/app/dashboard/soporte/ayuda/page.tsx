@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/session';
-import { getMenusForRole } from '@/lib/menus';
+import { getMenusForRole, seccionesDeConfiguracion } from '@/lib/menus';
 import { getTenantMirrorFlags } from '@/lib/mirror-flags';
 import { cargarConocimiento } from '@/lib/ayuda/cargar-conocimiento';
 import type { ContenidoAyuda } from '@/lib/ayuda/tipos';
@@ -49,7 +49,9 @@ export default async function AyudaPage({
     // Las opciones del espejo solo existen en algunas clínicas: la ayuda las
     // explica igual, pero avisa cuáles no están en el menú de esta.
     const { conEspejo, conAvisos, conAvisosDriver, conResumen } = await getTenantMirrorFlags(session.organizationId);
-    const rutasDisponibles = getMenusForRole(session.role, { conEspejo, conAvisos, conAvisosDriver, conResumen }).map((m) => m.href);
+    // Más las secciones de Configuración, que tienen su propio tema (docs/PLAN_NAVEGACION.md §5).
+    const menus = getMenusForRole(session.role, { conEspejo, conAvisos, conAvisosDriver, conResumen });
+    const rutasDisponibles = [...menus, ...seccionesDeConfiguracion(menus)].map((m) => m.href);
 
     return (
         <div className="max-w-6xl mx-auto w-full">

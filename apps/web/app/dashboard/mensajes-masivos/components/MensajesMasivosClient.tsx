@@ -163,7 +163,7 @@ function EstadoDelCanal({ estado, error }: { estado: EstadoMensajesMasivos | nul
                     <pre className="whitespace-pre-wrap rounded-lg bg-white p-3 font-sans text-sm dark:bg-zinc-900">{CUERPO_SUGERIDO_COMUNICADO}</pre>
                     <p>
                         Cuando Meta las apruebe, regístrelas con su nombre e idioma en{' '}
-                        <Link href="/dashboard/configuracion" className="font-semibold text-teal-700 hover:underline">Configuración → WhatsApp</Link>
+                        <Link href="/dashboard/configuracion/canales#plantillas" className="font-semibold text-teal-700 hover:underline">Configuración › Canales e IA</Link>
                         {' '}(«Comunicado (mensajes masivos, sin imagen)» y «Comunicado con imagen»).
                     </p>
                 </div>

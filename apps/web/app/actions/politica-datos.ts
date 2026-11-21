@@ -121,7 +121,7 @@ export async function setMyPaginaPoliticaDatos(entrada: unknown): Promise<Result
                 metadata: { detalle, campos: cambios, anterior: antes, nuevo: r.datos },
             });
         }
-        revalidatePath('/dashboard/configuracion');
+        revalidatePath('/dashboard/configuracion', 'layout');
         return { success: true, pagina: await armar(organizationId, guardado, org?.timezone) };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };

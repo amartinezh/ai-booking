@@ -66,7 +66,7 @@ export default function PaginaPoliticaDatos({
     const tope = `${Number(pagina.hoy.slice(0, 4)) + 1}${pagina.hoy.slice(4)}`;
 
     return (
-        <div className="mt-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-4">
+        <div id="politica" className="mt-6 scroll-mt-24 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-4">
             <div className="flex items-start gap-3">
                 <div className="rounded-xl p-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
                     <FileText className="w-5 h-5" />
