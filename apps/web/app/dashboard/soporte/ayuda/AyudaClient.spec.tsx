@@ -52,8 +52,8 @@ describe('AyudaClient', () => {
 
         await user.click(opciones[0]);
 
-        expect(screen.getByRole('heading', { level: 2, name: 'Agendas (Slots)' })).toBeInTheDocument();
-        expect(screen.getByRole('link', { name: /Abrir Agendas \(Slots\)/ })).toHaveAttribute('href', '/dashboard/agenda');
+        expect(screen.getByRole('heading', { level: 2, name: 'Agendas y cupos' })).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /Abrir Agendas y cupos/ })).toHaveAttribute('href', '/dashboard/agenda');
         // Las palabras buscadas quedan resaltadas en la guía.
         expect(screen.getByText('Las palabras de tu búsqueda aparecen resaltadas.')).toBeInTheDocument();
     });
@@ -110,7 +110,7 @@ describe('AyudaClient', () => {
 
     it('abre directo el tema que viene en la dirección', () => {
         abrir({ temaInicial: 'padron' });
-        expect(screen.getByRole('heading', { level: 2, name: 'Padrón EPS (Altas)' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 2, name: 'Padrón EPS' })).toBeInTheDocument();
         expect(screen.getByRole('heading', { name: 'Paso a paso' })).toBeInTheDocument();
     });
 

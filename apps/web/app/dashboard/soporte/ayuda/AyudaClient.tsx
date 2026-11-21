@@ -36,8 +36,11 @@ const ETIQUETA_TIPO: Record<TipoFragmento, string> = {
     glosario: 'Glosario',
 };
 
-/** La categoría y el tema que el inicio destaca arriba, en vez de en la cuadrícula. */
-const CATEGORIA_DE_INICIO = 'inicio';
+/**
+ * El tema que el inicio destaca arriba, en vez de en la cuadrícula. Los demás
+ * de su categoría («Para empezar»: Visión General y Soporte y ayuda, las
+ * opciones sueltas del menú) sí van en la cuadrícula.
+ */
 const TEMA_DE_BIENVENIDA = 'primeros-pasos';
 
 const TARJETA = 'rounded-2xl bg-white dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-800';
@@ -499,7 +502,10 @@ function Inicio({ disponibles, onAbrirTema }: { disponibles: Set<string>; onAbri
                 ))}
             </dl>
 
-            {categorias.filter((c) => c.id !== CATEGORIA_DE_INICIO).map((c) => (
+            {categorias
+                .map((c) => ({ c, deLaCategoria: temas.filter((t) => t.categoria === c.id && t.id !== TEMA_DE_BIENVENIDA) }))
+                .filter(({ deLaCategoria }) => deLaCategoria.length > 0)
+                .map(({ c, deLaCategoria }) => (
                 <section key={c.id} aria-labelledby={`categoria-${c.id}`} className="space-y-3">
                     <div>
                         <h2 id={`categoria-${c.id}`} className="text-lg font-semibold text-zinc-900 dark:text-white">
@@ -508,7 +514,7 @@ function Inicio({ disponibles, onAbrirTema }: { disponibles: Set<string>; onAbri
                         <p className="text-sm text-zinc-500 dark:text-zinc-400">{c.descripcion}</p>
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {temas.filter((t) => t.categoria === c.id).map((t) => (
+                        {deLaCategoria.map((t) => (
                             <button
                                 key={t.id}
                                 type="button"

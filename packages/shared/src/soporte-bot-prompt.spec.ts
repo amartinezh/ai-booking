@@ -323,7 +323,7 @@ describe('respuestaSinIA', () => {
       [
         {
           temaId: 'agenda',
-          tema: 'Agendas (Slots)',
+          tema: 'Agendas y cupos',
           titulo:
             'Sale «No se encontraron agendas en la fecha de origen para clonar».',
           extracto: 'Elige otro día…',
@@ -348,7 +348,7 @@ describe('respuestaSinIA', () => {
       [
         TEXTOS_SOPORTE.sinIA,
         '',
-        '• Agendas (Slots) (no está en tu menú) › Sale «No se encontraron agendas en la fecha de origen para clonar»: Elige otro día…',
+        '• Agendas y cupos (no está en tu menú) › Sale «No se encontraron agendas en la fecha de origen para clonar»: Elige otro día…',
         '• Glosario: Cupo: …',
         '• Rastreo de paciente: Busca…',
         '',

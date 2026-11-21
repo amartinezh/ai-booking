@@ -51,7 +51,7 @@ describe('SupportBotKnowledgeService', () => {
     );
     expect(r.length).toBeGreaterThan(0);
     expect(r.length).toBeLessThanOrEqual(3);
-    expect(r[0]).toMatchObject({ tema: 'Agendas (Slots)' });
+    expect(r[0]).toMatchObject({ tema: 'Agendas y cupos' });
     expect(r[0].extracto.length).toBeGreaterThan(0);
   });
 

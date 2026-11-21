@@ -971,7 +971,7 @@ describe('textos fijos', () => {
         seguimiento: false,
       }),
     ).toBe(
-      'Listo, abrí el caso #58: «No salen los recordatorios». El equipo técnico lo revisa desde mañana a las 8:00. Puedes ver cómo va con /casos o en el panel › Soporte.',
+      'Listo, abrí el caso #58: «No salen los recordatorios». El equipo técnico lo revisa desde mañana a las 8:00. Puedes ver cómo va con /casos o en el panel › Soporte y ayuda.',
     );
     expect(
       TEXTOS_SOPORTE.casoAbierto({

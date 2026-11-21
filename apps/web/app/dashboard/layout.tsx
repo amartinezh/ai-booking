@@ -5,7 +5,8 @@ import { redirect } from 'next/navigation';
 import { prisma } from '../../lib/prisma';
 import LogoutButton from './components/LogoutButton';
 import BrandLogo from '@/app/components/BrandLogo';
-import { getMenusForRole } from '../../lib/menus';
+import { getMenusForRole, seccionesDelMenu } from '../../lib/menus';
+import MenuLateral, { MenuMovil } from './components/MenuDelPanel';
 import { getTenantMirrorFlags } from '../../lib/mirror-flags';
 import { pendientesParaMenu } from '../../lib/bandeja/pendientes';
 import { solicitudesCitasPendientes } from '../../lib/limite-citas/acceso';
@@ -62,6 +63,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         pendientesBandeja,
         pendientesSolicitudesCitas,
     });
+    // En grupos con su encabezado (docs/PLAN_NAVEGACION.md §4); los menús cortos, sin encabezados.
+    const secciones = seccionesDelMenu(menus);
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">
@@ -77,26 +80,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     <h2 className="text-base font-bold tracking-tight leading-snug text-zinc-900 dark:text-white wrap-break-word" title={orgName}>{orgName}</h2>
                 </div>
 
-                <nav className="flex-1 min-h-0 overflow-y-auto p-3 space-y-0.5">
-                    {menus.map((item, idx) => (
-                        <Link
-                            key={idx}
-                            href={item.href}
-                            className="flex items-center gap-3 px-3 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"
-                        >
-                            <span className="text-xl">{item.icon}</span>
-                            {item.label}
-                            {item.badge ? (
-                                <span
-                                    className="ml-auto rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white"
-                                    aria-label={`${item.badge} pendientes`}
-                                >
-                                    {item.badge}
-                                </span>
-                            ) : null}
-                        </Link>
-                    ))}
-                </nav>
+                <MenuLateral secciones={secciones} />
 
                 <div className="p-5 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 shrink-0">
                     <div className="text-xs mb-4">
@@ -115,9 +99,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
                 </div>
             </aside>
 
-            {/* Configuración Móvil */}
-            <header className="md:hidden bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 p-4 flex justify-between items-center">
-                <div className="flex items-center gap-2 truncate max-w-[60%]">
+            {/* Encabezado en el celular: el menú se abre con «☰ Menú» */}
+            <header className="md:hidden bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 p-4 flex justify-between items-center gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                    {secciones.length > 0 && (
+                        <MenuMovil secciones={secciones} correo={email} rol={roleMap[role]} />
+                    )}
                     {orgLogoUrl ? (
                         <img src={orgLogoUrl} alt="Logo" className="w-8 h-8 shrink-0 rounded-md object-contain bg-white shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800" />
                     ) : (
@@ -125,10 +112,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     )}
                     <span className="font-bold text-zinc-900 dark:text-white truncate" title={orgName}>{orgName}</span>
                 </div>
-                <div className="flex items-center gap-3">
-                    <span className="text-xs font-semibold px-3 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-lg">
-                        {roleMap[role]}
-                    </span>
+                <div className="flex items-center gap-3 shrink-0">
                     <Link
                         href="/dashboard/cuenta"
                         title="Cambiar mi clave"
@@ -143,15 +127,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
             {/* Contenido Principal */}
             <main className="flex-1 p-6 md:p-10 overflow-x-hidden overflow-y-auto w-full">
-                {/* Menú de enlaces rápidos temporal para móviles */}
-                <div className="md:hidden flex flex-wrap gap-2 mb-6">
-                    {menus.map((item, idx) => (
-                        <Link key={idx} href={item.href} className="px-3 py-2 bg-white dark:bg-zinc-900 shadow-sm rounded-lg text-xs font-semibold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800">
-                            {item.icon} {item.label}
-                            {item.badge ? ` (${item.badge})` : ''}
-                        </Link>
-                    ))}
-                </div>
                 <RegistroDePantallas />
                 {children}
             </main>

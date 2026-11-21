@@ -51,7 +51,7 @@ describe('SupportBotAnswerService', () => {
   const RESPUESTA_IA = JSON.stringify({
     tipo: 'respuesta',
     respuesta:
-      'Eso lo hace el administrador desde Agendas (Slots) › «Clonar Día».',
+      'Eso lo hace el administrador desde Agendas y cupos › «Clonar Día».',
     temas: ['agenda', 'inventado'],
     urgencia: 'normal',
     caso: null,
@@ -227,7 +227,7 @@ describe('SupportBotAnswerService', () => {
       const r = await svc.responder(ANA, RT, AHORA);
       expect(r).toEqual({
         texto:
-          'Eso lo hace el administrador desde Agendas (Slots) › «Clonar Día».',
+          'Eso lo hace el administrador desde Agendas y cupos › «Clonar Día».',
         botones: 'UTIL',
         registro: {
           source: 'IA',
@@ -371,7 +371,7 @@ describe('SupportBotAnswerService', () => {
       const r = await svc.responder(ANA, RT, AHORA);
       expect(r?.motivoSinIA).toBe('SIN_IA_CONFIGURADA');
       expect(r?.texto.startsWith(TEXTOS_SOPORTE.sinIA)).toBe(true);
-      expect(r?.texto).toContain('Agendas (Slots)');
+      expect(r?.texto).toContain('Agendas y cupos');
       expect(r?.texto.endsWith(TEXTOS_SOPORTE.ofrecerCaso)).toBe(true);
       expect(r?.botones).toBe('OFRECER_CASO');
       expect(r?.ia).toBeNull();
@@ -380,8 +380,8 @@ describe('SupportBotAnswerService', () => {
         '¿cómo copio la agenda del lunes al martes?',
       ]);
       expect(r?.turnoAnterior).toEqual([]);
-      // La agente no tiene «Agendas (Slots)» en su menú: se lo marca.
-      expect(r?.texto).toContain('Agendas (Slots) (no está en tu menú)');
+      // La agente no tiene «Agendas y cupos» en su menú: se lo marca.
+      expect(r?.texto).toContain('Agendas y cupos (no está en tu menú)');
       expect(r?.registro).toMatchObject({ source: 'SIN_IA', aiProvider: null });
     });
 

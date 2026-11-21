@@ -9,7 +9,10 @@
 // API (docs/PLAN_BOT_SOPORTE.md §3.2), para saber qué opciones tiene quien
 // pregunta. La web la reexporta en apps/web/lib/menus.ts. Una opción nueva exige
 // su tema en la Parte 1 de docs/conocimiento/AGENIA.md con el mismo título
-// (scripts/check-conocimiento.mjs).
+// (scripts/check-conocimiento.mjs), dentro de la categoría de su grupo.
+//
+// Cada opción va en un grupo (`grupo`, docs/PLAN_NAVEGACION.md §4): el menú
+// lateral los muestra con su encabezado, la opción activa resaltada.
 // ─────────────────────────────────────────────────────────────
 
 /** Los roles de `User.role` (packages/database). La web los recibe en la sesión. */
@@ -37,6 +40,27 @@ export type MenuAccent =
   | 'sky'
   | 'slate';
 
+/**
+ * Los grupos del menú (docs/PLAN_NAVEGACION.md §4, N1). Son también las
+ * categorías del Centro de ayuda, con el mismo id y el mismo título (N11): un
+ * solo mapa del sistema. Lo comprueba `apps/web/lib/ayuda/contenido.spec.ts`.
+ */
+export type MenuGrupo =
+  | 'operacion'
+  | 'comunicacion'
+  | 'catalogos'
+  | 'indicadores'
+  | 'administracion';
+
+/** En el orden en que se muestran: primero el trabajo del día, al final la administración. */
+export const GRUPOS_DEL_MENU: ReadonlyArray<{ id: MenuGrupo; titulo: string }> = [
+  { id: 'operacion', titulo: 'Operación diaria' },
+  { id: 'comunicacion', titulo: 'Comunicación con pacientes' },
+  { id: 'catalogos', titulo: 'Agenda y catálogos' },
+  { id: 'indicadores', titulo: 'Indicadores' },
+  { id: 'administracion', titulo: 'Administración' },
+];
+
 export interface MenuItem {
   label: string;
   href: string;
@@ -46,6 +70,11 @@ export interface MenuItem {
   accent: MenuAccent;
   /** Cuántas cosas esperan al usuario en esa opción (solo la bandeja); 0 o ausente = sin cifra. */
   badge?: number;
+  /**
+   * Su grupo del menú. Sin grupo, la opción va suelta: arriba (Visión General,
+   * Agendamiento) o al pie (Soporte y ayuda).
+   */
+  grupo?: MenuGrupo;
 }
 
 const OVERVIEW: MenuItem = {
@@ -56,25 +85,52 @@ const OVERVIEW: MenuItem = {
   accent: 'blue',
 };
 const SUPPORT: MenuItem = {
-  label: 'Soporte',
+  label: 'Soporte y ayuda',
   href: '/dashboard/soporte',
   icon: '🛟',
-  description: 'Tickets de ayuda técnica',
+  description: 'Centro de ayuda y casos de soporte técnico',
   accent: 'slate',
 };
 
+// ── Operación diaria ─────────────────────────────────────────
+
 /**
- * Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md). Lo ven ORG_ADMIN,
- * BOOKING_AGENT y DOCTOR — con vistas distintas: el permiso real lo aplica el
- * servidor (`apps/web/lib/rastreo/acceso.ts`), esto solo decide si aparece el enlace.
- * GENERAL_OBSERVER y PATIENT no lo tienen.
+ * Bandeja de excepciones de sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #3).
+ * Solo en las clínicas con espejo —sin HIS no hay nada que sincronizar— y para quien
+ * la trabaja: ORG_ADMIN y BOOKING_AGENT. El permiso real y el alcance del agente los
+ * aplica el servidor (`apps/web/lib/bandeja/acceso.ts`); esto solo decide si aparece el enlace.
  */
-const RASTREO: MenuItem = {
-  label: 'Rastreo de paciente',
-  href: '/dashboard/rastreo',
-  icon: '🔎',
-  description: 'Consulta y diagnóstico de las citas de un paciente',
-  accent: 'indigo',
+const BANDEJA: MenuItem = {
+  label: 'Bandeja de sincronización',
+  href: '/dashboard/bandeja',
+  icon: '🚨',
+  description:
+    'Citas que no llegaron al hospital, cambios sin aplicar y avisos de pacientes',
+  accent: 'orange',
+  grupo: 'operacion',
+};
+
+/**
+ * La bandeja de quienes piden más citas que el límite: de ORG_ADMIN y
+ * BOOKING_AGENT, porque quien agenda es quien atiende a esos pacientes. El
+ * permiso real lo aplican la página y sus acciones (`apps/web/lib/limite-citas/acceso.ts`).
+ */
+const SOLICITUDES_CITAS: MenuItem = {
+  label: 'Solicitudes de más citas',
+  href: '/dashboard/solicitudes-citas',
+  icon: '📝',
+  description: 'Pacientes que piden citas por encima del límite',
+  accent: 'rose',
+  grupo: 'operacion',
+};
+
+const SOLICITUDES_ALTA: MenuItem = {
+  label: 'Solicitudes de alta',
+  href: '/dashboard/solicitudes-alta',
+  icon: '📨',
+  description: 'Revisiones pedidas por ciudadanos',
+  accent: 'rose',
+  grupo: 'operacion',
 };
 
 /**
@@ -89,31 +145,25 @@ const AUDITORIA: MenuItem = {
   icon: '🕵️',
   description: 'Trazabilidad del chatbot',
   accent: 'slate',
+  grupo: 'operacion',
 };
 
 /**
- * Límite de citas por paciente (cuántas puede tener el mismo día y en el mismo
- * mes por el asistente): solo ORG_ADMIN, que es quien fija la regla
- * (2026-10-22: el agendador la veía y la podía cambiar). La bandeja de quienes
- * piden más (Solicitudes) es de ORG_ADMIN y BOOKING_AGENT: quien agenda es quien
- * atiende a esos pacientes. El permiso real lo aplican las páginas y sus
- * acciones (`apps/web/lib/limite-citas/acceso.ts`).
+ * Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md). Lo ven ORG_ADMIN,
+ * BOOKING_AGENT y DOCTOR — con vistas distintas: el permiso real lo aplica el
+ * servidor (`apps/web/lib/rastreo/acceso.ts`), esto solo decide si aparece el enlace.
+ * GENERAL_OBSERVER y PATIENT no lo tienen.
  */
-const LIMITE_CITAS: MenuItem = {
-  label: 'Límite de citas',
-  href: '/dashboard/limites-citas',
-  icon: '🚦',
-  description: 'Máximo de citas por paciente al día y al mes',
-  accent: 'amber',
+const RASTREO: MenuItem = {
+  label: 'Rastreo de paciente',
+  href: '/dashboard/rastreo',
+  icon: '🔎',
+  description: 'Consulta y diagnóstico de las citas de un paciente',
+  accent: 'indigo',
+  grupo: 'operacion',
 };
 
-const SOLICITUDES_CITAS: MenuItem = {
-  label: 'Solicitudes de más citas',
-  href: '/dashboard/solicitudes-citas',
-  icon: '📝',
-  description: 'Pacientes que piden citas por encima del límite',
-  accent: 'rose',
-};
+// ── Comunicación con pacientes ───────────────────────────────
 
 /**
  * 📢 Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md): comunicados de la clínica
@@ -128,7 +178,174 @@ const MENSAJES_MASIVOS: MenuItem = {
   icon: '📢',
   description: 'Comunicados por WhatsApp a tus pacientes o a una lista',
   accent: 'teal',
+  grupo: 'comunicacion',
 };
+
+/**
+ * EXCLUSIVO del driver cnt-sanvicente-anserma (ver
+ * docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §1). A
+ * diferencia de `ESPEJO` —que solo está en el menú de `ORG_ADMIN`—, esta
+ * aparece para `ORG_ADMIN` y `BOOKING_AGENT` (§1.3: los dos operan la
+ * pantalla; solo `ORG_ADMIN` ve el panel de configuración dentro de ella).
+ *
+ * Los dos la ven con solo el driver correcto (`conAvisosDriver`), aunque los
+ * avisos sigan APAGADOS. ORG_ADMIN, porque es quien los enciende: la pantalla
+ * le muestra el panel para hacerlo (antes solo aparecía ya encendidos, y para
+ * encenderlos había que escribir la dirección a mano). BOOKING_AGENT, porque
+ * la clínica lo pidió así: apagados, la pantalla le dice que un administrador
+ * tiene que activarlos.
+ */
+const AVISOS: MenuItem = {
+  label: 'Avisos masivos',
+  href: '/dashboard/espejo/avisos',
+  icon: '📣',
+  description:
+    'Aviso o recordatorio por WhatsApp para el día de agenda de un especialista',
+  accent: 'rose',
+  grupo: 'comunicacion',
+};
+
+/**
+ * 📄 Envíos de documentos del resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md
+ * §4.6, D14): el seguimiento sin contenido clínico y «Reenviar». EXCLUSIVO del
+ * driver cnt-sanvicente-anserma, como `AVISOS`, y solo con la función habilitada
+ * (`resumenAtencion` configurado). La ven ORG_ADMIN y BOOKING_AGENT: quien está
+ * en la ventanilla es quien reenvía.
+ */
+const ENVIOS_RESUMEN: MenuItem = {
+  label: 'Envíos de documentos',
+  href: '/dashboard/espejo/resumen-atencion/envios',
+  icon: '📄',
+  description: 'Si al paciente le llegaron los documentos de su consulta, y reenviarlos',
+  accent: 'teal',
+  grupo: 'comunicacion',
+};
+
+// ── Agenda y catálogos ───────────────────────────────────────
+
+const AGENDA: MenuItem = {
+  label: 'Agendas y cupos',
+  href: '/dashboard/agenda',
+  icon: '📅',
+  description: 'Generación y gestión de cupos',
+  accent: 'emerald',
+  grupo: 'catalogos',
+};
+const MEDICOS: MenuItem = {
+  label: 'Médicos',
+  href: '/dashboard/medicos',
+  icon: '⚕️',
+  description: 'Cuerpo médico de la clínica',
+  accent: 'sky',
+  grupo: 'catalogos',
+};
+const SERVICIOS: MenuItem = {
+  label: 'Servicios de salud',
+  href: '/dashboard/servicios',
+  icon: '💉',
+  description: 'Catálogo de especialidades',
+  accent: 'cyan',
+  grupo: 'catalogos',
+};
+const EPS: MenuItem = {
+  label: 'Aseguradoras (EPS)',
+  href: '/dashboard/eps',
+  icon: '🏦',
+  description: 'Convenios y aseguradoras',
+  accent: 'amber',
+  grupo: 'catalogos',
+};
+const PADRON: MenuItem = {
+  label: 'Padrón EPS',
+  href: '/dashboard/padron',
+  icon: '🪪',
+  description: 'Pacientes habilitados por CSV',
+  accent: 'teal',
+  grupo: 'catalogos',
+};
+
+// ── Indicadores ──────────────────────────────────────────────
+
+const ANALITICAS: MenuItem = {
+  label: 'Analíticas',
+  href: '/dashboard/analytics',
+  icon: '📊',
+  description: 'Indicadores y tendencias',
+  accent: 'violet',
+  grupo: 'indicadores',
+};
+const CANALES: MenuItem = {
+  label: 'Canales en vivo',
+  href: '/dashboard/canales',
+  icon: '📈',
+  description: 'WhatsApp y Telegram en cifras',
+  accent: 'emerald',
+  grupo: 'indicadores',
+};
+const ENCUESTAS: MenuItem = {
+  label: 'Encuestas',
+  href: '/dashboard/configuracion/integraciones/surveys',
+  icon: '⭐',
+  description: 'Opiniones de pacientes',
+  accent: 'orange',
+  grupo: 'indicadores',
+};
+
+// ── Administración ───────────────────────────────────────────
+
+const CONFIGURACION: MenuItem = {
+  label: 'Configuración',
+  href: '/dashboard/configuracion',
+  icon: '⚙️',
+  description: 'IA, WhatsApp, voz y marca',
+  accent: 'fuchsia',
+  grupo: 'administracion',
+};
+
+/**
+ * Límite de citas por paciente (cuántas puede tener el mismo día y en el mismo
+ * mes por el asistente): solo ORG_ADMIN, que es quien fija la regla
+ * (2026-10-22: el agendador la veía y la podía cambiar). El permiso real lo
+ * aplican la página y sus acciones (`apps/web/lib/limite-citas/acceso.ts`).
+ * En la Fase 3 de docs/PLAN_NAVEGACION.md pasa a Configuración (N5).
+ */
+const LIMITE_CITAS: MenuItem = {
+  label: 'Límite de citas',
+  href: '/dashboard/limites-citas',
+  icon: '🚦',
+  description: 'Máximo de citas por paciente al día y al mes',
+  accent: 'amber',
+  grupo: 'administracion',
+};
+
+const USUARIOS: MenuItem = {
+  label: 'Usuarios',
+  href: '/dashboard/usuarios',
+  icon: '👥',
+  description: 'Cuentas y perfiles de acceso',
+  accent: 'indigo',
+  grupo: 'administracion',
+};
+
+/**
+ * Solo aparece en las clínicas que tienen espejo con un HIS. Ponerlo siempre
+ * dejaría una opción muerta en la mayoría de los tenants, y una opción que no
+ * hace nada enseña a ignorar el menú.
+ */
+const ESPEJO: MenuItem = {
+  label: 'Espejo con el HIS',
+  href: '/dashboard/espejo',
+  icon: '🪞',
+  description: 'Sincronización con el sistema del hospital',
+  accent: 'violet',
+  grupo: 'administracion',
+};
+
+// ── Menús por rol ────────────────────────────────────────────
+//
+// Cada lista va en el orden en que se muestra, grupo por grupo (las opciones de
+// un grupo, juntas). Las que dependen del espejo están en su lugar y
+// `getMenusForRole` las quita cuando la clínica no las tiene (ver `CONDICIONES`).
 
 const PATIENT_MENUS: MenuItem[] = [
   {
@@ -155,88 +372,26 @@ const DOCTOR_MENUS: MenuItem[] = [
 
 const ADMIN_MENUS: MenuItem[] = [
   OVERVIEW,
-  {
-    label: 'Analíticas de Negocio',
-    href: '/dashboard/analytics',
-    icon: '📊',
-    description: 'Indicadores y tendencias',
-    accent: 'violet',
-  },
-  {
-    label: 'Canales en vivo',
-    href: '/dashboard/canales',
-    icon: '📈',
-    description: 'WhatsApp y Telegram en cifras',
-    accent: 'emerald',
-  },
-  {
-    label: 'Agendas (Slots)',
-    href: '/dashboard/agenda',
-    icon: '📅',
-    description: 'Generación y gestión de cupos',
-    accent: 'emerald',
-  },
-  {
-    label: 'Servicios de Salud',
-    href: '/dashboard/servicios',
-    icon: '💉',
-    description: 'Catálogo de especialidades',
-    accent: 'cyan',
-  },
-  {
-    label: 'Aseguradoras (EPS)',
-    href: '/dashboard/eps',
-    icon: '🏦',
-    description: 'Convenios y aseguradoras',
-    accent: 'amber',
-  },
-  {
-    label: 'Padrón EPS (Altas)',
-    href: '/dashboard/padron',
-    icon: '🪪',
-    description: 'Pacientes habilitados por CSV',
-    accent: 'teal',
-  },
-  {
-    label: 'Usuarios',
-    href: '/dashboard/usuarios',
-    icon: '👥',
-    description: 'Cuentas y perfiles de acceso',
-    accent: 'indigo',
-  },
-  {
-    label: 'Médicos',
-    href: '/dashboard/medicos',
-    icon: '⚕️',
-    description: 'Cuerpo médico de la clínica',
-    accent: 'sky',
-  },
+  BANDEJA,
+  SOLICITUDES_CITAS,
+  SOLICITUDES_ALTA,
   AUDITORIA,
   RASTREO,
-  {
-    label: 'Encuestas (CSAT)',
-    href: '/dashboard/configuracion/integraciones/surveys',
-    icon: '⭐',
-    description: 'Opiniones de pacientes',
-    accent: 'orange',
-  },
   MENSAJES_MASIVOS,
-  {
-    label: 'Solicitudes de Alta',
-    href: '/dashboard/solicitudes-alta',
-    icon: '📨',
-    description: 'Revisiones pedidas por ciudadanos',
-    accent: 'rose',
-  },
-  SOLICITUDES_CITAS,
+  AVISOS,
+  ENVIOS_RESUMEN,
+  AGENDA,
+  MEDICOS,
+  SERVICIOS,
+  EPS,
+  PADRON,
+  ANALITICAS,
+  CANALES,
+  ENCUESTAS,
+  CONFIGURACION,
   LIMITE_CITAS,
-  {
-    label: 'Configuración',
-    href: '/dashboard/configuracion',
-    icon: '⚙️',
-    description: 'IA, WhatsApp, voz y marca',
-    accent: 'fuchsia',
-  },
+  USUARIOS,
+  ESPEJO,
   SUPPORT,
 ];
 
@@ -249,29 +404,17 @@ const AGENT_MENUS: MenuItem[] = [
     description: 'Reserva de citas asistida',
     accent: 'emerald',
   },
+  BANDEJA,
+  SOLICITUDES_CITAS,
   AUDITORIA,
   RASTREO,
-  SOLICITUDES_CITAS,
+  AVISOS,
+  ENVIOS_RESUMEN,
   SUPPORT,
 ];
 
-const OBSERVER_MENUS: MenuItem[] = [
-  {
-    label: 'Analíticas de Negocio',
-    href: '/dashboard/analytics',
-    icon: '📊',
-    description: 'Indicadores y tendencias',
-    accent: 'violet',
-  },
-  {
-    label: 'Canales en vivo',
-    href: '/dashboard/canales',
-    icon: '📈',
-    description: 'WhatsApp y Telegram en cifras',
-    accent: 'emerald',
-  },
-  SUPPORT,
-];
+/** El observador solo mira cifras: con un solo grupo, su menú va sin encabezados. */
+const OBSERVER_MENUS: MenuItem[] = [ANALITICAS, CANALES, SUPPORT];
 
 const MENUS_BY_ROLE: Partial<Record<UserRole, MenuItem[]>> = {
   PATIENT: PATIENT_MENUS,
@@ -281,127 +424,108 @@ const MENUS_BY_ROLE: Partial<Record<UserRole, MenuItem[]>> = {
   GENERAL_OBSERVER: OBSERVER_MENUS,
 };
 
-/** Opciones de menú visibles para un rol (vacío para roles sin dashboard clínico). */
-/**
- * Solo aparece en las clínicas que tienen espejo con un HIS. Ponerlo siempre
- * dejaría una opción muerta en la mayoría de los tenants, y una opción que no
- * hace nada enseña a ignorar el menú.
- */
-const ESPEJO: MenuItem = {
-  label: 'Espejo con el HIS',
-  href: '/dashboard/espejo',
-  icon: '🪞',
-  description: 'Sincronización con el sistema del hospital',
-  accent: 'violet',
-};
-
-/**
- * EXCLUSIVO del driver cnt-sanvicente-anserma (ver
- * docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §1). A
- * diferencia de `ESPEJO` —que solo se inserta para `ORG_ADMIN`—, esta
- * aparece para `ORG_ADMIN` y `BOOKING_AGENT` (§1.3: los dos operan la
- * pantalla; solo `ORG_ADMIN` ve el panel de configuración dentro de ella).
- *
- * Los dos la ven con solo el driver correcto (`conAvisosDriver`), aunque los
- * avisos sigan APAGADOS. ORG_ADMIN, porque es quien los enciende: la pantalla
- * le muestra el panel para hacerlo (antes solo aparecía ya encendidos, y para
- * encenderlos había que escribir la dirección a mano). BOOKING_AGENT, porque
- * la clínica lo pidió así: apagados, la pantalla le dice que un administrador
- * tiene que activarlos.
- */
-const AVISOS: MenuItem = {
-  label: 'Avisos masivos',
-  href: '/dashboard/espejo/avisos',
-  icon: '📣',
-  description:
-    'Aviso o recordatorio por WhatsApp para el día de agenda de un especialista',
-  accent: 'rose',
-};
-
-/**
- * 📨 Envíos de documentos del resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md
- * §4.6, D14): el seguimiento sin contenido clínico y «Reenviar». EXCLUSIVO del
- * driver cnt-sanvicente-anserma, como `AVISOS`, y solo con la función habilitada
- * (`resumenAtencion` configurado). La ven ORG_ADMIN y BOOKING_AGENT: quien está
- * en la ventanilla es quien reenvía.
- */
-const ENVIOS_RESUMEN: MenuItem = {
-  label: 'Envíos de documentos',
-  href: '/dashboard/espejo/resumen-atencion/envios',
-  icon: '📨',
-  description: 'Si al paciente le llegaron los documentos de su consulta, y reenviarlos',
-  accent: 'teal',
-};
-
-/**
- * Bandeja de excepciones de sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #3).
- * Solo en las clínicas con espejo —sin HIS no hay nada que sincronizar— y para quien
- * la trabaja: ORG_ADMIN y BOOKING_AGENT. El permiso real y el alcance del agente los
- * aplica el servidor (`apps/web/lib/bandeja/acceso.ts`); esto solo decide si aparece el enlace.
- */
-const BANDEJA: MenuItem = {
-  label: 'Bandeja de sincronización',
-  href: '/dashboard/bandeja',
-  icon: '🚨',
-  description:
-    'Citas que no llegaron al hospital, cambios sin aplicar y avisos de pacientes',
-  accent: 'orange',
-};
-
-function insertBeforeSoporte(menus: MenuItem[], item: MenuItem): MenuItem[] {
-  const i = menus.findIndex((m) => m.href === '/dashboard/soporte');
-  return i === -1
-    ? [...menus, item]
-    : [...menus.slice(0, i), item, ...menus.slice(i)];
+/** Lo que la clínica tiene (del espejo) y las cifras de quien mira. */
+export interface OpcionesDelMenu {
+  conEspejo?: boolean;
+  conAvisos?: boolean;
+  /** Espejo encendido con el driver de avisos, estén o no encendidos (ver `AVISOS`). */
+  conAvisosDriver?: boolean;
+  /** Además, el resumen de la atención habilitado (ver `ENVIOS_RESUMEN`). */
+  conResumen?: boolean;
+  pendientesBandeja?: number;
+  /** Solicitudes de más citas radicadas sin revisar (cifra del menú). */
+  pendientesSolicitudesCitas?: number;
 }
 
+/**
+ * Las opciones que no tienen todas las clínicas. Qué rol las ve lo deciden las
+ * listas de arriba: el Espejo solo está en la del administrador; la Bandeja, los
+ * Avisos y los Envíos, en la del administrador y la del agendador.
+ */
+const CONDICIONES: Record<string, (o: OpcionesDelMenu) => boolean> = {
+  [ESPEJO.href]: (o) => !!o.conEspejo,
+  [BANDEJA.href]: (o) => !!o.conEspejo,
+  [AVISOS.href]: (o) => !!(o.conAvisos || o.conAvisosDriver),
+  [ENVIOS_RESUMEN.href]: (o) => !!o.conResumen,
+};
+
+/** Opciones de menú visibles para un rol (vacío para roles sin dashboard clínico). */
 export function getMenusForRole(
   role: UserRole,
-  opts: {
-    conEspejo?: boolean;
-    conAvisos?: boolean;
-    /** Espejo encendido con el driver de avisos, estén o no encendidos (ver `AVISOS`). */
-    conAvisosDriver?: boolean;
-    /** Además, el resumen de la atención habilitado (ver `ENVIOS_RESUMEN`). */
-    conResumen?: boolean;
-    pendientesBandeja?: number;
-    /** Solicitudes de más citas radicadas sin revisar (cifra del menú). */
-    pendientesSolicitudesCitas?: number;
-  } = {},
+  opts: OpcionesDelMenu = {},
 ): MenuItem[] {
-  let menus = MENUS_BY_ROLE[role] ?? [];
+  const cifras: Record<string, number | undefined> = {
+    [BANDEJA.href]: opts.pendientesBandeja,
+    [SOLICITUDES_CITAS.href]: opts.pendientesSolicitudesCitas,
+  };
+  return (MENUS_BY_ROLE[role] ?? [])
+    .filter((m) => CONDICIONES[m.href]?.(opts) ?? true)
+    .map((m) => {
+      // Copia: los ítems son compartidos y la cifra es de este usuario o clínica.
+      const badge = cifras[m.href];
+      return badge && badge > 0 ? { ...m, badge } : m;
+    });
+}
 
-  if (opts.pendientesSolicitudesCitas && opts.pendientesSolicitudesCitas > 0) {
-    // Copia: `SOLICITUDES_CITAS` es compartido y la cifra es de esta clínica.
-    const badge = opts.pendientesSolicitudesCitas;
-    menus = menus.map((m) =>
-      m.href === SOLICITUDES_CITAS.href ? { ...m, badge } : m,
-    );
-  }
+// ── Cómo se muestra ──────────────────────────────────────────
 
-  if (opts.conEspejo && role === 'ORG_ADMIN') {
-    menus = insertBeforeSoporte(menus, ESPEJO);
-  }
-  if (opts.conEspejo && (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT')) {
-    // Copia: `BANDEJA` es compartido y la cifra es de este usuario.
-    menus = insertBeforeSoporte(
-      menus,
-      opts.pendientesBandeja && opts.pendientesBandeja > 0
-        ? { ...BANDEJA, badge: opts.pendientesBandeja }
-        : BANDEJA,
-    );
-  }
-  const avisosVisibles =
-    (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT') &&
-    (opts.conAvisos || opts.conAvisosDriver);
-  if (avisosVisibles) {
-    menus = insertBeforeSoporte(menus, AVISOS);
-  }
-  if (opts.conResumen && (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT')) {
-    menus = insertBeforeSoporte(menus, ENVIOS_RESUMEN);
-  }
+export interface SeccionDelMenu {
+  /** null: opciones sueltas, sin encabezado (arriba, Visión General; al pie, Soporte y ayuda). */
+  grupo: { id: MenuGrupo; titulo: string } | null;
+  items: MenuItem[];
+}
 
-  return menus;
+function gruposDe(menus: readonly MenuItem[]): Set<MenuGrupo> {
+  return new Set(menus.flatMap((m) => (m.grupo ? [m.grupo] : [])));
+}
+
+/**
+ * El menú en secciones, como lo pintan el menú lateral y el del celular. Con
+ * menos de dos grupos (el médico, el paciente, el observador, el agendador de
+ * una clínica sin espejo) los encabezados no ayudan: va en una sola sección,
+ * sin encabezado.
+ */
+export function seccionesDelMenu(menus: readonly MenuItem[]): SeccionDelMenu[] {
+  if (menus.length === 0) return [];
+  if (gruposDe(menus).size < 2) return [{ grupo: null, items: [...menus] }];
+  const secciones: SeccionDelMenu[] = [];
+  for (const m of menus) {
+    const ultima = secciones[secciones.length - 1];
+    if (ultima && (ultima.grupo?.id ?? null) === (m.grupo ?? null)) {
+      ultima.items.push(m);
+    } else {
+      const grupo = m.grupo
+        ? (GRUPOS_DEL_MENU.find((g) => g.id === m.grupo) ?? null)
+        : null;
+      secciones.push({ grupo, items: [m] });
+    }
+  }
+  return secciones;
+}
+
+/**
+ * El nombre de cada opción como se ve en el menú, con su grupo cuando el menú
+ * lleva encabezados («Operación diaria › Bandeja de sincronización»). Lo usa el
+ * asistente de soporte para decirle a la persona dónde está cada cosa.
+ */
+export function nombresEnElMenu(menus: readonly MenuItem[]): string[] {
+  return seccionesDelMenu(menus).flatMap((s) =>
+    s.items.map((m) => (s.grupo ? `${s.grupo.titulo} › ${m.label}` : m.label)),
+  );
+}
+
+/**
+ * Las tarjetas de la Visión General (N10): lo que espera al usuario hoy. Con el
+ * menú en grupos, las opciones sueltas de arriba (Agendamiento) y las de
+ * «Operación diaria»; con un menú corto, sin grupos, todas. Nunca la Visión
+ * General misma: el usuario ya está en ella.
+ */
+export function accesosRapidos(menus: readonly MenuItem[]): MenuItem[] {
+  const sinInicio = menus.filter((m) => m.href !== '/dashboard');
+  if (gruposDe(menus).size < 2) return sinInicio;
+  const primerGrupo = sinInicio.findIndex((m) => m.grupo);
+  const deArriba = primerGrupo === -1 ? [] : sinInicio.slice(0, primerGrupo);
+  return [...deArriba, ...sinInicio.filter((m) => m.grupo === 'operacion')];
 }
 
 /** Las banderas del menú que dependen del espejo de una clínica (ver `getMenusForRole`). */

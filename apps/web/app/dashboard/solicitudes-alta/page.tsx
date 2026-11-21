@@ -73,7 +73,7 @@ export default async function SolicitudesAltaPage({
         <div className="max-w-6xl mx-auto animate-fade-in space-y-8">
             <header>
                 <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-white mb-2">
-                    📨 Solicitudes de Alta
+                    📨 Solicitudes de alta
                 </h1>
                 <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-3xl">
                     Reclamos y peticiones de revisión de ciudadanos que no figuran en el{' '}

@@ -854,12 +854,12 @@ const plural = (n: number, uno: string, varios: string) =>
 
 export const TEXTOS_SOPORTE = {
   pedirCodigo:
-    'Hola, soy el asistente de soporte de AgenIA para el personal de las clínicas. Para empezar, escribe el código de 6 dígitos que aparece en el panel › Soporte › Asistente de Telegram.',
+    'Hola, soy el asistente de soporte de AgenIA para el personal de las clínicas. Para empezar, escribe el código de 6 dígitos que aparece en el panel › Soporte y ayuda › Asistente de Telegram.',
   preguntaGuardada: 'Guardé tu pregunta; te respondo apenas me des el código.',
   codigoIncorrecto: (restantes: number) =>
-    `Ese código no es válido o ya venció. ${plural(restantes, 'Te queda 1 intento', `Te quedan ${restantes} intentos`)}; si lo necesitas, genera uno nuevo en el panel › Soporte.`,
+    `Ese código no es válido o ya venció. ${plural(restantes, 'Te queda 1 intento', `Te quedan ${restantes} intentos`)}; si lo necesitas, genera uno nuevo en el panel › Soporte y ayuda.`,
   bloqueado: (minutos: number) =>
-    `Por seguridad pausé los intentos de código durante ${minutos} minutos. Después genera un código nuevo en el panel › Soporte.`,
+    `Por seguridad pausé los intentos de código durante ${minutos} minutos. Después genera un código nuevo en el panel › Soporte y ayuda.`,
   sinAcceso:
     'Este asistente es solo para el personal de las clínicas que usan AgenIA. Si crees que es un error, pídele acceso al administrador de tu clínica.',
   conversacionAbierta: (d: {
@@ -871,11 +871,11 @@ export const TEXTOS_SOPORTE = {
   }) =>
     `Listo${d.nombre ? `, ${d.nombre}` : ''}. Hablas como ${d.rol} de ${d.clinica} (${enmascararCorreo(d.correo)}). Si no fuiste tú, escribe /salir.${d.prueba ? ' Modo prueba: los casos se simulan.' : ''}`,
   conversacionCerrada:
-    'Listo, cerré la conversación. Cuando me necesites, genera un código nuevo en el panel › Soporte.',
+    'Listo, cerré la conversación. Cuando me necesites, genera un código nuevo en el panel › Soporte y ayuda.',
   cerradaDesdePanel:
-    'Cerraste la conversación desde el panel. Cuando me necesites, genera un código nuevo en el panel › Soporte.',
+    'Cerraste la conversación desde el panel. Cuando me necesites, genera un código nuevo en el panel › Soporte y ayuda.',
   sinConversacion:
-    'No tenías una conversación abierta. Cuando me necesites, escribe el código de 6 dígitos que aparece en el panel › Soporte › Asistente de Telegram.',
+    'No tenías una conversación abierta. Cuando me necesites, escribe el código de 6 dígitos que aparece en el panel › Soporte y ayuda › Asistente de Telegram.',
   yaConversando: 'Ya estamos conversando. Cuéntame qué necesitas.',
   ayuda:
     'Puedo ayudarte con dudas sobre AgenIA: cómo se hace algo en el panel o qué significa un aviso o un error. Si algo falla, abro un caso para el equipo técnico. Comandos: /casos para ver tus casos, /nuevo para reportar una falla y /salir para cerrar la conversación.',
@@ -895,7 +895,7 @@ export const TEXTOS_SOPORTE = {
     `Listo, abrí el caso #${d.numero}: «${d.titulo}». ${d.cuando} ${
       d.seguimiento
         ? 'Te escribo por aquí cuando lo tomen y cuando quede resuelto.'
-        : 'Puedes ver cómo va con /casos o en el panel › Soporte.'
+        : 'Puedes ver cómo va con /casos o en el panel › Soporte y ayuda.'
     }`,
   casoDescartado: 'Listo, no abro nada. Si cambias de opinión, escribe /nuevo.',
   pedirCorreccion: 'Claro, dime qué cambio o qué le agrego.',
@@ -913,9 +913,9 @@ export const TEXTOS_SOPORTE = {
   nadaPendiente: 'Listo.',
   borradorVencido: 'Ese caso ya no está pendiente. Si quieres, escribe /nuevo.',
   escribeElCodigo:
-    'Para continuar, escribe un código nuevo del panel › Soporte.',
+    'Para continuar, escribe un código nuevo del panel › Soporte y ayuda.',
   cerradaPorOtra:
-    'Tu conversación se cerró porque se abrió otra con tu usuario. Si no fuiste tú, cambia tu contraseña y avísale al equipo desde el panel › Soporte.',
+    'Tu conversación se cerró porque se abrió otra con tu usuario. Si no fuiste tú, cambia tu contraseña y avísale al equipo desde el panel › Soporte y ayuda.',
   accesoRevocado:
     'Tu usuario ya no tiene acceso a este asistente, así que cerré la conversación.',
   sinIA:
@@ -926,7 +926,7 @@ export const TEXTOS_SOPORTE = {
   mensajeLargo: (max: number) =>
     `Tu mensaje pasa de ${max} caracteres. ¿Me lo resumes o me lo mandas en partes?`,
   muchosMensajes:
-    'Vamos muy rápido: dame unos minutos y seguimos. Si es urgente, abre el caso desde el panel › Soporte.',
+    'Vamos muy rápido: dame unos minutos y seguimos. Si es urgente, abre el caso desde el panel › Soporte y ayuda.',
   soloTexto:
     'Por ahora solo leo texto. Escríbeme lo que necesitas y, si hace falta, lo dejo en un caso.',
   casoSimulado: (titulo: string) =>
@@ -953,5 +953,5 @@ export const TEXTOS_SOPORTE = {
   casoDeOtraPersona:
     'Ese aviso es de un caso de otra persona: solo quien lo reportó lo puede responder.',
   accionEnEspera:
-    'Para eso necesito confirmar que eres tú: escribe un código nuevo del panel › Soporte y lo hago enseguida.',
+    'Para eso necesito confirmar que eres tú: escribe un código nuevo del panel › Soporte y ayuda y lo hago enseguida.',
 } as const;

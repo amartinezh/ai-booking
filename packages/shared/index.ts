@@ -552,8 +552,23 @@ export type {
   TipoFragmento,
 } from './src/conocimiento-buscador';
 // Menú del panel por rol.
-export { banderasDelEspejo, getMenusForRole } from './src/menus';
-export type { BanderasDelEspejo, MenuAccent, MenuItem, UserRole } from './src/menus';
+export {
+  GRUPOS_DEL_MENU,
+  accesosRapidos,
+  banderasDelEspejo,
+  getMenusForRole,
+  nombresEnElMenu,
+  seccionesDelMenu,
+} from './src/menus';
+export type {
+  BanderasDelEspejo,
+  MenuAccent,
+  MenuGrupo,
+  MenuItem,
+  OpcionesDelMenu,
+  SeccionDelMenu,
+  UserRole,
+} from './src/menus';
 // Asistente de soporte por Telegram (docs/PLAN_BOT_SOPORTE.md).
 export {
   AJUSTES_SOPORTE_POR_DEFECTO,

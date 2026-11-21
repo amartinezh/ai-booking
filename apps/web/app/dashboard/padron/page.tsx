@@ -81,7 +81,7 @@ export default async function PadronPage({
             <header className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-white mb-2">
-                        🪪 Padrón EPS (Altas)
+                        🪪 Padrón EPS
                     </h1>
                     <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-3xl">
                         Solo los afiliados de este padrón pueden agendar citas <strong>por EPS</strong> a través del

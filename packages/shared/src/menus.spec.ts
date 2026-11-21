@@ -1,4 +1,12 @@
-import { banderasDelEspejo, getMenusForRole } from './menus';
+import {
+  GRUPOS_DEL_MENU,
+  accesosRapidos,
+  banderasDelEspejo,
+  getMenusForRole,
+  nombresEnElMenu,
+  seccionesDelMenu,
+  type UserRole,
+} from './menus';
 
 describe('getMenusForRole', () => {
   it('devuelve el menú de paciente para PATIENT', () => {
@@ -34,13 +42,13 @@ describe('getMenusForRole', () => {
     expect(menus.some((m) => m.href === '/dashboard/espejo')).toBe(false);
   });
 
-  it('con conEspejo=true, ORG_ADMIN incluye Espejo, seguido de la Bandeja de sincronización, antes de Soporte', () => {
+  it('con conEspejo=true, ORG_ADMIN incluye el Espejo al final de Administración, justo antes de Soporte', () => {
     const menus = getMenusForRole('ORG_ADMIN', { conEspejo: true });
     const espejoIdx = menus.findIndex((m) => m.href === '/dashboard/espejo');
     const soporteIdx = menus.findIndex((m) => m.href === '/dashboard/soporte');
     expect(espejoIdx).toBeGreaterThan(-1);
-    expect(menus[espejoIdx + 1].href).toBe('/dashboard/bandeja');
-    expect(espejoIdx).toBe(soporteIdx - 2);
+    expect(menus[espejoIdx].grupo).toBe('administracion');
+    expect(espejoIdx).toBe(soporteIdx - 1);
   });
 
   it('conEspejo=true no afecta a roles distintos de ORG_ADMIN', () => {
@@ -73,14 +81,14 @@ describe('getMenusForRole', () => {
     ).toBe(false);
   });
 
-  it('con conAvisos=true, ORG_ADMIN incluye Avisos justo antes de Soporte', () => {
+  it('con conAvisos=true, ORG_ADMIN incluye Avisos en Comunicación, justo después de Mensajes masivos', () => {
     const menus = getMenusForRole('ORG_ADMIN', { conAvisos: true });
     const avisosIdx = menus.findIndex(
       (m) => m.href === '/dashboard/espejo/avisos',
     );
-    const soporteIdx = menus.findIndex((m) => m.href === '/dashboard/soporte');
     expect(avisosIdx).toBeGreaterThan(-1);
-    expect(avisosIdx).toBe(soporteIdx - 1);
+    expect(menus[avisosIdx].grupo).toBe('comunicacion');
+    expect(menus[avisosIdx - 1].href).toBe('/dashboard/mensajes-masivos');
   });
 
   it('con conAvisos=true, BOOKING_AGENT TAMBIÉN incluye Avisos — a diferencia de Espejo', () => {
@@ -277,16 +285,19 @@ describe('Bandeja de sincronización (Fase 3 del rastreo)', () => {
     }
   });
 
-  it('queda justo antes de Soporte, después del Espejo, y no desplaza a los demás', () => {
-    const menus = getMenusForRole('ORG_ADMIN', {
-      conEspejo: true,
-      conAvisos: true,
-    });
-    const hrefs = menus.map((m) => m.href);
-    expect(hrefs.indexOf(HREF)).toBe(hrefs.indexOf('/dashboard/espejo') + 1);
-    expect(hrefs.indexOf('/dashboard/soporte')).toBe(hrefs.length - 1);
-    expect(hrefs).toContain('/dashboard/espejo/avisos');
-    expect(new Set(hrefs).size).toBe(hrefs.length);
+  it('es la primera de Operación diaria, justo después de la Visión General, y no desplaza a los demás', () => {
+    for (const rol of ['ORG_ADMIN', 'BOOKING_AGENT'] as const) {
+      const menus = getMenusForRole(rol, { conEspejo: true, conAvisos: true });
+      const hrefs = menus.map((m) => m.href);
+      const primeraDelGrupo = menus.findIndex((m) => m.grupo === 'operacion');
+      expect(hrefs.indexOf(HREF)).toBe(primeraDelGrupo);
+      expect(hrefs.indexOf('/dashboard/soporte')).toBe(hrefs.length - 1);
+      expect(hrefs).toContain('/dashboard/espejo/avisos');
+      expect(new Set(hrefs).size).toBe(hrefs.length);
+    }
+    expect(
+      getMenusForRole('ORG_ADMIN', { conEspejo: true }).map((m) => m.href).slice(0, 2),
+    ).toEqual(['/dashboard', HREF]);
   });
 
   it('la cifra de pendientes solo se pone si hay pendientes', () => {
@@ -474,5 +485,216 @@ describe('Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md)', () => {
     const opcion = menus.find((m) => m.href === MASIVOS);
     expect(opcion?.label).toBe('Mensajes masivos');
     expect(menus.some((m) => m.href === '/dashboard/espejo/avisos')).toBe(false);
+  });
+});
+
+describe('Grupos del menú (docs/PLAN_NAVEGACION.md §4)', () => {
+  const ROLES: UserRole[] = [
+    'PATIENT',
+    'DOCTOR',
+    'ORG_ADMIN',
+    'BOOKING_AGENT',
+    'GENERAL_OBSERVER',
+  ];
+  const TODO = {
+    conEspejo: true,
+    conAvisos: true,
+    conAvisosDriver: true,
+    conResumen: true,
+  };
+  const hrefs = (m: { href: string }[]) => m.map((x) => x.href);
+
+  it('el administrador de Anserma: las opciones en el orden de §4.1', () => {
+    expect(hrefs(getMenusForRole('ORG_ADMIN', TODO))).toEqual([
+      '/dashboard',
+      '/dashboard/bandeja',
+      '/dashboard/solicitudes-citas',
+      '/dashboard/solicitudes-alta',
+      '/dashboard/auditoria',
+      '/dashboard/rastreo',
+      '/dashboard/mensajes-masivos',
+      '/dashboard/espejo/avisos',
+      '/dashboard/espejo/resumen-atencion/envios',
+      '/dashboard/agenda',
+      '/dashboard/medicos',
+      '/dashboard/servicios',
+      '/dashboard/eps',
+      '/dashboard/padron',
+      '/dashboard/analytics',
+      '/dashboard/canales',
+      '/dashboard/configuracion/integraciones/surveys',
+      '/dashboard/configuracion',
+      '/dashboard/limites-citas',
+      '/dashboard/usuarios',
+      '/dashboard/espejo',
+      '/dashboard/soporte',
+    ]);
+  });
+
+  it('el agendador de Anserma: las opciones en el orden de §4.2', () => {
+    expect(hrefs(getMenusForRole('BOOKING_AGENT', TODO))).toEqual([
+      '/dashboard',
+      '/dashboard/agendamiento',
+      '/dashboard/bandeja',
+      '/dashboard/solicitudes-citas',
+      '/dashboard/auditoria',
+      '/dashboard/rastreo',
+      '/dashboard/espejo/avisos',
+      '/dashboard/espejo/resumen-atencion/envios',
+      '/dashboard/soporte',
+    ]);
+  });
+
+  it.each(ROLES)(
+    '%s: las opciones de un grupo van juntas, y cada grupo una sola vez',
+    (rol) => {
+      for (const opts of [{}, TODO]) {
+        const grupos = seccionesDelMenu(getMenusForRole(rol, opts))
+          .map((s) => s.grupo?.id)
+          .filter(Boolean);
+        expect(new Set(grupos).size).toBe(grupos.length);
+      }
+    },
+  );
+
+  it('los grupos salen en el orden de GRUPOS_DEL_MENU, con su título', () => {
+    const secciones = seccionesDelMenu(getMenusForRole('ORG_ADMIN', TODO));
+    expect(secciones.map((s) => s.grupo?.titulo ?? null)).toEqual([
+      null,
+      'Operación diaria',
+      'Comunicación con pacientes',
+      'Agenda y catálogos',
+      'Indicadores',
+      'Administración',
+      null,
+    ]);
+    expect(secciones[0].items.map((m) => m.label)).toEqual(['Visión General']);
+    expect(secciones[6].items.map((m) => m.label)).toEqual(['Soporte y ayuda']);
+    expect(GRUPOS_DEL_MENU.map((g) => g.id)).toEqual([
+      'operacion',
+      'comunicacion',
+      'catalogos',
+      'indicadores',
+      'administracion',
+    ]);
+  });
+
+  it('solo la Visión General y Soporte y ayuda van sueltas en el menú del administrador', () => {
+    const sueltas = getMenusForRole('ORG_ADMIN', TODO).filter((m) => !m.grupo);
+    expect(hrefs(sueltas)).toEqual(['/dashboard', '/dashboard/soporte']);
+  });
+
+  it('una clínica sin espejo: el administrador conserva los 5 grupos', () => {
+    const secciones = seccionesDelMenu(getMenusForRole('ORG_ADMIN'));
+    expect(secciones.filter((s) => s.grupo).map((s) => s.grupo?.id)).toEqual([
+      'operacion',
+      'comunicacion',
+      'catalogos',
+      'indicadores',
+      'administracion',
+    ]);
+  });
+
+  it.each([
+    ['PATIENT', {}],
+    ['DOCTOR', TODO],
+    ['GENERAL_OBSERVER', TODO],
+    ['BOOKING_AGENT', {}],
+    ['BOOKING_AGENT', { conEspejo: true }],
+  ] as const)(
+    '%s con un solo grupo: una sola sección, sin encabezados (%p)',
+    (rol, opts) => {
+      const menus = getMenusForRole(rol, opts);
+      const secciones = seccionesDelMenu(menus);
+      expect(secciones).toHaveLength(1);
+      expect(secciones[0].grupo).toBeNull();
+      expect(secciones[0].items).toEqual(menus);
+    },
+  );
+
+  it('el agendador de Anserma sí lleva encabezados: Operación diaria y Comunicación', () => {
+    const secciones = seccionesDelMenu(getMenusForRole('BOOKING_AGENT', TODO));
+    expect(secciones.map((s) => s.grupo?.id ?? null)).toEqual([
+      null,
+      'operacion',
+      'comunicacion',
+      null,
+    ]);
+    expect(secciones[0].items.map((m) => m.label)).toEqual([
+      'Visión General',
+      'Agendamiento',
+    ]);
+  });
+
+  it('sin opciones, sin secciones', () => {
+    expect(seccionesDelMenu(getMenusForRole('SUPER_ADMIN'))).toEqual([]);
+  });
+
+  it('los nombres para el asistente de soporte llevan el grupo solo si el menú lo muestra', () => {
+    const admin = nombresEnElMenu(getMenusForRole('ORG_ADMIN', TODO));
+    expect(admin).toContain('Visión General');
+    expect(admin).toContain('Operación diaria › Bandeja de sincronización');
+    expect(admin).toContain('Administración › Configuración');
+    expect(admin[admin.length - 1]).toBe('Soporte y ayuda');
+    expect(nombresEnElMenu(getMenusForRole('DOCTOR'))).toEqual([
+      'Mi Agenda',
+      'Rastreo de paciente',
+      'Soporte y ayuda',
+    ]);
+  });
+});
+
+describe('Accesos rápidos de la Visión General (N10)', () => {
+  const labels = (m: { label: string }[]) => m.map((x) => x.label);
+
+  it('el administrador: solo Operación diaria, con su cifra', () => {
+    const items = accesosRapidos(
+      getMenusForRole('ORG_ADMIN', {
+        conEspejo: true,
+        conAvisosDriver: true,
+        pendientesBandeja: 4,
+      }),
+    );
+    expect(labels(items)).toEqual([
+      'Bandeja de sincronización',
+      'Solicitudes de más citas',
+      'Solicitudes de alta',
+      'Caja Negra (Auditoría)',
+      'Rastreo de paciente',
+    ]);
+    expect(items[0].badge).toBe(4);
+  });
+
+  it('el administrador sin espejo: Operación diaria sin la Bandeja', () => {
+    expect(labels(accesosRapidos(getMenusForRole('ORG_ADMIN')))).toEqual([
+      'Solicitudes de más citas',
+      'Solicitudes de alta',
+      'Caja Negra (Auditoría)',
+      'Rastreo de paciente',
+    ]);
+  });
+
+  it('el agendador de Anserma: Agendamiento y Operación diaria', () => {
+    expect(
+      labels(
+        accesosRapidos(
+          getMenusForRole('BOOKING_AGENT', { conEspejo: true, conAvisosDriver: true }),
+        ),
+      ),
+    ).toEqual([
+      'Agendamiento',
+      'Bandeja de sincronización',
+      'Solicitudes de más citas',
+      'Caja Negra (Auditoría)',
+      'Rastreo de paciente',
+    ]);
+  });
+
+  it.each([
+    ['PATIENT', ['Soporte y ayuda']],
+    ['DOCTOR', ['Rastreo de paciente', 'Soporte y ayuda']],
+    ['GENERAL_OBSERVER', ['Analíticas', 'Canales en vivo', 'Soporte y ayuda']],
+  ] as const)('%s, sin grupos: todo menos la Visión General, como antes', (rol, esperado) => {
+    expect(labels(accesosRapidos(getMenusForRole(rol)))).toEqual(esperado);
   });
 });

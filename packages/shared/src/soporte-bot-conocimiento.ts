@@ -18,7 +18,7 @@
 import { MARCA_FIN, MARCA_INICIO } from './conocimiento';
 import { GLOSARIO_ID } from './conocimiento-buscador';
 import type { ContenidoAyuda } from './conocimiento-tipos';
-import type { MenuItem, UserRole } from './menus';
+import { nombresEnElMenu, type MenuItem, type UserRole } from './menus';
 import { ROL_LEGIBLE } from './soporte-caso';
 
 /**
@@ -202,7 +202,8 @@ export function armarManualDelAsistente(p: {
     '## Quién pregunta',
     '',
     `- Rol: ${ROL_LEGIBLE[p.rol]}.`,
-    `- Opciones de su menú: ${lista(menus.map((m) => m.label))}.`,
+    // Con su grupo, como las ve en el menú lateral («Administración › Configuración»).
+    `- Opciones de su menú: ${lista(nombresEnElMenu(menus))}.`,
     `- Temas del manual que puede seguir paso a paso: ${lista(temasDelUsuario)}.`,
     `- Temas de opciones que su rol NO tiene (no des el paso a paso; di quién lo hace): ${lista(temasDeOtroRol)}.`,
     `- Opciones de su menú que el manual no explica en detalle: ${lista(opcionesSinTema)}.`,

@@ -815,7 +815,7 @@ describe('SupportBotService', () => {
       flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
       await service.procesar(msg('sí'), RT);
       expect(textos()[0]).toMatch(
-        /Puedes ver cómo va con \/casos o en el panel › Soporte\.$/,
+        /Puedes ver cómo va con \/casos o en el panel › Soporte y ayuda\.$/,
       );
     });
 

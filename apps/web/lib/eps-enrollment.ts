@@ -53,7 +53,7 @@ export async function findEpsEnrollmentIssue(
 
     return (
         `El paciente con documento ${normalizedCedula} no está dado de alta en el padrón de ${eps.name}. ` +
-        `Regístrelo en "Padrón EPS (Altas)" (o revise su solicitud de alta) antes de agendar por esta EPS. ` +
+        `Regístrelo en "Padrón EPS" (o revise su solicitud de alta) antes de agendar por esta EPS. ` +
         `Si la atención es de pago directo, seleccione "Particular".`
     );
 }

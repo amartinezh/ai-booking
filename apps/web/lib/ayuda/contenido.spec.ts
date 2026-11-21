@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { getMenusForRole } from '../menus';
+import { GRUPOS_DEL_MENU, getMenusForRole } from '../menus';
 import { cargarConocimiento, rutaDelConocimiento } from './cargar-conocimiento';
 import { MARCA_FIN, temaDeRuta, validarConocimiento } from './conocimiento';
 import { GLOSARIO_ID, buscar, crearIndice } from './buscador';
@@ -29,6 +29,25 @@ describe('Contenido del centro de ayuda (docs/conocimiento/AGENIA.md)', () => {
         const rutas = new Set(menuCompleto.map((m) => m.href));
         for (const t of temas.filter((tema) => tema.href)) {
             expect(rutas.has(t.href as string)).toBe(true);
+        }
+    });
+
+    it('un solo mapa: las categorías son los grupos del menú, con su id y su título, y en su orden', () => {
+        expect(categorias.map((c) => [c.id, c.titulo])).toEqual([
+            ['inicio', 'Para empezar'],
+            ...GRUPOS_DEL_MENU.map((g) => [g.id, g.titulo]),
+        ]);
+    });
+
+    it.each(menuCompleto.map((m) => [m.label, m]))('«%s» está en la categoría de su grupo (sin grupo, en «Para empezar»)', (_label, m) => {
+        expect(temaDeRuta(temas, m.href)?.categoria).toBe(m.grupo ?? 'inicio');
+    });
+
+    it('dentro de cada categoría, los temas van en el orden del menú', () => {
+        for (const c of categorias) {
+            const enLaAyuda = temas.filter((t) => t.categoria === c.id && t.href).map((t) => t.href);
+            const enElMenu = menuCompleto.filter((m) => (m.grupo ?? 'inicio') === c.id).map((m) => m.href);
+            expect(enLaAyuda).toEqual(enElMenu);
         }
     });
 

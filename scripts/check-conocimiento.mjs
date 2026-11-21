@@ -61,7 +61,7 @@ const verde = (s) => (process.stdout.isTTY ? `\x1b[32m${s}\x1b[0m` : s);
 
 async function validarArchivo(markdown, origen) {
   const lector = await import(pathToFileURL(path.join(REPO, 'packages/shared/src/conocimiento.ts')).href);
-  const { getMenusForRole } = await import(pathToFileURL(path.join(REPO, 'packages/shared/src/menus.ts')).href);
+  const { GRUPOS_DEL_MENU, getMenusForRole } = await import(pathToFileURL(path.join(REPO, 'packages/shared/src/menus.ts')).href);
 
   let contenido;
   try {
@@ -76,7 +76,14 @@ async function validarArchivo(markdown, origen) {
     const tema = lector.temaDeRuta(contenido.temas, m.href);
     if (!tema) problemas.push(`${ARCHIVO}: la opción del menú «${m.label}» (${m.href}) no tiene su tema en la Parte 1.`);
     else if (tema.titulo !== m.label) problemas.push(`${ARCHIVO}: el tema de ${m.href} se llama «${tema.titulo}» y en el menú «${m.label}».`);
+    else if (tema.categoria !== (m.grupo ?? 'inicio'))
+      problemas.push(`${ARCHIVO}: el tema «${tema.titulo}» está en la categoría «${tema.categoria}» y en el menú va en el grupo «${m.grupo ?? 'ninguno (va en «inicio»)'}».`);
   }
+  // Un solo mapa (docs/PLAN_NAVEGACION.md, N11): las categorías son los grupos del menú.
+  const esperadas = [{ id: 'inicio', titulo: 'Para empezar' }, ...GRUPOS_DEL_MENU];
+  const categorias = contenido.categorias.map((c) => `${c.id}:${c.titulo}`).join(', ');
+  if (categorias !== esperadas.map((c) => `${c.id}:${c.titulo}`).join(', '))
+    problemas.push(`${ARCHIVO}: las categorías de la Parte 1 (${categorias}) tienen que ser «Para empezar» y los grupos del menú, en su orden (packages/shared/src/menus.ts, GRUPOS_DEL_MENU).`);
   const rutas = new Set(menu.map((m) => m.href));
   for (const t of contenido.temas) {
     if (t.href && !rutas.has(t.href)) problemas.push(`${ARCHIVO}: el tema «${t.titulo}» apunta a ${t.href}, que no está en el menú del administrador.`);

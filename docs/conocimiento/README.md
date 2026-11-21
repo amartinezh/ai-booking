@@ -68,7 +68,7 @@ Descripción de la categoría, en un párrafo.
 - **Ruta:** `/dashboard`
 - **Resumen:** Una frase: qué es y para qué.
 - **Disponibilidad:** Cuándo aparece la opción, si no aparece siempre.
-- **Relacionados:** [Agendas (Slots)](#agenda), [Glosario](#glosario)
+- **Relacionados:** [Agendas y cupos](#agenda), [Glosario](#glosario)
 - **Palabras clave:** tablero, citas del día, asistencia
 
 #### Para qué sirve
@@ -110,6 +110,7 @@ Qué hacer, en texto corrido.
 Reglas:
 
 - **Un tema por opción del menú del administrador**, con el título **exacto** de `packages/shared/src/menus.ts` (la web lo reexporta en `apps/web/lib/menus.ts`) y su `Ruta`. Una opción nueva en el menú sin su tema hace fallar las pruebas. Un tema sin ruta es un tema general (como «Primeros pasos»).
+- **Las categorías son los grupos del menú** (`GRUPOS_DEL_MENU`, con el mismo id y título y en su orden), más «Para empezar» (`inicio`) al principio. Cada tema va en la categoría del grupo de su opción; las opciones sin grupo (Visión General, Soporte y ayuda) van en «Para empezar». Dentro de cada categoría, los temas van en el orden del menú. Lo comprueban el gancho y las pruebas: un solo mapa para el menú y para la ayuda ([PLAN_NAVEGACION.md](../PLAN_NAVEGACION.md), N11).
 - **Ids** (`{#id}`): minúsculas, números y guiones; únicos. `inicio` (la categoría) y `primeros-pasos` (el tema) son los que el inicio de la ayuda destaca arriba. `glosario` está reservado.
 - **Obligatorios** en cada tema: `Resumen`, «Para qué sirve», al menos una guía en «Paso a paso» y al menos una pregunta frecuente. Las demás secciones son opcionales y van en este orden.
 - **Listas** (`Búsquedas frecuentes`, `Palabras clave`, `También se dice`): separadas por comas; un elemento no puede llevar coma.

@@ -1,12 +1,14 @@
 import Link from 'next/link';
-import { getMenusForRole, type MenuAccent, type UserRole } from '@/lib/menus';
+import { accesosRapidos, getMenusForRole, seccionesDelMenu, type MenuAccent, type UserRole } from '@/lib/menus';
 
 // ─────────────────────────────────────────────────────────────
 // ACCESOS RÁPIDOS — grid de tarjetas bajo el título del dashboard.
 //
-// Muestra las opciones principales del menú COMO ICONOS, filtradas por el rol
-// del usuario (misma fuente de verdad que el sidebar: lib/menus.ts). Excluye
-// la página actual (/dashboard) porque el usuario ya está en ella.
+// Lo que espera al usuario hoy (docs/PLAN_NAVEGACION.md, N10): con el menú en
+// grupos, las opciones de «Operación diaria» (y Agendamiento, para el
+// agendador), con su cifra; con un menú corto, sin grupos, todas sus opciones.
+// Misma fuente de verdad que el menú lateral (lib/menus.ts). Nunca la Visión
+// General: el usuario ya está en ella.
 // ─────────────────────────────────────────────────────────────
 
 // Clases ESTÁTICAS por acento (el JIT de Tailwind no compila clases dinámicas).
@@ -42,22 +44,27 @@ export default function QuickAccessGrid({
     pendientesBandeja?: number;
     pendientesSolicitudesCitas?: number;
 }) {
-    // La Visión General es la página actual: no tiene sentido como acceso rápido.
-    const items = getMenusForRole(role, {
+    const menus = getMenusForRole(role, {
         conEspejo,
         conAvisos,
         conAvisosDriver,
         conResumen,
         pendientesBandeja,
         pendientesSolicitudesCitas,
-    }).filter(
-        (item) => item.href !== '/dashboard',
-    );
+    });
+    const items = accesosRapidos(menus);
 
     if (items.length === 0) return null;
 
+    const enGrupos = seccionesDelMenu(menus).some((s) => s.grupo);
+
     return (
-        <nav aria-label="Accesos rápidos" className="mb-10">
+        <nav aria-label={enGrupos ? 'Operación diaria' : 'Accesos rápidos'} className="mb-10">
+            {enGrupos && (
+                <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    Operación diaria
+                </h2>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
                 {items.map((item) => {
                     const accent = ACCENT_STYLES[item.accent];
