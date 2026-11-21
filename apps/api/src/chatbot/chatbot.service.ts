@@ -198,6 +198,10 @@ import {
 } from '../common/error-message.util';
 import { doctorLabel } from '../common/doctor-label.util';
 import {
+  NOMBRE_DE_RELLENO,
+  esNombreDeRelleno,
+} from '../common/nombre-de-relleno';
+import {
   resolveSenderIdentity,
   telegramOriginOf,
   UNIDENTIFIED_SENDER,
@@ -2789,7 +2793,18 @@ export class ChatbotService implements OnModuleInit {
         dateOfBirth?: Date;
         gender?: string;
         regime?: string;
+        fullName?: string;
+        nombres?: string;
+        apellidos?: string;
       } = {};
+      // 🪪 Una ficha con el nombre de relleno recibe el nombre que el paciente
+      // acaba de dar (2026-11-21). Un nombre de verdad nunca se toca desde aquí.
+      // Solo cambia AgenIA: las fichas no viajan al sistema del hospital.
+      if (esNombreDeRelleno(patient.fullName) && !esNombreDeRelleno(nombre)) {
+        updates.fullName = nombre;
+        if (nombres) updates.nombres = nombres;
+        if (apellidos) updates.apellidos = apellidos;
+      }
       if (phoneToPersist && !patient.whatsappId)
         updates.whatsappId = phoneToPersist;
       // El BSUID sí se refresca aunque ya haya uno: es el identificador con el
@@ -8942,11 +8957,15 @@ export class ChatbotService implements OnModuleInit {
         }
 
         // Si el paciente NO está registrado EN ESTA CLÍNICA y no nos dio
-        // nombre, pedirlo (la cédula es única por organización).
+        // nombre, pedirlo (la cédula es única por organización). Una ficha con
+        // el nombre de relleno tampoco tiene nombre (2026-11-21).
         const existing = await this.prisma.patientProfile.findFirst({
           where: { cedula: finalCedula, organizationId },
         });
-        if (!existing && !finalNombre) {
+        if (
+          (!existing || esNombreDeRelleno(existing.fullName)) &&
+          !finalNombre
+        ) {
           // Aquí se pide el nombre COMPLETO de una vez: la lista de espera no
           // llega al HIS, así que no necesita la frontera nombres/apellidos y
           // no tiene sentido cobrarle al paciente un turno más.
@@ -9856,10 +9875,19 @@ export class ChatbotService implements OnModuleInit {
       }
 
       // Cargar contexto del paciente (solo dentro del tenant actual).
-      const patient = await this.prisma.patientProfile.findFirst({
+      const fichaEncontrada = await this.prisma.patientProfile.findFirst({
         where: { cedula: finalCedula, organizationId },
         include: { eps: true },
       });
+      // 🪪 Una ficha con el nombre de relleno («Paciente Registrado», 2026-11-21)
+      // es de alguien a quien nunca se le preguntó el nombre: se le atiende como
+      // a un paciente nuevo (nombres, apellidos y lo que falte del alta) y la
+      // confirmación le corrige la ficha. Si no, ese nombre seguía de largo y el
+      // 21-nov el agente dio de alta en el hospital a «PACIENTE REGISTRADO».
+      const patient =
+        fichaEncontrada && !esNombreDeRelleno(fichaEncontrada.fullName)
+          ? fichaEncontrada
+          : null;
 
       if (patient) {
         if (!finalNombre) {
@@ -11175,17 +11203,27 @@ export class ChatbotService implements OnModuleInit {
     const plazo = await plazoDeLaClinica(this.prisma, organizationId);
     if (!plazo) return null;
     const ahora = new Date();
-    const fin = finDelPlazoParaAgendar(ahora, plazo.dias, plazo.timeZone);
+    const fin = finDelPlazoParaAgendar(
+      ahora,
+      plazo.dias,
+      plazo.timeZone,
+      plazo.opciones,
+    );
     if (!fin || inicio < fin) return null;
     const ultimo = ultimoDiaParaAgendar(
       diaLocal(ahora, plazo.timeZone),
       plazo.dias,
+      plazo.opciones,
     );
     if (!ultimo) return null;
     return {
       hasta: fechaEnPalabras(ultimo, { conAnio: false }),
       desde: fechaEnPalabras(
-        primerDiaParaVerElCupo(diaLocal(inicio, plazo.timeZone), plazo.dias),
+        primerDiaParaVerElCupo(
+          diaLocal(inicio, plazo.timeZone),
+          plazo.dias,
+          plazo.opciones,
+        ),
         { conAnio: false },
       ),
     };
@@ -11313,67 +11351,88 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      // Paciente con cédula ya conocida → resumen + confirmación.
-      const specAgend =
-        (await this.redis.get(
-          `temp_especialidad:${organizationId}:${senderId}`,
-        )) || 'Servicio';
-      const epsAgend =
-        (await this.redis.get(
-          `temp_eps_query:${organizationId}:${senderId}`,
-        )) || 'EPS';
-      // 🔒 A quien ya autorizó al comenzar no se le repite el párrafo legal. Aquí
-      // solo se tiene la clave del remitente, que es con la que se guardó.
-      const avisoLegal = await this.avisoLegalDelResumen(organizationId, {
+      // 🪪 …pero el resumen solo si al paso del documento no le faltaría nada
+      // (2026-11-21, `documentoListoParaElResumen`). Un documento dado antes de
+      // buscar al paciente —en el primer mensaje, o al elegir un sábado sin ser
+      // de zona rural— de alguien que AgenIA no tiene tomaba el atajo: «Listo,
+      // Paciente», la ficha nacía «Paciente Registrado» sin nacimiento ni sexo,
+      // el hospital rechazaba la cita y, al reintentar, el agente creaba en el
+      // hospital a «PACIENTE REGISTRADO». Entonces se le pide escribirlo de
+      // nuevo (abajo) y sigue el paso completo; el documento se conserva, y si
+      // responde sin número sigue con ese.
+      const listo = await this.documentoListoParaElResumen(
+        organizationId,
         senderId,
-        bsuid: null,
-        phone: null,
-      });
-      const reply = MSGS.resumenCita(
-        nombrePrevio || 'Paciente',
         cedulaPrevia,
-        epsAgend,
-        specAgend,
-        fechaFormateada,
-        avisoLegal.url,
-        avisoLegal.yaAutorizo,
+        epsIdPrevio,
       );
-      await this.smartReply(
-        organizationId,
-        senderId,
-        reply,
-        this.resumenCitaHablado(
-          MSGS,
-          nombrePrevio,
+      if (listo) {
+        // Paciente con cédula ya conocida → resumen + confirmación.
+        const specAgend =
+          (await this.redis.get(
+            `temp_especialidad:${organizationId}:${senderId}`,
+          )) || 'Servicio';
+        const epsAgend =
+          (await this.redis.get(
+            `temp_eps_query:${organizationId}:${senderId}`,
+          )) || 'EPS';
+        // 🔒 A quien ya autorizó al comenzar no se le repite el párrafo legal. Aquí
+        // solo se tiene la clave del remitente, que es con la que se guardó.
+        const avisoLegal = await this.avisoLegalDelResumen(organizationId, {
+          senderId,
+          bsuid: null,
+          phone: null,
+        });
+        const reply = MSGS.resumenCita(
+          nombrePrevio || listo.nombre || 'Paciente',
+          cedulaPrevia,
+          epsAgend,
           specAgend,
-          slotFechaStr,
+          fechaFormateada,
+          avisoLegal.url,
           avisoLegal.yaAutorizo,
-        ),
-      );
-      await this.setUserState(
-        organizationId,
-        senderId,
-        ChatState.AWAITING_CONFIRMATION,
-      );
+        );
+        await this.smartReply(
+          organizationId,
+          senderId,
+          reply,
+          this.resumenCitaHablado(
+            MSGS,
+            nombrePrevio || listo.nombre,
+            specAgend,
+            slotFechaStr,
+            avisoLegal.yaAutorizo,
+          ),
+        );
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_CONFIRMATION,
+        );
 
-      await this.auditSuccess(senderId, organizationId, {
-        userMessage,
-        botReply: reply,
-        metadata: {
-          step: 'SLOT_SELECTED_CEDULA_KNOWN',
-          selectedLetter,
-          via,
-          slotId,
-          slotDate: slotFechaStr,
-        },
-      });
-      return;
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage,
+          botReply: reply,
+          metadata: {
+            step: 'SLOT_SELECTED_CEDULA_KNOWN',
+            selectedLetter,
+            via,
+            slotId,
+            slotDate: slotFechaStr,
+            ...(listo.porLaFicha ? { porLaFicha: true } : {}),
+          },
+        });
+        return;
+      }
     }
 
-    // Sin cédula previa → pedir cédula (Paso 4 del protocolo).
+    // Sin cédula previa → pedir cédula (Paso 4 del protocolo). Con una que aún no
+    // se buscó, se le pide escribirla de nuevo (ver `documentoListoParaElResumen`).
     // smartReply (no texto directo): en flujo de voz la pregunta también se
     // escucha, igual que el resumen de arriba.
-    const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
+    const reply = cedulaPrevia
+      ? MSGS.pedirCedulaDeNuevoPostSlot(fechaFormateada)
+      : MSGS.pedirCedulaPostSlot(fechaFormateada);
     await this.smartReply(organizationId, senderId, reply);
     await this.setUserState(
       organizationId,
@@ -11390,6 +11449,7 @@ export class ChatbotService implements OnModuleInit {
         via,
         slotId,
         slotDate: slotFechaStr,
+        ...(cedulaPrevia ? { documentoSinBuscar: true } : {}),
       },
     });
   }
@@ -11427,6 +11487,51 @@ export class ChatbotService implements OnModuleInit {
    */
   private altaCedulaKey(organizationId: string, senderId: string): string {
     return `temp_alta_cedula:${organizationId}:${senderId}`;
+  }
+
+  /**
+   * 🪪 ¿El atajo de la cédula ya conocida puede ir directo al resumen? (2026-11-21)
+   *
+   * Sí si ESE documento ya pasó por el paso del documento en esta conversación
+   * (`altaCedulaKey`: ahí se buscó al paciente y se le pidió lo que faltaba), o
+   * si AgenIA ya tiene su ficha con nombre de verdad, nacimiento, sexo y —con
+   * EPS— régimen: el paso del documento no le preguntaría nada (así sigue el que
+   * da su documento en el primer mensaje). Se mira solo la ficha: los datos del
+   * alta que haya en la sesión pueden ser de otra persona de este mismo número.
+   *
+   * null: hay que pedirle el documento y seguir el paso completo. `nombre`: el
+   * de la ficha, para el resumen.
+   */
+  private async documentoListoParaElResumen(
+    organizationId: string,
+    senderId: string,
+    cedula: string,
+    epsId: string | null,
+  ): Promise<{ nombre: string | null; porLaFicha: boolean } | null> {
+    if (
+      (await this.redis.get(this.altaCedulaKey(organizationId, senderId))) ===
+      cedula
+    ) {
+      return { nombre: null, porLaFicha: false };
+    }
+    const ficha = await this.prisma.patientProfile.findFirst({
+      where: { cedula, organizationId },
+      select: { fullName: true, dateOfBirth: true, gender: true, regime: true },
+    });
+    if (
+      !ficha ||
+      esNombreDeRelleno(ficha.fullName) ||
+      !ficha.dateOfBirth ||
+      !ficha.gender
+    ) {
+      return null;
+    }
+    // El régimen solo hace falta con EPS (como en `siguienteDatoDeAlta`).
+    if (!ficha.regime && epsId) {
+      const eps = await this.prisma.eps.findUnique({ where: { id: epsId } });
+      if (eps && !isParticularEps(eps.name)) return null;
+    }
+    return { nombre: ficha.fullName, porLaFicha: true };
   }
 
   /** El cupo de la lista de espera que quedó esperando el régimen del paciente. */
@@ -12195,7 +12300,7 @@ export class ChatbotService implements OnModuleInit {
       // escenario 12 de las pruebas E2E.
       const patient = await this.ensurePatientPersisted({
         cedula: cedulaFinal,
-        nombre: nombreFinal || 'Paciente Registrado',
+        nombre: nombreFinal || NOMBRE_DE_RELLENO,
         identity,
         organizationId: organizationId,
         epsId: epsIdForBooking,

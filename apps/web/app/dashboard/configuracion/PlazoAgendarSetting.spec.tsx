@@ -22,6 +22,7 @@ const SIN_CUPOS_HOY = {
     plazoMinimo: 3,
     hoy: '2026-10-23',
     dias: 2,
+    sabadoNoCuenta: false,
     ultimoCambio: {
         detalle: '«Plazo máximo para agendar» cambió de «Sin límite» a «2 días» desde Configuración por admin@hsvpanserma.gov.co.',
         en: '2026-10-23T20:27:50.000Z',
@@ -70,6 +71,30 @@ describe('PlazoAgendarSetting', () => {
             '✓ mié 4',
             'jue 5',
         ]);
+    });
+
+    it('con «Sábados por el asistente» encendida el sábado no cuenta: con 4 días el jueves 19 de noviembre llega al martes 24', () => {
+        render(<PlazoAgendarSetting initialDias={4} hoy="2026-11-19" sabadoNoCuenta />);
+        expect(screen.getByRole('status')).toHaveTextContent('hasta el martes 24 de noviembre');
+        const dias = within(screen.getByRole('list', { name: 'Días en que el asistente ofrece citas' }))
+            .getAllByRole('listitem')
+            .map((li) => li.textContent);
+        expect(dias).toEqual([
+            '✓ Hoy',
+            '✓ Mañana',
+            'sáb 21 (no cuenta, se ofrece igual)',
+            'dom 22 (no cuenta)',
+            '✓ lun 23',
+            '✓ mar 24',
+            'mié 25',
+        ]);
+        expect(screen.getByText(/el sábado tampoco cuenta/)).toBeInTheDocument();
+    });
+
+    it('sin la regla de sábados, el sábado cuenta como siempre', () => {
+        render(<PlazoAgendarSetting initialDias={4} hoy="2026-11-19" />);
+        expect(screen.getByRole('status')).toHaveTextContent('hasta el lunes 23 de noviembre');
+        expect(screen.queryByText(/el sábado tampoco cuenta/)).toBeNull();
     });
 
     it('con un plazo largo resume: los dos primeros, «…», el último y el primero fuera', () => {

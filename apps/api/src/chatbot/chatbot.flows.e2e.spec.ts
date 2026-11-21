@@ -1451,6 +1451,29 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(lastSent()).toMatch(/cédula/i);
     });
 
+    it('1B.11h 🪪 en la lista de espera, a una ficha con el nombre de relleno se le pide el nombre (2026-11-21)', async () => {
+      db.patients.push({
+        id: 'pat-relleno',
+        cedula: '1077000777',
+        fullName: 'Paciente Registrado',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+      });
+      db.slots = db.slots.filter((c) => c.id.startsWith('m-'));
+      await hastaLosCupos();
+      await say('otra');
+      await say('lista de espera');
+      await say('Sí');
+      await say('1077000777');
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      expect(lastSent()).toMatch(/nombre completo/);
+      await say('Juan Pérez');
+      expect(
+        db.patients.find((p: any) => p.id === 'pat-relleno').fullName,
+      ).toBe('Juan Pérez');
+    });
+
     it('1B.11f «Anóteme en la lista» con horarios a la vista también abre la lista; «no quiero lista de espera» no', async () => {
       await hastaLosCupos();
       await say('no quiero lista de espera');
@@ -1869,11 +1892,13 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say(URBANO);
       await say('para el sábado');
       expect(letrasDelMenu().some((id) => id.startsWith('s-'))).toBe(false);
-      // Y puede agendar el lunes sin volver a dar el documento.
+      // Y puede elegir el lunes; como AgenIA no lo tiene, se le pide el
+      // documento de nuevo para registrarlo completo (1S.8, 2026-11-21).
       await say('A');
       expect(
         redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
       ).toMatch(/^l-/);
+      expect(await state()).toBe(ChatState.AWAITING_CEDULA);
     });
 
     it('1S.5 sin otros días, solo se le pide comunicarse con el hospital', async () => {
@@ -1901,6 +1926,273 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await hastaLosCupos();
       expect(letra('A')).toBe('l-0800');
       expect(letrasDelMenu().some((id) => id.startsWith('s-'))).toBe(false);
+    });
+
+    // ── 2026-11-21, 9:31: no era de zona rural, eligió otro día y el chat saltó
+    // el registro («Listo, Paciente»); el hospital rechazó la cita y, al
+    // reintentar, el agente dio de alta a «PACIENTE REGISTRADO». ──
+    it('1S.8 a quien no es de zona rural y AgenIA no tiene: al elegir otro día se le pide el documento de nuevo y se le registra completo', async () => {
+      await hastaLosCupos();
+      await say('A'); // s-0700
+      await say(URBANO);
+      await say('A'); // l-0800
+      expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+      expect(lastSent()).toMatch(
+        /me escribe de nuevo el \*número de documento del paciente\*/,
+      );
+      expect(sent().join('\n')).not.toMatch(/Listo, Paciente/);
+
+      await say(URBANO);
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      await decirNombre(say);
+      await responderAlta(say);
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(lastSent()).toContain('Juan Pérez');
+      await say('Sí');
+
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      expect(appointments.bookAppointment.mock.calls[0][1]).toBe('l-0800');
+      const ficha = db.patients.find((p: any) => p.cedula === URBANO);
+      expect(ficha.fullName).toBe('Juan Pérez');
+      expect(ficha.dateOfBirth).toBeTruthy();
+      expect(ficha.gender).toBeTruthy();
+    });
+
+    it('1S.9 si a esa pregunta responde sin número («el mismo»), sigue con el documento que ya dio', async () => {
+      await hastaLosCupos();
+      await say('A'); // s-0700
+      await say(URBANO);
+      await say('A'); // l-0800
+      await say('el mismo');
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      expect(redis.store.get(`temp_cedula:${ORG_ID}:${SENDER}`)).toBe(URBANO);
+    });
+
+    it('1S.10 a quien AgenIA ya tiene con su ficha completa no se le vuelve a pedir: resumen con su nombre', async () => {
+      db.patients.push({
+        id: 'pat-urbano',
+        cedula: URBANO,
+        fullName: 'Rosa Gil',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+        dateOfBirth: new Date('1970-02-01'),
+        gender: 'F',
+      });
+      await hastaLosCupos();
+      await say('A'); // s-0700
+      await say(URBANO);
+      await say('A'); // l-0800
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(lastSent()).toContain('Rosa Gil');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 1T. El documento dado antes de buscar al paciente (2026-11-21)
+  // 19 de 43 atajos al resumen en 45 días fueron con un documento que nadie
+  // había buscado: «Listo, Paciente» y fichas «Paciente Registrado».
+  // ──────────────────────────────────────────────────────────────────
+  describe('1T. El documento dado antes de buscar al paciente', () => {
+    beforeEach(() => {
+      db.slots = [
+        slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA),
+        slotRow('slot-b', FECHA_B, 'Luis Gómez', SVC_MEDICINA),
+      ];
+      appointments.getAvailableSlots.mockImplementation(() =>
+        db.slots
+          .filter((s) => s.isAvailable)
+          .map((s) => ({
+            slotId: s.id,
+            fecha: s.startTime,
+            doctor: s.doctor.fullName,
+            servicio: s.service.name,
+          })),
+      );
+    });
+
+    const conDocumentoEnElPrimerMensaje = async (cedula: string) => {
+      provider.extractSchedulingIntent.mockImplementation(({ text }: any) =>
+        String(text).includes(cedula)
+          ? extraction({ intent: 'agendar_cita', cedula })
+          : extraction(),
+      );
+      await say(`quiero una cita, mi cédula es ${cedula}`);
+      await say('A'); // Medicina General
+      await elegirParticular();
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      await say('A'); // slot-a
+    };
+
+    it('1T.1 un paciente nuevo que dio su documento en el primer mensaje: al elegir el cupo se le pide de nuevo y se le registra', async () => {
+      await conDocumentoEnElPrimerMensaje('1077000111');
+      expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+      expect(lastSent()).toMatch(/me escribe de nuevo/);
+      expect(sent().join('\n')).not.toMatch(/Listo, Paciente/);
+      await say('1077000111');
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      await decirNombre(say);
+      await responderAlta(say);
+      await say('Sí');
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      const ficha = db.patients.find((p: any) => p.cedula === '1077000111');
+      expect(ficha.fullName).toBe('Juan Pérez');
+    });
+
+    it('1T.2 una ficha con el nombre de relleno se atiende como paciente nuevo y la confirmación le corrige el nombre', async () => {
+      db.patients.push({
+        id: 'pat-relleno',
+        cedula: '1077000222',
+        fullName: 'Paciente Registrado',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+        dateOfBirth: new Date('1980-12-28'),
+        gender: 'F',
+      });
+      await say('Hola');
+      await say('A');
+      await elegirParticular();
+      await say('A'); // slot-a
+      await say('1077000222');
+      // Antes: «Listo, Paciente Registrado» y directo al resumen.
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      await decirNombre(say);
+      // La ficha ya tenía nacimiento y sexo (del intento anterior): no se le
+      // vuelven a pedir.
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(lastSent()).toContain('Juan Pérez');
+      expect(lastSent()).not.toContain('Paciente Registrado');
+      await say('Sí');
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      const ficha = db.patients.find((p: any) => p.id === 'pat-relleno');
+      expect(ficha.fullName).toBe('Juan Pérez');
+      expect(ficha.nombres).toBe('Juan');
+      expect(ficha.apellidos).toBe('Pérez');
+    });
+
+    it('1T.2b la ficha con el nombre de relleno y sin nacimiento ni sexo (las 9 de antes) se completa entera', async () => {
+      db.patients.push({
+        id: 'pat-relleno',
+        cedula: '1077000666',
+        fullName: 'Paciente',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+        dateOfBirth: null,
+        gender: null,
+      });
+      await say('Hola');
+      await say('A');
+      await elegirParticular();
+      await say('A'); // slot-a
+      await say('1077000666');
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      await decirNombre(say);
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      await responderAlta(say);
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      await say('Sí');
+      const ficha = db.patients.find((p: any) => p.id === 'pat-relleno');
+      expect(ficha.fullName).toBe('Juan Pérez');
+      expect(ficha.dateOfBirth).toBeTruthy();
+      expect(ficha.gender).toBeTruthy();
+    });
+
+    it('1T.3 la ficha con el nombre de relleno tampoco toma el atajo desde el primer mensaje', async () => {
+      db.patients.push({
+        id: 'pat-relleno',
+        cedula: '1077000333',
+        fullName: 'Paciente Registrado',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+        dateOfBirth: new Date('1980-12-28'),
+        gender: 'F',
+      });
+      await conDocumentoEnElPrimerMensaje('1077000333');
+      expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+      expect(lastSent()).toMatch(/me escribe de nuevo/);
+    });
+
+    it('1T.4 un nombre de verdad nunca se cambia: la ficha completa va directo al resumen con su nombre', async () => {
+      db.patients.push({
+        id: 'pat-real',
+        cedula: '1077000444',
+        fullName: 'María Ruiz',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+        dateOfBirth: new Date('1975-06-01'),
+        gender: 'F',
+      });
+      await conDocumentoEnElPrimerMensaje('1077000444');
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(lastSent()).toContain('María Ruiz');
+      await say('Sí');
+      expect(db.patients.find((p: any) => p.id === 'pat-real').fullName).toBe(
+        'María Ruiz',
+      );
+    });
+
+    it.each([
+      ['sin nacimiento', null, 'F', ChatState.AWAITING_BIRTHDATE],
+      ['sin sexo', new Date('1970-02-01'), null, ChatState.AWAITING_GENDER],
+    ])(
+      '1T.5 una ficha %s tampoco toma el atajo: el paso del documento se lo pide',
+      async (_caso, dateOfBirth, gender, siguiente) => {
+        db.patients.push({
+          id: 'pat-incompleta',
+          cedula: '1077000555',
+          fullName: 'Luis Mora',
+          organizationId: ORG_ID,
+          epsId: null,
+          whatsappId: SENDER,
+          dateOfBirth,
+          gender,
+        });
+        await conDocumentoEnElPrimerMensaje('1077000555');
+        expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+        await say('1077000555');
+        expect(await state()).toBe(siguiente);
+      },
+    );
+
+    it.each([
+      [
+        'sin régimen, con EPS: se le pide el documento',
+        null,
+        ChatState.AWAITING_CEDULA,
+      ],
+      [
+        'con régimen y EPS: va directo al resumen',
+        'CONTRIBUTIVO',
+        ChatState.AWAITING_CONFIRMATION,
+      ],
+    ])('1T.6 una ficha %s', async (_caso, regime, esperado) => {
+      db.enrolled.push({ cedula: '1077000888', epsId: EPS_SURA.id });
+      db.patients.push({
+        id: 'pat-sura',
+        cedula: '1077000888',
+        fullName: 'Ana Gómez',
+        organizationId: ORG_ID,
+        epsId: EPS_SURA.id,
+        whatsappId: SENDER,
+        dateOfBirth: new Date('1985-04-02'),
+        gender: 'F',
+        regime,
+      });
+      provider.extractSchedulingIntent.mockImplementation(({ text }: any) =>
+        String(text).includes('1077000888')
+          ? extraction({ intent: 'agendar_cita', cedula: '1077000888' })
+          : extraction(),
+      );
+      await say('quiero una cita, mi cédula es 1077000888');
+      await say('A'); // Medicina General
+      await say('Sura');
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      await say('A');
+      expect(await state()).toBe(esperado);
     });
   });
 

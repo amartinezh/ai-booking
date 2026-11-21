@@ -21,8 +21,11 @@ const m = prisma as unknown as Record<string, Record<string, jest.Mock>>;
 const AHORA = new Date('2026-10-23T20:27:00Z');
 const bogota = (iso: string) => new Date(`${iso}-05:00`);
 
-const preparar = (p: { dias: number | null; espejo: boolean }) => {
-    m.organizationSettings.findUnique.mockResolvedValue({ bookingMaxDaysAhead: p.dias });
+const preparar = (p: { dias: number | null; espejo: boolean; sabadoRural?: number | null }) => {
+    m.organizationSettings.findUnique.mockResolvedValue({
+        bookingMaxDaysAhead: p.dias,
+        saturdayRuralSharePercent: p.sabadoRural ?? null,
+    });
     m.organization.findUnique.mockResolvedValue({ timezone: 'America/Bogota' });
     m.hospitalMirrorConfig.findUnique.mockResolvedValue({ enabled: p.espejo });
     m.bookingBlock.findMany.mockResolvedValue([
@@ -72,10 +75,22 @@ describe('cargarResumenDelPlazo — los cupos que el asistente puede ofrecer hoy
             plazoMinimo: 3,
             hoy: '2026-10-23',
             dias: 2,
+            sabadoNoCuenta: false,
             ultimoCambio: {
                 detalle: expect.stringContaining('por admin@hsvp.gov.co'),
                 en: '2026-10-23T20:27:50.000Z',
             },
+        });
+    });
+
+    it('con «Sábados por el asistente» encendida el sábado no cuenta: con 2 días un viernes llega al lunes', async () => {
+        preparar({ dias: 2, espejo: true, sabadoRural: 50 });
+        expect(await cargarResumenDelPlazo('org-1', AHORA)).toMatchObject({
+            enElPlazo: 2,
+            ultimoDia: '2026-10-26',
+            desde: null,
+            plazoMinimo: 2, // viernes y lunes
+            sabadoNoCuenta: true,
         });
     });
 

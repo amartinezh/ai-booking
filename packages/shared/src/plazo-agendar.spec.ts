@@ -265,3 +265,105 @@ describe('lo que el plazo le deja ofrecer hoy al asistente', () => {
     }
   });
 });
+
+describe('con «Sábados por el asistente» encendida, el sábado no cuenta (2026-11-21)', () => {
+  // La semana del diagnóstico: el hospital abre el sábado ese mismo sábado y es
+  // para la zona rural, así que de miércoles a viernes el plazo perdía un día.
+  const SIN_SABADO = { sabadoNoCuenta: true };
+
+  it('jueves 19 con 4 días: hasta el martes 24 (antes, el lunes 23)', () => {
+    expect(ultimoDiaParaAgendar('2026-11-19', 4, SIN_SABADO)).toBe('2026-11-24');
+    expect(ultimoDiaParaAgendar('2026-11-19', 4)).toBe('2026-11-23');
+  });
+
+  it('miércoles y viernes también ganan el día; lunes y martes no cambian', () => {
+    expect(ultimoDiaParaAgendar('2026-11-18', 4, SIN_SABADO)).toBe('2026-11-23');
+    expect(ultimoDiaParaAgendar('2026-11-20', 4, SIN_SABADO)).toBe('2026-11-25');
+    expect(ultimoDiaParaAgendar('2026-11-23', 4, SIN_SABADO)).toBe('2026-11-26');
+    expect(ultimoDiaParaAgendar('2026-11-23', 4)).toBe('2026-11-26');
+    expect(ultimoDiaParaAgendar('2026-11-24', 4, SIN_SABADO)).toBe('2026-11-27');
+    expect(ultimoDiaParaAgendar('2026-11-24', 4)).toBe('2026-11-27');
+  });
+
+  it('un sábado o un domingo, el plazo empieza a contar el lunes', () => {
+    expect(ultimoDiaParaAgendar('2026-11-21', 4, SIN_SABADO)).toBe('2026-11-26');
+    expect(ultimoDiaParaAgendar('2026-11-22', 4, SIN_SABADO)).toBe('2026-11-26');
+    expect(ultimoDiaParaAgendar('2026-11-21', 4)).toBe('2026-11-25');
+  });
+
+  it('el sábado se sigue ofreciendo: queda dentro del plazo', () => {
+    const jueves = bogota('2026-11-19T08:00:00');
+    const fin = finDelPlazoParaAgendar(jueves, 4, undefined, SIN_SABADO)!;
+    expect(fin.toISOString()).toBe(bogota('2026-11-25T00:00:00').toISOString());
+    // Sábado 21 a las 7 y martes 24 a las 3 p. m.: sí; miércoles 25: no.
+    for (const [inicio, dentro] of [
+      ['2026-11-21T07:00:00', true],
+      ['2026-11-24T15:00:00', true],
+      ['2026-11-25T07:00:00', false],
+    ] as const) {
+      expect(
+        dentroDelPlazoParaAgendar(bogota(inicio), jueves, 4, undefined, SIN_SABADO),
+      ).toBe(dentro);
+    }
+    // Y hoy sábado, los cupos de hoy mismo.
+    const sabado = bogota('2026-11-21T06:30:00');
+    expect(
+      dentroDelPlazoParaAgendar(bogota('2026-11-21T09:00:00'), sabado, 4, undefined, SIN_SABADO),
+    ).toBe(true);
+  });
+
+  it('por qué no cuenta: el sábado; un sábado festivo sigue siendo festivo', () => {
+    expect(porQueNoCuentaParaElPlazo('2026-11-21', SIN_SABADO)).toBe('SABADO');
+    expect(porQueNoCuentaParaElPlazo('2026-11-21')).toBeNull();
+    expect(diaCuentaParaElPlazo('2026-11-21', SIN_SABADO)).toBe(false);
+    expect(diaCuentaParaElPlazo('2026-11-20', SIN_SABADO)).toBe(true);
+    expect(porQueNoCuentaParaElPlazo('2026-11-22', SIN_SABADO)).toBe('DOMINGO');
+    // El 8 de diciembre (festivo que no se corre al lunes) de 2029 cae sábado.
+    expect(porQueNoCuentaParaElPlazo('2029-12-08', SIN_SABADO)).toBe('FESTIVO');
+  });
+
+  it('desde cuándo se ve un cupo: el del martes 24, desde el jueves 19; el del sábado, como el del lunes', () => {
+    expect(primerDiaParaVerElCupo('2026-11-24', 4, SIN_SABADO)).toBe('2026-11-19');
+    expect(primerDiaParaVerElCupo('2026-11-24', 4)).toBe('2026-11-20');
+    expect(primerDiaParaVerElCupo('2026-11-21', 4, SIN_SABADO)).toBe(
+      primerDiaParaVerElCupo('2026-11-23', 4, SIN_SABADO),
+    );
+  });
+
+  it('primerDiaParaVerElCupo y ultimoDiaParaAgendar dicen lo mismo', () => {
+    for (let i = 0; i < 120; i++) {
+      const cupo = sumarDiasAFecha('2026-10-01', i);
+      for (let dias = 1; dias <= 7; dias++) {
+        const desde = primerDiaParaVerElCupo(cupo, dias, SIN_SABADO);
+        expect(desde <= cupo).toBe(true);
+        expect(ultimoDiaParaAgendar(desde, dias, SIN_SABADO)! >= cupo).toBe(true);
+        expect(
+          ultimoDiaParaAgendar(sumarDiasAFecha(desde, -1), dias, SIN_SABADO)! < cupo,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('lo que le deja ofrecer hoy: jueves 19 con 4 días, los cupos del martes 24 ya se ven', () => {
+    const jueves = bogota('2026-11-19T08:00:00');
+    const cupos = [bogota('2026-11-24T07:00:00'), bogota('2026-11-24T15:00:00')];
+    const base = { inicios: cupos, ahora: jueves, dias: 4, reglas: [] };
+    expect(resumenCuposDelPlazo({ ...base, sabadoNoCuenta: true })).toEqual({
+      enElPlazo: 2,
+      total: 2,
+      primerDia: '2026-11-24',
+      ultimoDia: '2026-11-24',
+      desde: null,
+      plazoMinimo: 4, // jueves, viernes, lunes y martes
+    });
+    // Sin la opción, lo de antes: ninguno hoy, «escríbanos desde el viernes».
+    expect(resumenCuposDelPlazo(base)).toEqual({
+      enElPlazo: 0,
+      total: 2,
+      primerDia: '2026-11-24',
+      ultimoDia: '2026-11-23',
+      desde: '2026-11-20',
+      plazoMinimo: 5,
+    });
+  });
+});

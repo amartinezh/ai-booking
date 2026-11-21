@@ -1694,6 +1694,121 @@ describe('AppointmentsService — plazo máximo para agendar por el asistente', 
   });
 });
 
+describe('AppointmentsService — plazo con «Sábados por el asistente» encendida: el sábado no cuenta (2026-11-21)', () => {
+  // Jueves 19 de noviembre de 2026, 8:00 a. m. en Bogotá: el día del diagnóstico.
+  // Solo se fija la fecha; los temporizadores siguen siendo los de verdad.
+  beforeEach(() => {
+    jest.useFakeTimers({
+      now: new Date('2026-11-19T13:00:00Z'),
+      doNotFake: [
+        'nextTick',
+        'setImmediate',
+        'clearImmediate',
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'queueMicrotask',
+      ],
+    });
+  });
+  afterEach(() => jest.useRealTimers());
+
+  const a = (fecha: string, hhmm: string) =>
+    new Date(`${fecha}T${hhmm}:00-05:00`);
+  const slotRow = (id: string, inicio: Date) => ({
+    id,
+    startTime: inicio,
+    isAvailable: true,
+    organizationId: 'org1',
+    doctorId: 'doc1',
+    doctor: { fullName: 'Ana Ruiz', whatsappBookingEnabled: true },
+    service: { name: 'Medicina General' },
+  });
+  const conRegla = async (sabadoRural: number | null, filas: any[] = []) => {
+    const findMany = jest.fn(() => filas);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AppointmentsService,
+        {
+          provide: PrismaService,
+          useValue: {
+            scheduleSlot: { findMany },
+            hospitalMirrorConfig: {
+              findUnique: jest.fn(() => ({
+                enabled: false,
+                ruralListCount: 27000,
+              })),
+            },
+            mirrorEntityMap: { findMany: jest.fn(() => []) },
+            bookingBlock: { findMany: jest.fn(() => []) },
+            organizationSettings: {
+              findUnique: jest.fn(() => ({
+                bookingMaxDaysAhead: 4,
+                botAgendaSharePercent: null,
+                saturdayRuralSharePercent: sabadoRural,
+              })),
+            },
+            organization: {
+              findUnique: jest.fn(() => ({
+                timezone: 'America/Bogota',
+                settings: null,
+              })),
+            },
+            $queryRaw: jest.fn(async () => []),
+            waitlistEntry: { findMany: jest.fn(() => []) },
+          },
+        },
+      ],
+    }).compile();
+    return {
+      svc: module.get<AppointmentsService>(AppointmentsService),
+      findMany,
+    };
+  };
+
+  it('el jueves 19 con 4 días, la consulta llega hasta el martes 24 (sin la regla, hasta el lunes 23)', async () => {
+    const conLa = await conRegla(50);
+    await conLa.svc.getAvailableSlots('Medicina', null, 'org1');
+    expect(conLa.findMany.mock.calls[0][0].where.startTime.lt).toEqual(
+      a('2026-11-25', '00:00'),
+    );
+    const sinLa = await conRegla(null);
+    await sinLa.svc.getAvailableSlots('Medicina', null, 'org1');
+    expect(sinLa.findMany.mock.calls[0][0].where.startTime.lt).toEqual(
+      a('2026-11-24', '00:00'),
+    );
+  });
+
+  it('el cupo del martes 24 ya no es «más allá del plazo» el jueves', async () => {
+    const martes = [slotRow('s1', a('2026-11-24', '07:00'))];
+    const conLa = await conRegla(50, martes);
+    expect(
+      await conLa.svc.cupoMasAllaDelPlazo('Medicina', null, 'org1'),
+    ).toBeNull();
+    // Sin la regla, lo que oyeron 46 personas: hasta el lunes 23, desde el viernes 20.
+    const sinLa = await conRegla(null, martes);
+    expect(
+      await sinLa.svc.cupoMasAllaDelPlazo('Medicina', null, 'org1'),
+    ).toEqual({
+      ultimoDia: '2026-11-23',
+      primerDia: '2026-11-24',
+      desde: '2026-11-20',
+    });
+  });
+
+  it('un cupo del miércoles 25 sí queda más allá: se ve desde el viernes 20', async () => {
+    const { svc } = await conRegla(50, [
+      slotRow('s1', a('2026-11-25', '07:00')),
+    ]);
+    expect(await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1')).toEqual({
+      ultimoDia: '2026-11-24',
+      primerDia: '2026-11-25',
+      desde: '2026-11-20',
+    });
+  });
+});
+
 describe('AppointmentsService — cupoMasAllaDelPlazo (no es agenda llena, es el plazo)', () => {
   const {
     diaLocal,

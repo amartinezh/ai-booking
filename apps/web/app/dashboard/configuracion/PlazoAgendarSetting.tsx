@@ -27,16 +27,20 @@ import {
  * quién lo cambió por última vez (2026-10-23).
  *
  * Los domingos y los festivos de Colombia no cuentan (2026-10-31): el ejemplo los
- * muestra en la fila como días que no cuentan.
+ * muestra en la fila como días que no cuentan. Con «Sábados por el asistente»
+ * encendida, el sábado tampoco (2026-11-21, `sabadoNoCuenta`).
  */
 export default function PlazoAgendarSetting({
     initialDias,
     hoy,
     resumenInicial = null,
+    sabadoNoCuenta = false,
 }: {
     initialDias: number | null;
     hoy: string;
     resumenInicial?: ResumenDelPlazo | null;
+    /** Con «Sábados por el asistente» encendida, el sábado no cuenta para el plazo. */
+    sabadoNoCuenta?: boolean;
 }) {
     const [dias, setDias] = useState<number | null>(initialDias);
     const [resumen, setResumen] = useState<ResumenDelPlazo | null>(resumenInicial);
@@ -78,7 +82,9 @@ export default function PlazoAgendarSetting({
         });
     };
 
-    const ultimo = ultimoDiaParaAgendar(hoy, dias);
+    // Lo que diga el último resumen leído (se relee al cambiar el plazo); si no, lo de la página.
+    const sinSabado = resumen?.sabadoNoCuenta ?? sabadoNoCuenta;
+    const ultimo = ultimoDiaParaAgendar(hoy, dias, { sabadoNoCuenta: sinSabado });
 
     return (
         <section>
@@ -124,15 +130,24 @@ export default function PlazoAgendarSetting({
                     </p>
                 </div>
 
-                {ultimo !== null && dias !== null && <Ejemplo hoy={hoy} ultimo={ultimo} />}
+                {ultimo !== null && dias !== null && <Ejemplo hoy={hoy} ultimo={ultimo} sinSabado={sinSabado} />}
 
                 {resumen && !isPending && <CuposDeHoy resumen={resumen} />}
 
                 <ul className="text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5 space-y-1">
-                    <li>
-                        Con 4 días, un viernes: viernes, sábado, lunes y martes (el domingo no cuenta); si el lunes es
-                        festivo, hasta el miércoles. Cada día que pasa se abre uno nuevo.
-                    </li>
+                    {sinSabado ? (
+                        <li>
+                            Mientras «Sábados por el asistente» esté encendida, <strong>el sábado tampoco cuenta</strong>:
+                            el hospital abre su agenda ese mismo día. El asistente lo sigue ofreciendo dentro del plazo.
+                            Con 4 días, un jueves: jueves, viernes, lunes y martes; si el lunes es festivo, hasta el
+                            miércoles. Cada día que pasa se abre uno nuevo.
+                        </li>
+                    ) : (
+                        <li>
+                            Con 4 días, un viernes: viernes, sábado, lunes y martes (el domingo no cuenta); si el lunes es
+                            festivo, hasta el miércoles. Cada día que pasa se abre uno nuevo.
+                        </li>
+                    )}
                     <li>
                         Cuenta la fecha de la cita, no la del mensaje. Si el paciente pide una fecha más lejana, el
                         asistente le ofrece las más próximas dentro del plazo.
@@ -200,9 +215,10 @@ function CuposDeHoy({ resumen }: { resumen: ResumenDelPlazo }) {
 
 /**
  * Los días de hoy en adelante, en fila: cuáles se ofrecen, cuáles no cuentan
- * (domingos y festivos) y desde cuál ya no.
+ * (domingos, festivos y, con `sinSabado`, sábados) y desde cuál ya no.
  */
-function Ejemplo({ hoy, ultimo }: { hoy: string; ultimo: string }) {
+function Ejemplo({ hoy, ultimo, sinSabado }: { hoy: string; ultimo: string; sinSabado: boolean }) {
+    const porQueNo = (fecha: string) => porQueNoCuentaParaElPlazo(fecha, { sabadoNoCuenta: sinSabado });
     const primeroFuera = sumarDiasAFecha(ultimo, 1);
     const todos: string[] = [];
     for (let f = hoy; f <= ultimo; f = sumarDiasAFecha(f, 1)) todos.push(f);
@@ -222,13 +238,17 @@ function Ejemplo({ hoy, ultimo }: { hoy: string; ultimo: string }) {
                         <li key={`hueco-${i}`} aria-hidden className="px-1 text-zinc-400">
                             …
                         </li>
-                    ) : porQueNoCuentaParaElPlazo(fecha) ? (
+                    ) : porQueNo(fecha) ? (
                         <li
                             key={fecha}
                             className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-400"
                         >
                             {etiquetaDia(fecha, hoy)}{' '}
-                            {porQueNoCuentaParaElPlazo(fecha) === 'FESTIVO' ? '(festivo, no cuenta)' : '(no cuenta)'}
+                            {porQueNo(fecha) === 'FESTIVO'
+                                ? '(festivo, no cuenta)'
+                                : porQueNo(fecha) === 'SABADO'
+                                  ? '(no cuenta, se ofrece igual)'
+                                  : '(no cuenta)'}
                         </li>
                     ) : (
                         <li

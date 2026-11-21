@@ -38,6 +38,7 @@ import EstadisticasParaCompartir from './EstadisticasParaCompartir';
 import { getMyEstadisticasParaCompartir } from '@/app/actions/estadisticas';
 import { getMyPaginaPoliticaDatos } from '@/app/actions/politica-datos';
 import Link from 'next/link';
+import { sabadoNoCuentaParaElPlazo } from '@agenia/shared';
 
 export const dynamic = 'force-dynamic';
 
@@ -231,6 +232,7 @@ export default async function ConfiguracionPage({
                                 initialDias={settings.bookingMaxDaysAhead}
                                 hoy={settings.hoyEnLaClinica}
                                 resumenInicial={plazoResumen}
+                                sabadoNoCuenta={sabadoNoCuentaParaElPlazo(settings.saturdayRuralSharePercent)}
                             />
                         )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}

@@ -1584,6 +1584,35 @@ describe('MirrorDispatchService — hidratación del contexto que va al HIS', ()
     expect(evento.seq).toBe('1'); // BigInt serializado: JSON no tiene int64
   });
 
+  it('🪪 un paciente con el nombre de relleno sale sin nacimiento ni sexo: el agente no puede darlo de alta en el HIS (2026-11-21)', async () => {
+    prisma.patientProfile.findMany.mockResolvedValue([
+      {
+        ...PACIENTE,
+        fullName: 'Paciente Registrado',
+        nombres: null,
+        apellidos: null,
+      },
+    ]);
+    const [evento] = await traer();
+    expect(evento.context?.patientDocument).toBe('9696544');
+    expect(evento.context?.patientBirthDateIso).toBeUndefined();
+    expect(evento.context?.patientGender).toBeUndefined();
+    // Lo demás sigue igual: si el hospital ya lo tiene, la cita entra.
+    expect(evento.context?.patientRegime).toBe('SUBSIDIADO');
+    expect(evento.context?.missingMappings).toBeUndefined();
+  });
+
+  it('🪪 con los nombres que dio el paciente, el nombre completo no importa: sale con todo', async () => {
+    prisma.patientProfile.findMany.mockResolvedValue([
+      { ...PACIENTE, fullName: 'Paciente Registrado' },
+    ]);
+    const [evento] = await traer();
+    expect(evento.context?.patientBirthDateIso).toBe(
+      '1980-03-15T00:00:00.000Z',
+    );
+    expect(evento.context?.patientGender).toBe('M');
+  });
+
   it('todas las lecturas van acotadas a la organización', async () => {
     await traer();
 

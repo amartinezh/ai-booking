@@ -14,6 +14,16 @@
  *    (lunes 2 festivo, sábados sin citas por el asistente) el plazo llegaba al
  *    domingo o al lunes, 62 personas oyeron «no quedan cupos» y la agenda del
  *    martes ya estaba abierta en el hospital. Siempre activo: no hay interruptor.
+ *  - Con «Sábados por el asistente» encendida (sábados solo para la zona rural,
+ *    `sabado-rural.ts`) el SÁBADO TAMPOCO CUENTA (2026-11-21): el hospital abre
+ *    la agenda del sábado ese mismo sábado (112 de los 116 cupos del 21-nov se
+ *    crearon a las 6 a. m.) y es para la gente del campo, así que de miércoles a
+ *    viernes el sábado se comía uno de los días del plazo sin dar nada: el jueves
+ *    19 el asistente llegaba hasta el lunes 23 (un solo médico, lleno) mientras
+ *    el hospital ya agendaba el martes 24; 46 personas oyeron «escríbanos desde
+ *    el viernes» y la lista de espera pasó de 35 a 74. El sábado se sigue
+ *    ofreciendo: queda dentro del plazo, solo que no lo alarga ni lo acorta.
+ *    Se pasa como `{ sabadoNoCuenta }`; sin la opción, todo es como antes.
  *  - Cuenta la FECHA DE LA CITA, en la zona horaria de la clínica.
  *  - Sin límite (null) es el valor de siempre: nada cambia hasta configurarlo.
  *  - Solo el asistente: el personal agenda en el panel y en el HIS a cualquier
@@ -78,34 +88,53 @@ export function validarPlazoAgendar(
 }
 
 /**
- * Por qué un día ('YYYY-MM-DD') NO cuenta para el plazo: es domingo o festivo de
- * Colombia. null si cuenta.
+ * Cómo se cuentan los días del plazo en una clínica. `sabadoNoCuenta`: con
+ * «Sábados por el asistente» encendida, el sábado no cuenta (ver la cabecera y
+ * `sabadoNoCuentaParaElPlazo` en sabado-rural.ts). Sin opciones, como siempre.
+ */
+export interface OpcionesDelPlazo {
+  sabadoNoCuenta?: boolean;
+}
+
+/**
+ * Por qué un día ('YYYY-MM-DD') NO cuenta para el plazo: es domingo, festivo de
+ * Colombia o —con `sabadoNoCuenta`— sábado. null si cuenta.
  */
 export function porQueNoCuentaParaElPlazo(
   fecha: string,
-): 'DOMINGO' | 'FESTIVO' | null {
-  if (diaDeLaSemana(fecha) === 0) return 'DOMINGO';
+  opciones: OpcionesDelPlazo = {},
+): 'DOMINGO' | 'FESTIVO' | 'SABADO' | null {
+  const diaSemana = diaDeLaSemana(fecha);
+  if (diaSemana === 0) return 'DOMINGO';
   if (esFestivoColombia(fecha)) return 'FESTIVO';
+  if (opciones.sabadoNoCuenta && diaSemana === 6) return 'SABADO';
   return null;
 }
 
 /** ¿El día ('YYYY-MM-DD') cuenta para el plazo? Los domingos y festivos, no. */
-export function diaCuentaParaElPlazo(fecha: string): boolean {
-  return porQueNoCuentaParaElPlazo(fecha) === null;
+export function diaCuentaParaElPlazo(
+  fecha: string,
+  opciones: OpcionesDelPlazo = {},
+): boolean {
+  return porQueNoCuentaParaElPlazo(fecha, opciones) === null;
 }
 
 /** El primer día que cuenta desde `fecha` (ella misma si cuenta). */
-function siguienteQueCuenta(fecha: string): string {
+function siguienteQueCuenta(fecha: string, opciones: OpcionesDelPlazo): string {
   let f = fecha;
-  while (!diaCuentaParaElPlazo(f)) f = sumarDiasAFecha(f, 1);
+  while (!diaCuentaParaElPlazo(f, opciones)) f = sumarDiasAFecha(f, 1);
   return f;
 }
 
 /** Cuántos días que cuentan hay de `desde` a `hasta`, los dos incluidos. */
-function diasQueCuentan(desde: string, hasta: string): number {
+function diasQueCuentan(
+  desde: string,
+  hasta: string,
+  opciones: OpcionesDelPlazo,
+): number {
   let n = 0;
   for (let f = desde; f <= hasta; f = sumarDiasAFecha(f, 1)) {
-    if (diaCuentaParaElPlazo(f)) n++;
+    if (diaCuentaParaElPlazo(f, opciones)) n++;
   }
   return n;
 }
@@ -119,12 +148,13 @@ function diasQueCuentan(desde: string, hasta: string): number {
 export function ultimoDiaParaAgendar(
   hoy: string,
   dias: number | null,
+  opciones: OpcionesDelPlazo = {},
 ): string | null {
   const plazo = normalizarPlazoAgendar(dias);
   if (plazo === null) return null;
-  let fecha = siguienteQueCuenta(hoy);
+  let fecha = siguienteQueCuenta(hoy, opciones);
   for (let contados = 1; contados < plazo; contados++) {
-    fecha = siguienteQueCuenta(sumarDiasAFecha(fecha, 1));
+    fecha = siguienteQueCuenta(sumarDiasAFecha(fecha, 1), opciones);
   }
   return fecha;
 }
@@ -138,9 +168,10 @@ export function finDelPlazoParaAgendar(
   ahora: Date,
   dias: number | null,
   timeZone?: string,
+  opciones: OpcionesDelPlazo = {},
 ): Date | null {
   const tz = timeZone || DEFAULT_TIMEZONE;
-  const ultimo = ultimoDiaParaAgendar(diaLocal(ahora, tz), dias);
+  const ultimo = ultimoDiaParaAgendar(diaLocal(ahora, tz), dias, opciones);
   if (ultimo === null) return null;
   const [y, m, d] = partesDeFecha(sumarDiasAFecha(ultimo, 1))!;
   return horaLocalAUtc(y, m, d, 0, tz);
@@ -152,8 +183,9 @@ export function dentroDelPlazoParaAgendar(
   ahora: Date,
   dias: number | null,
   timeZone?: string,
+  opciones: OpcionesDelPlazo = {},
 ): boolean {
-  const fin = finDelPlazoParaAgendar(ahora, dias, timeZone);
+  const fin = finDelPlazoParaAgendar(ahora, dias, timeZone, opciones);
   return fin === null || inicio < fin;
 }
 
@@ -170,15 +202,20 @@ export function textoPlazoAgendar(dias: number | null): string {
  * martes lo ve desde el lunes; el del lunes, desde el sábado (el domingo no
  * cuenta, y desde el domingo también lo ve).
  */
-export function primerDiaParaVerElCupo(diaDelCupo: string, dias: number): string {
+export function primerDiaParaVerElCupo(
+  diaDelCupo: string,
+  dias: number,
+  opciones: OpcionesDelPlazo = {},
+): string {
   const plazo = Math.max(1, dias);
-  // Un cupo de un día que no cuenta (un domingo) se ve igual que uno del
-  // siguiente que sí: el plazo siempre termina en un día que cuenta.
-  let desde = siguienteQueCuenta(diaDelCupo);
+  // Un cupo de un día que no cuenta (un domingo, o un sábado con
+  // `sabadoNoCuenta`) se ve igual que uno del siguiente que sí: el plazo
+  // siempre termina en un día que cuenta.
+  let desde = siguienteQueCuenta(diaDelCupo, opciones);
   let contados = 1;
   for (;;) {
     const antes = sumarDiasAFecha(desde, -1);
-    const suma = contados + (diaCuentaParaElPlazo(antes) ? 1 : 0);
+    const suma = contados + (diaCuentaParaElPlazo(antes, opciones) ? 1 : 0);
     if (suma > plazo) return desde;
     desde = antes;
     contados = suma;
@@ -200,7 +237,7 @@ export interface ResumenCuposDelPlazo {
   ultimoDia: string | null;
   /** Si hoy no hay ninguno en el plazo: desde qué día se ve el primero. */
   desde: string | null;
-  /** Días de plazo (sin domingos ni festivos) que hacen falta para ofrecer hoy el primer cupo. */
+  /** Días de plazo (sin domingos ni festivos, ni sábados con `sabadoNoCuenta`) que hacen falta para ofrecer hoy el primer cupo. */
   plazoMinimo: number | null;
 }
 
@@ -215,13 +252,16 @@ export function resumenCuposDelPlazo(p: {
   dias: number | null;
   reglas: readonly ReglaBloqueoAgenda[];
   timeZone?: string;
+  /** Con «Sábados por el asistente» encendida, el sábado no cuenta. */
+  sabadoNoCuenta?: boolean;
 }): ResumenCuposDelPlazo {
   const tz = p.timeZone || DEFAULT_TIMEZONE;
+  const opciones: OpcionesDelPlazo = { sabadoNoCuenta: p.sabadoNoCuenta };
   const minimo = inicioMinimoParaOfrecer(p.ahora);
   const ofrecibles = p.inicios
     .filter((i) => i >= minimo && !cupoBloqueado(i, p.reglas, tz))
     .sort((a, b) => a.getTime() - b.getTime());
-  const fin = finDelPlazoParaAgendar(p.ahora, p.dias, tz);
+  const fin = finDelPlazoParaAgendar(p.ahora, p.dias, tz, opciones);
   const enElPlazo = fin
     ? ofrecibles.filter((i) => i < fin).length
     : ofrecibles.length;
@@ -232,13 +272,16 @@ export function resumenCuposDelPlazo(p: {
     enElPlazo,
     total: ofrecibles.length,
     primerDia,
-    ultimoDia: ultimoDiaParaAgendar(hoy, plazo),
+    ultimoDia: ultimoDiaParaAgendar(hoy, plazo, opciones),
     desde:
       enElPlazo === 0 && primerDia && plazo !== null
-        ? primerDiaParaVerElCupo(primerDia, plazo)
+        ? primerDiaParaVerElCupo(primerDia, plazo, opciones)
         : null,
     plazoMinimo: primerDia
-      ? Math.max(1, diasQueCuentan(hoy, siguienteQueCuenta(primerDia)))
+      ? Math.max(
+          1,
+          diasQueCuentan(hoy, siguienteQueCuenta(primerDia, opciones), opciones),
+        )
       : null,
   };
 }

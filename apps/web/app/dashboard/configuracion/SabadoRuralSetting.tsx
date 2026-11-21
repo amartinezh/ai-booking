@@ -120,6 +120,11 @@ export default function SabadoRuralSetting({
                         cita del sábado, y le muestra los horarios de otros días.
                     </li>
                     <li>Aplica al agendar, al cambiar la fecha de una cita y a la lista de espera.</li>
+                    <li>
+                        Mientras esté encendida, el sábado no cuenta para el «Plazo máximo para agendar»: el hospital
+                        abre la agenda del sábado ese mismo día, y contarlo le quitaba al asistente un día de miércoles a
+                        viernes.
+                    </li>
                 </ul>
                 <p className="text-xs text-zinc-400">
                     Solo el asistente (WhatsApp y Telegram): el personal agenda desde el panel y el hospital en su

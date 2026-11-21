@@ -83,6 +83,17 @@ export function validarSabadoRural(
   return { ok: true, porcentaje: valor };
 }
 
+/**
+ * ¿El sábado deja de contar para el plazo máximo para agendar? Sí mientras la
+ * regla esté encendida (2026-11-21, `plazo-agendar.ts`): el hospital abre la
+ * agenda del sábado ese mismo sábado y es para la zona rural, así que contarlo le
+ * quitaba al asistente uno de sus días de miércoles a viernes. Sin la regla, el
+ * sábado cuenta como siempre.
+ */
+export function sabadoNoCuentaParaElPlazo(saturdayRuralSharePercent: unknown): boolean {
+  return normalizarSabadoRural(saturdayRuralSharePercent) !== null;
+}
+
 /** ¿El día ('YYYY-MM-DD') es sábado? */
 export function esDiaSabado(dia: string): boolean {
   return partesDeFecha(dia) !== null && diaDeLaSemana(dia) === SABADO;

@@ -759,7 +759,7 @@ export {
   ultimoDiaParaAgendar,
   validarPlazoAgendar,
 } from './src/plazo-agendar';
-export type { ResumenCuposDelPlazo } from './src/plazo-agendar';
+export type { OpcionesDelPlazo, ResumenCuposDelPlazo } from './src/plazo-agendar';
 // 🏥 Reserva de agenda para la atención presencial (tope del chat por médico y día).
 export {
   RESERVA_PRESENCIAL,
@@ -778,6 +778,7 @@ export {
   esSabado,
   normalizarSabadoRural,
   porcentajeDelDia,
+  sabadoNoCuentaParaElPlazo,
   textoSabadoRural,
   tramosDeSabado,
   validarSabadoRural,

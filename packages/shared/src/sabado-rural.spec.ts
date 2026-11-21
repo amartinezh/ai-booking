@@ -4,6 +4,7 @@ import {
   esSabado,
   normalizarSabadoRural,
   porcentajeDelDia,
+  sabadoNoCuentaParaElPlazo,
   textoSabadoRural,
   tramosDeSabado,
   validarSabadoRural,
@@ -116,6 +117,16 @@ describe('sábados solo para la zona rural', () => {
       expect(porcentajeDelDia('2026-11-21', { porcentaje: 80, sabadoRural: null })).toBe(80);
       expect(porcentajeDelDia('2026-11-21', { porcentaje: null, sabadoRural: null })).toBeNull();
     });
+  });
+
+  it('con la regla encendida, el sábado no cuenta para el plazo para agendar', () => {
+    expect(sabadoNoCuentaParaElPlazo(50)).toBe(true);
+    expect(sabadoNoCuentaParaElPlazo(100)).toBe(true);
+    expect(sabadoNoCuentaParaElPlazo(null)).toBe(false);
+    expect(sabadoNoCuentaParaElPlazo(undefined)).toBe(false);
+    // Un dato raro deja el sábado como un día más, como en la regla misma.
+    expect(sabadoNoCuentaParaElPlazo(5)).toBe(false);
+    expect(sabadoNoCuentaParaElPlazo('abc')).toBe(false);
   });
 
   it('el texto para el panel', () => {

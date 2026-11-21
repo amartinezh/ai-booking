@@ -15,6 +15,7 @@ import {
     diaLocal,
     normalizarPlazoAgendar,
     resumenCuposDelPlazo,
+    sabadoNoCuentaParaElPlazo,
     type ResumenCuposDelPlazo,
 } from '@agenia/shared';
 import { medicoDiasEnElTopeDelPanel } from '@/lib/reserva-presencial/resumen';
@@ -31,6 +32,8 @@ export interface ResumenDelPlazo extends ResumenCuposDelPlazo {
     hoy: string;
     /** El plazo guardado; null sin límite. */
     dias: number | null;
+    /** Con «Sábados por el asistente» encendida, el sábado no cuenta para el plazo (2026-11-21). */
+    sabadoNoCuenta: boolean;
     /** El último cambio del plazo: quién y cómo (texto de la auditoría) y cuándo (ISO). */
     ultimoCambio: { detalle: string; en: string } | null;
 }
@@ -98,6 +101,7 @@ export async function cargarResumenDelPlazo(organizationId: string, ahora = new 
             ? cupos.filter((c) => !enElTope.has(`${c.doctorId}|${diaLocal(c.startTime, timeZone)}`))
             : cupos;
     const dias = normalizarPlazoAgendar(settings?.bookingMaxDaysAhead);
+    const sabadoNoCuenta = sabadoNoCuentaParaElPlazo(settings?.saturdayRuralSharePercent);
     return {
         ...resumenCuposDelPlazo({
             inicios: ofrecibles.map((c) => c.startTime),
@@ -105,9 +109,11 @@ export async function cargarResumenDelPlazo(organizationId: string, ahora = new 
             dias,
             reglas,
             timeZone,
+            sabadoNoCuenta,
         }),
         hoy: diaLocal(ahora, timeZone),
         dias,
+        sabadoNoCuenta,
         ultimoCambio: ultimo ? { detalle: ultimo.detail ?? '', en: ultimo.createdAt.toISOString() } : null,
     };
 }

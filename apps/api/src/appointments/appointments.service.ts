@@ -338,13 +338,13 @@ export class AppointmentsService {
     if (!primero) return null;
     const ahora = new Date();
     const hoy = diaLocal(ahora, plazo.timeZone);
-    const ultimoDia = ultimoDiaParaAgendar(hoy, plazo.dias);
+    const ultimoDia = ultimoDiaParaAgendar(hoy, plazo.dias, plazo.opciones);
     const primerDia = diaLocal(primero.fecha, plazo.timeZone);
     if (!ultimoDia || primerDia <= ultimoDia) return null;
     return {
       ultimoDia,
       primerDia,
-      desde: primerDiaParaVerElCupo(primerDia, plazo.dias),
+      desde: primerDiaParaVerElCupo(primerDia, plazo.dias, plazo.opciones),
     };
   }
 

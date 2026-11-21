@@ -749,6 +749,14 @@ const FORMAL = {
         `Para finalizar, ¿me indica el *número de documento del paciente* (${TIPOS_DE_DOCUMENTO})? Solo el número, sin puntos.`,
     ]),
 
+  // 🪪 Eligió otro horario con un documento que dio antes de que se buscara al
+  // paciente (2026-11-21: en el primer mensaje, o al elegir un sábado sin ser de
+  // zona rural). Se le pide de nuevo para seguir el paso completo; si responde sin
+  // número, se sigue con el que dio.
+  pedirCedulaDeNuevoPostSlot: (fechaFormateada: string) =>
+    `Excelente elección. Le aparté ese horario:\n📅 *${fechaFormateada}*\n\n` +
+    `Para terminar de agendarle, ¿me escribe de nuevo el *número de documento del paciente* (la persona que va a la cita), por favor?`,
+
   especialidadConfirmada: (especialidad: string) =>
     `Perfecto, anotado: *${especialidad}*. 🩺\n\nPara revisar la agenda, ¿me indica el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,
 
@@ -2354,6 +2362,9 @@ const INFORMAL = {
       `¡Perfecto, ya casi! 😊 Te reservé tentativamente:\n📅 *${fechaFormateada}*\n\nMe falta solo un dato: ¿me compartes el *número de documento de quien va a la cita*? Puede ser ${TIPOS_DE_DOCUMENTO}.`,
       `¡Listo! 🎯 Tengo ese espacio apartado para ti:\n📅 *${fechaFormateada}*\n\nPara cerrar, ¿me mandas el *número de documento del paciente* (${TIPOS_DE_DOCUMENTO})? Solo el número, sin puntos.`,
     ]),
+
+  pedirCedulaDeNuevoPostSlot: (fechaFormateada: string) =>
+    `¡Genial! 🌟 Te aparté ese horario:\n📅 *${fechaFormateada}*\n\nPara terminar de agendar, ¿me escribes de nuevo el *número de documento del paciente* (quien va a la cita), porfa?`,
 
   especialidadConfirmada: (especialidad: string) =>
     `¡Listo, *${especialidad}*! 🩺 Para revisarte la agenda, ¿me pasas el *número de documento* del paciente (${TIPOS_DE_DOCUMENTO})?`,

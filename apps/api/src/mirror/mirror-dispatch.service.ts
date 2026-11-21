@@ -27,6 +27,7 @@ import {
 } from './dto/mirror.types';
 import { esRechazoPorAgendaDelHis } from './rechazo-del-his';
 import { getErrorMessage } from '../common/error-message.util';
+import { esNombreDeRelleno } from '../common/nombre-de-relleno';
 
 const DEFAULT_LONG_POLL_MS = 25_000;
 const DEFAULT_LONG_POLL_INTERVAL_MS = 1_000;
@@ -537,9 +538,23 @@ export class MirrorDispatchService {
         // adivinar dónde acaban los nombres y empiezan los apellidos.
         if (paciente.nombres) context.patientNombres = paciente.nombres;
         if (paciente.apellidos) context.patientApellidos = paciente.apellidos;
-        if (paciente.dateOfBirth)
+        // 🪪 Sin nombre de verdad («Paciente Registrado», 2026-11-21), el
+        // agente no recibe con qué darlo de alta: sin nacimiento ni sexo no crea
+        // al paciente en el HIS y la cita no entra (al paciente se le avisa que no
+        // quedó registrada). Si el hospital ya lo tiene, no los necesita y la
+        // cita entra igual. Así nunca nace allá un «PACIENTE REGISTRADO».
+        const sinNombre =
+          !paciente.nombres && esNombreDeRelleno(paciente.fullName);
+        if (sinNombre) {
+          this.logger.warn(
+            `Evento ${dto.eventId} (org ${organizationId}): el paciente ${String(paciente.id)} no tiene nombre de verdad; ` +
+              `se entrega sin nacimiento ni sexo para que el agente no lo dé de alta en el HIS.`,
+          );
+        }
+        if (paciente.dateOfBirth && !sinNombre)
           context.patientBirthDateIso = paciente.dateOfBirth.toISOString();
-        if (paciente.gender) context.patientGender = paciente.gender;
+        if (paciente.gender && !sinNombre)
+          context.patientGender = paciente.gender;
         if (paciente.regime) context.patientRegime = paciente.regime;
       } else if (!soloAnula) {
         missing.push(`PATIENT ${String(fila.patientId)}`);

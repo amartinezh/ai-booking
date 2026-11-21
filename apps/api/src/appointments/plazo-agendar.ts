@@ -2,7 +2,8 @@
  * 🗓️ Plazo máximo para agendar por el asistente (Configuración › Asistente
  * Virtual, 2026-10-23): hasta cuántos días adelante, contando hoy, ofrece citas.
  *
- * Lo que la API necesita de la base: el plazo de la clínica y su zona horaria.
+ * Lo que la API necesita de la base: el plazo de la clínica, su zona horaria y
+ * si el sábado cuenta (con «Sábados por el asistente» encendida, no).
  * La regla misma es pura y vive en `@agenia/shared` (plazo-agendar.ts).
  *
  * Funciones y no un servicio de Nest, como `bloqueos-agenda.ts`: las usan la
@@ -10,17 +11,30 @@
  * transacción) y la lista de espera, cada uno con su cliente o su transacción.
  */
 import type { Prisma, PrismaClient } from '@agenia/database';
-import { finDelPlazoParaAgendar, normalizarPlazoAgendar } from '@agenia/shared';
+import {
+  finDelPlazoParaAgendar,
+  normalizarPlazoAgendar,
+  sabadoNoCuentaParaElPlazo,
+  type OpcionesDelPlazo,
+} from '@agenia/shared';
 
 type Db =
   | Pick<PrismaClient, 'organizationSettings' | 'organization'>
   | Pick<Prisma.TransactionClient, 'organizationSettings' | 'organization'>;
 
-/** El plazo de la clínica (días, contando hoy) y su zona horaria; null sin límite. */
+/**
+ * El plazo de la clínica (días, contando hoy), su zona horaria y cómo se cuentan
+ * los días (`opciones`: con «Sábados por el asistente» encendida, el sábado no
+ * cuenta, 2026-11-21); null sin límite.
+ */
 export async function plazoDeLaClinica(
   db: Db,
   organizationId: string,
-): Promise<{ dias: number; timeZone: string | undefined } | null> {
+): Promise<{
+  dias: number;
+  timeZone: string | undefined;
+  opciones: OpcionesDelPlazo;
+} | null> {
   // Los dobles de prueba que no traen la tabla: sin ella, sin límite (en
   // producción siempre existe).
   const tabla = (db as { organizationSettings?: { findUnique?: unknown } })
@@ -29,7 +43,7 @@ export async function plazoDeLaClinica(
 
   const settings = await db.organizationSettings.findUnique({
     where: { organizationId },
-    select: { bookingMaxDaysAhead: true },
+    select: { bookingMaxDaysAhead: true, saturdayRuralSharePercent: true },
   });
   const dias = normalizarPlazoAgendar(settings?.bookingMaxDaysAhead);
   if (dias === null) return null;
@@ -38,7 +52,15 @@ export async function plazoDeLaClinica(
     where: { id: organizationId },
     select: { timezone: true },
   });
-  return { dias, timeZone: org?.timezone ?? undefined };
+  return {
+    dias,
+    timeZone: org?.timezone ?? undefined,
+    opciones: {
+      sabadoNoCuenta: sabadoNoCuentaParaElPlazo(
+        settings?.saturdayRuralSharePercent,
+      ),
+    },
+  };
 }
 
 /**
@@ -52,7 +74,7 @@ export async function finDelPlazoDelAsistente(
 ): Promise<Date | null> {
   const plazo = await plazoDeLaClinica(db, organizationId);
   return plazo
-    ? finDelPlazoParaAgendar(ahora, plazo.dias, plazo.timeZone)
+    ? finDelPlazoParaAgendar(ahora, plazo.dias, plazo.timeZone, plazo.opciones)
     : null;
 }
 

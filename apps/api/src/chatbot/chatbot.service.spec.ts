@@ -2344,6 +2344,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   describe('resumen de la cita en flujo de voz', () => {
     const avanzarConCedulaConocida = async () => {
       redis.store.set(`temp_cedula:${ORG_ID}:${SENDER}`, '12345');
+      // El documento ya pasó por el paso del documento (2026-11-21: el atajo al
+      // resumen solo vale así, o con la ficha completa).
+      redis.store.set(`temp_alta_cedula:${ORG_ID}:${SENDER}`, '12345');
       redis.store.set(`temp_nombre:${ORG_ID}:${SENDER}`, 'Fabio López');
       redis.store.set(
         `temp_especialidad:${ORG_ID}:${SENDER}`,
@@ -3612,6 +3615,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('paciente existente sin BSUID → se le adopta el que llegó', async () => {
       prisma.patientProfile.findFirst.mockResolvedValue({
         id: 'pat-1',
+        fullName: 'Ana Ruiz',
         whatsappId: SENDER,
         bsuid: null,
       });
@@ -3626,6 +3630,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('BSUID desactualizado → se refresca (si no, el paciente queda inalcanzable)', async () => {
       prisma.patientProfile.findFirst.mockResolvedValue({
         id: 'pat-1',
+        fullName: 'Ana Ruiz',
         whatsappId: SENDER,
         bsuid: 'CO.VIEJO000000000000',
       });
@@ -3640,6 +3645,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('el teléfono ya guardado NO se pisa', async () => {
       prisma.patientProfile.findFirst.mockResolvedValue({
         id: 'pat-1',
+        fullName: 'Ana Ruiz',
         whatsappId: '573009998877',
         bsuid: BSUID,
       });
