@@ -42,6 +42,8 @@ const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
   // 📢 Comunicados de Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md).
   MASS_MESSAGE_TEXT: 'MASS_MESSAGE',
   MASS_MESSAGE_IMAGE: 'MASS_MESSAGE',
+  // 🚑 Alerta de posible emergencia al personal (2026-11-22): aviso al personal, no a un paciente.
+  EMERGENCY_ALERT: 'SYSTEM_NOTICE',
 };
 
 /**

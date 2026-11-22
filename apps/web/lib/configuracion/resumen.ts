@@ -89,6 +89,12 @@ export interface DatosDelResumen {
     } | null;
     /** null = la clínica no lo tiene; undefined = no se pudo leer. */
     telefonoSoporte: string | null | undefined;
+    /**
+     * 🚑 Quién recibe la alerta de posible emergencia (2026-11-22): cuántas personas
+     * activas y si la plantilla `EMERGENCY_ALERT` está registrada y encendida.
+     * null = no se pudo leer.
+     */
+    alertasEmergencia?: { personas: number; plantilla: boolean } | null;
 }
 
 const NO_SE_PUDO = 'No se pudo leer';
@@ -123,6 +129,38 @@ export function iaConfigurada(ia: NonNullable<DatosDelResumen['ia']>): boolean {
 
 export function whatsappConectado(w: NonNullable<DatosDelResumen['whatsapp']>): boolean {
     return !!w.phoneNumberId && w.hasAccessToken && w.isActive;
+}
+
+/**
+ * 🚑 ¿Le llega a alguien la alerta de posible emergencia? A la lista, con la
+ * plantilla; sin lista, al teléfono de soporte solo si es un celular (y entonces, sin
+ * plantilla, solo si escribió en 24 h). `null` = no hay nada que avisar.
+ */
+export function problemaAlertasEmergencia(d: Pick<DatosDelResumen, 'alertasEmergencia' | 'telefonoSoporte'>): string | null {
+    const a = d.alertasEmergencia;
+    if (!a) return null;
+    if (a.personas === 0 && !(d.telefonoSoporte && alertasLleganPorWhatsapp(d.telefonoSoporte))) {
+        return 'Nadie recibe las alertas de posible emergencia: cuando el asistente le indica a un paciente llamar al 123, nadie del hospital se entera y el caso solo queda en la Caja Negra.';
+    }
+    if (!a.plantilla) {
+        return 'Falta la plantilla de Meta de las alertas de posible emergencia: sin ella, WhatsApp solo se la entrega a quien le haya escrito al asistente en las últimas 24 horas.';
+    }
+    return null;
+}
+
+function filaAlertasEmergencia(d: DatosDelResumen, href: string): FilaResumen {
+    const a = d.alertasEmergencia;
+    const nombre = 'Alertas de emergencia';
+    if (!a) return sinLeer(nombre, href);
+    const personas = a.personas === 1 ? '1 persona' : `${a.personas} personas`;
+    if (a.personas === 0) {
+        return d.telefonoSoporte && alertasLleganPorWhatsapp(d.telefonoSoporte)
+            ? { nombre, valor: a.plantilla ? 'Al teléfono de soporte' : 'Al soporte, si escribió en 24 h', estado: a.plantilla ? 'neutro' : 'falta', href }
+            : { nombre, valor: 'No le llegan a nadie', estado: 'falta', href };
+    }
+    return a.plantilla
+        ? { nombre, valor: `A ${personas}`, estado: 'encendido', href }
+        : { nombre, valor: `A ${personas}, falta la plantilla`, estado: 'falta', href };
 }
 
 export function armarResumen(d: DatosDelResumen): Resumen {
@@ -252,17 +290,14 @@ export function armarResumen(d: DatosDelResumen): Resumen {
             titulo: 'Datos de la clínica',
             icono: '🏢',
             href: clinica,
-            filas:
+            filas: [
                 d.telefonoSoporte === undefined
-                    ? [sinLeer('Teléfono de soporte', `${clinica}#telefono`)]
+                    ? sinLeer('Teléfono de soporte', `${clinica}#telefono`)
                     : d.telefonoSoporte === null
-                      ? [{ nombre: 'Teléfono de soporte', valor: 'Sin teléfono', estado: 'falta', href: `${clinica}#telefono` }]
-                      : [
-                            { nombre: 'Teléfono de soporte', valor: d.telefonoSoporte, estado: 'neutro', href: `${clinica}#telefono` },
-                            alertasLleganPorWhatsapp(d.telefonoSoporte)
-                                ? { nombre: 'Alertas de emergencia', valor: 'Por WhatsApp, si escribió en 24 h', estado: 'neutro', href: `${clinica}#telefono` }
-                                : { nombre: 'Alertas de emergencia', valor: 'No llegan por WhatsApp', estado: 'falta', href: `${clinica}#telefono` },
-                        ],
+                      ? { nombre: 'Teléfono de soporte', valor: 'Sin teléfono', estado: 'falta', href: `${clinica}#telefono` }
+                      : { nombre: 'Teléfono de soporte', valor: d.telefonoSoporte, estado: 'neutro', href: `${clinica}#telefono` },
+                filaAlertasEmergencia(d, `${clinica}#alertas-emergencia`),
+            ],
         },
         {
             titulo: 'Privacidad (Ley 1581)',
@@ -408,17 +443,13 @@ export function armarResumen(d: DatosDelResumen): Resumen {
     }
     if (d.telefonoSoporte === null) {
         avisos.push({
-            texto: 'La clínica no tiene teléfono de soporte: es el número que el asistente les da a los pacientes y al que llegan las alertas de posible emergencia.',
+            texto: 'La clínica no tiene teléfono de soporte: es el número que el asistente les da a los pacientes cuando no puede ayudarlos.',
             href: `${clinica}#telefono`,
             enlace: 'Escribirlo',
         });
-    } else if (d.telefonoSoporte && !alertasLleganPorWhatsapp(d.telefonoSoporte)) {
-        avisos.push({
-            texto: 'El teléfono de soporte no es un celular con indicativo: las alertas de posible emergencia no llegan por WhatsApp y solo quedan en la Caja Negra.',
-            href: `${clinica}#telefono`,
-            enlace: 'Revisarlo',
-        });
     }
+    const alerta = problemaAlertasEmergencia(d);
+    if (alerta) avisos.push({ texto: alerta, href: `${clinica}#alertas-emergencia`, enlace: 'Configurarlas' });
     return { avisos, bloques };
 }
 

@@ -139,6 +139,11 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     KNOWLEDGE_BASE_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Editó la base de conocimiento del asistente' },
     APPOINTMENT_LIMITS_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió el límite de citas por paciente' },
     SUPPORT_PHONE_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió el teléfono de soporte de la clínica' },
+    EMERGENCY_ALERT_RECIPIENTS_CHANGED: {
+        categoria: 'CONFIGURACION',
+        titulo: 'Cambió quién recibe las alertas de posible emergencia',
+    },
+    EMERGENCY_ALERT_TESTED: { categoria: 'CONFIGURACION', titulo: 'Envió una prueba de la alerta de posible emergencia' },
     // `aviso`: cambia lo primero que le dice el asistente a quien quiere agendar.
     DATA_CONSENT_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la autorización de datos del asistente', aviso: true },
     // `aviso`: cambia lo que dice la política pública de datos de la clínica.

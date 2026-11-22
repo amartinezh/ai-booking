@@ -187,6 +187,7 @@ import {
   type RespuestaAutorizacion,
 } from '@agenia/shared';
 import { AutorizacionDatosService } from './autorizacion-datos.service';
+import { AlertaEmergenciaService } from './alerta-emergencia.service';
 import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
 import {
@@ -591,6 +592,10 @@ export class ChatbotService implements OnModuleInit {
     // (docs/PLAN_AUTORIZACION_DATOS.md). Opcional: sin él (tests), o con el
     // interruptor de la clínica apagado, el chat sigue exactamente igual.
     @Optional() private readonly autorizacionDatos?: AutorizacionDatosService,
+    // 🚑 La alerta de posible emergencia al personal (docs/GUARDRAIL_EMERGENCIAS.md):
+    // la lista de Configuración › Datos de la clínica, con plantilla. Opcional: sin
+    // él (tests), la derivación al paciente sale igual y el caso queda en la Caja Negra.
+    @Optional() private readonly alertaEmergencia?: AlertaEmergenciaService,
   ) {}
 
   async onModuleInit() {
@@ -1719,41 +1724,34 @@ export class ChatbotService implements OnModuleInit {
     await this.smartReply(p.organizationId, p.senderId, reply);
     await this.cleanUpSession(p.organizationId, p.senderId);
 
-    // 📟 Alerta proactiva al equipo humano (best-effort: NUNCA rompe el
-    // flujo del paciente). La derivación al 123 no sustituye el seguimiento:
-    // un funcionario debe llamar al paciente. Requiere que supportPhone sea
-    // un número con WhatsApp (los fijos no lo reciben; Meta rechaza y queda
-    // en el log del servidor). Nota Meta: fuera de la ventana de 24h del
-    // staff el envío de texto libre puede fallar — por eso el resultado se
-    // registra en `staffAlerted` y la auditoría EMERGENCY_ESCALATED queda
-    // SIEMPRE visible en el panel de auditoría como respaldo.
-    let staffAlerted = false;
-    const alertPhone = (p.org?.supportPhone || '').replace(/\D/g, '');
-    if (alertPhone.length >= 10) {
-      try {
-        const alertText =
-          `🚨 *ALERTA: POSIBLE EMERGENCIA MÉDICA*\n\n` +
-          `Un paciente reportó síntomas que podrían requerir atención ` +
-          `inmediata y el asistente lo derivó a la línea 123 / Urgencias.\n\n` +
-          `📱 Paciente: +${p.senderId}\n` +
-          `💬 Mensaje: "${(p.text || '[audio]').slice(0, 300)}"\n\n` +
-          `Por favor contáctelo AHORA para hacer seguimiento.`;
-        const result = await this.sendOutboundForOrg(
-          p.organizationId,
-          alertPhone,
-          alertText,
-        );
-        staffAlerted = result.success;
-      } catch (e: unknown) {
-        this.logger.error(
-          `No fue posible alertar al staff de la emergencia (org=${p.organizationId}): ${getErrorMessage(e)}`,
-        );
-      }
-    } else {
+    // 📟 Alerta proactiva al equipo humano (best-effort: NUNCA rompe el flujo del
+    // paciente). La derivación al 123 no sustituye el seguimiento: un funcionario
+    // debe llamar al paciente. Desde el 2026-11-22 va a la lista de Configuración ›
+    // Datos de la clínica › Alertas de posible emergencia, con la plantilla
+    // EMERGENCY_ALERT (sale a cualquier hora, aunque esa persona nunca le haya
+    // escrito al asistente). Antes era texto libre al teléfono de soporte, y en
+    // Anserma ese número es un fijo: ninguna alerta llegó. `staffAlerted` = Meta
+    // aceptó el envío a alguien; la entrega real se lee por `alertWamids` en el
+    // libro de mensajes. La auditoría EMERGENCY_ESCALATED queda SIEMPRE en la Caja
+    // Negra como respaldo.
+    const alerta = this.alertaEmergencia
+      ? await this.alertaEmergencia.avisar({
+          organizationId: p.organizationId,
+          organizationName: p.org?.name ?? null,
+          supportPhone: p.org?.supportPhone ?? null,
+          timeZone: p.org?.timezone ?? null,
+          senderId: p.senderId,
+          mensaje: p.text,
+          enviarTexto: (phone, texto) =>
+            this.sendOutboundForOrg(p.organizationId, phone, texto),
+        })
+      : null;
+    if (!alerta) {
       this.logger.warn(
-        `Sin teléfono de staff válido para alertar la emergencia (org=${p.organizationId}, supportPhone="${p.org?.supportPhone || ''}").`,
+        `Sin el servicio de alertas de emergencia: nadie del personal fue avisado (org=${p.organizationId}).`,
       );
     }
+    const staffAlerted = alerta?.staffAlerted ?? false;
 
     await this.auditLog(p.senderId, p.organizationId, {
       status: InteractionStatus.EMERGENCY_ESCALATED,
@@ -1764,6 +1762,11 @@ export class ChatbotService implements OnModuleInit {
         previousState: p.currentState,
         immediate: true,
         staffAlerted,
+        alertChannel: alerta?.canal ?? 'NINGUNO',
+        alertRecipients: alerta?.destinatarios ?? 0,
+        alertAccepted: alerta?.aceptados ?? 0,
+        alertWamids: alerta?.wamids ?? [],
+        ...(alerta?.motivo ? { alertFailure: alerta.motivo } : {}),
       },
     });
   }

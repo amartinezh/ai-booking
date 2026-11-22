@@ -13,7 +13,7 @@ const boton = () => screen.getByRole('button', { name: 'Guardar teléfono' });
 describe('TelefonoSoporteForm (docs/PLAN_NAVEGACION.md, N9)', () => {
     beforeEach(() => jest.clearAllMocks());
 
-    it('un celular: dice cómo se guarda y que le llegan las alertas', async () => {
+    it('un celular: dice cómo se guarda', async () => {
         render(<TelefonoSoporteForm inicial={null} />);
         expect(boton()).toBeDisabled();
         await userEvent.type(campo(), '3001234567');
@@ -22,10 +22,10 @@ describe('TelefonoSoporteForm (docs/PLAN_NAVEGACION.md, N9)', () => {
         expect(boton()).toBeEnabled();
     });
 
-    it('un fijo: se puede guardar, pero avisa que las alertas de emergencia no llegan', async () => {
+    it('un fijo: se puede guardar, y dice que las alertas van a la lista de abajo', async () => {
         render(<TelefonoSoporteForm inicial={null} />);
         await userEvent.type(campo(), '(606) 859 1010');
-        expect(screen.getByText(/las alertas de posible emergencia no llegan por WhatsApp/)).toBeInTheDocument();
+        expect(screen.getByText(/No es un celular.*las alertas de posible emergencia van a las personas de la lista de abajo/)).toBeInTheDocument();
         expect(boton()).toBeEnabled();
     });
 
@@ -45,10 +45,10 @@ describe('TelefonoSoporteForm (docs/PLAN_NAVEGACION.md, N9)', () => {
         expect(boton()).toBeEnabled();
     });
 
-    it('dice que WhatsApp solo entrega la alerta dentro de las 24 horas: no promete de más', async () => {
+    it('ya no promete que este número recibe la alerta: dice dónde se elige quién la recibe', () => {
         render(<TelefonoSoporteForm inicial={null} />);
-        await userEvent.type(campo(), '3001234567');
-        expect(screen.getByText(/solo la entrega si este número le escribió al asistente en las últimas 24 horas/)).toBeInTheDocument();
+        expect(screen.getByText(/Quién recibe la alerta de una posible emergencia se elige abajo/)).toBeInTheDocument();
+        expect(screen.queryByText(/al que manda por WhatsApp la alerta/)).not.toBeInTheDocument();
     });
 
     it('un fijo guardado sin indicativo se puede corregir sin reescribirlo, y dice cómo queda', () => {

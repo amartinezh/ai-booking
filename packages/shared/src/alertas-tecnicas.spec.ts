@@ -118,6 +118,7 @@ describe('vocabulario y catálogo', () => {
     ).sort();
     expect(eventos).toEqual(
       [
+        'ALERTA_EMERGENCIA_NO_SALE',
         'API_ARRANCO',
         'ERROR_5XX',
         'ESQUEMA_ESPEJO',

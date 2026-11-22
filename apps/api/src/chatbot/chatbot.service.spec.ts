@@ -20,6 +20,7 @@ import { SurveyService } from '../survey/survey.service';
 import { AudioConfigService } from '../audio-config/audio-config.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
 import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
+import { AlertaEmergenciaService } from './alerta-emergencia.service';
 
 // ───────────────────────────────────────────────────────────────
 // Helpers de prueba
@@ -28,6 +29,8 @@ import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 const ORG_ID = 'org-1';
 const PHONE_ID = 'phone-number-id-123';
 const SENDER = '573001112233';
+/** El celular de quien recibe la alerta de posible emergencia. */
+const STAFF = '573009998877';
 
 // Redis falso en memoria: soporta get/set/del/keys (con globs tipo `temp_*`).
 function createFakeRedis() {
@@ -125,6 +128,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   let messageLog: { recordOutbound: jest.Mock };
 
   // Devuelve los textos enviados al paciente (todo pasa por sendWhatsAppMessage).
+  let alertaPlantillas: { sendTemplate: jest.Mock };
   const sentMessages = (): string[] =>
     sendSpy.mock.calls.map((c: any[]) => c[1] as string);
 
@@ -266,6 +270,24 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     }).compile();
 
     service = module.get<ChatbotService>(ChatbotService);
+
+    // 🚑 La alerta de posible emergencia al personal: el servicio REAL, con una persona
+    // en la lista (Configuración › Datos de la clínica) y sin la plantilla registrada,
+    // así sale como texto libre por el mismo sender que se espía abajo.
+    prisma.emergencyAlertRecipient = {
+      findMany: jest.fn(async () => [{ id: 'r1', phone: STAFF }]),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    };
+    alertaPlantillas = {
+      sendTemplate: jest.fn(async () => ({
+        success: false,
+        error: 'template-not-configured',
+      })),
+    };
+    (service as any).alertaEmergencia = new AlertaEmergenciaService(
+      prisma,
+      alertaPlantillas as any,
+    );
 
     // Capturamos los envíos sin tocar la capa HTTP de WhatsApp.
     sendSpy = jest
@@ -1030,18 +1052,22 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // Sin diagnóstico: lenguaje condicional, nunca afirmativo.
       expect(replies[0]).toContain('podría');
 
-      // 📟 Alerta al staff: supportPhone normalizado a dígitos, con el
-      // teléfono del paciente y su mensaje para el seguimiento humano.
-      // El tercer argumento es el contexto del libro de mensajes: la alerta
-      // sale por `sendOutboundForOrg`, que siempre lo reenvía (aquí, sin nada).
+      // 📟 Alerta al personal: a la lista de Configuración (no al teléfono de soporte,
+      // que es un fijo), con el teléfono del paciente y su mensaje para el seguimiento.
+      // Sin la plantilla registrada sale como texto libre.
       expect(sendSpy).toHaveBeenCalledWith(
-        '6068538838',
-        expect.stringContaining('ALERTA: POSIBLE EMERGENCIA'),
+        STAFF,
+        expect.stringContaining('Alerta de posible emergencia médica'),
         undefined,
       );
       expect(sendSpy).toHaveBeenCalledWith(
+        STAFF,
+        expect.stringContaining('Teléfono del paciente: +57 300 111 2233'),
+        undefined,
+      );
+      expect(sendSpy).not.toHaveBeenCalledWith(
         '6068538838',
-        expect.stringContaining(SENDER),
+        expect.anything(),
         undefined,
       );
 
@@ -1079,7 +1105,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       );
     });
 
-    it('sin supportPhone: deriva igual al paciente y no intenta alertar (fail-soft)', async () => {
+    it('sin nadie en la lista ni celular de soporte: deriva igual al paciente y no intenta alertar (fail-soft)', async () => {
+      prisma.emergencyAlertRecipient.findMany.mockResolvedValue([]);
       prisma.whatsappAccountConfig.findUnique.mockResolvedValue({
         organization: {
           id: ORG_ID,
@@ -1098,7 +1125,42 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(interactionLog.log).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'EMERGENCY_ESCALATED',
-          metadata: expect.objectContaining({ staffAlerted: false }),
+          metadata: expect.objectContaining({
+            staffAlerted: false,
+            alertChannel: 'NINGUNO',
+          }),
+        }),
+      );
+    });
+
+    it('con la plantilla registrada: sale con EMERGENCY_ALERT y queda su wamid para leer la entrega', async () => {
+      alertaPlantillas.sendTemplate.mockResolvedValue({
+        success: true,
+        wamid: 'wamid.alerta',
+      });
+
+      await service.processIncomingMessage(
+        makeTextEvent('tengo dolor en el pecho'),
+      );
+
+      expect(alertaPlantillas.sendTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: ORG_ID,
+          recipientId: STAFF,
+          kind: 'EMERGENCY_ALERT',
+        }),
+      );
+      // Solo la derivación por texto: la alerta salió por plantilla.
+      expect(sentMessages()).toHaveLength(1);
+      expect(interactionLog.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'EMERGENCY_ESCALATED',
+          metadata: expect.objectContaining({
+            staffAlerted: true,
+            alertChannel: 'PLANTILLA',
+            alertAccepted: 1,
+            alertWamids: ['wamid.alerta'],
+          }),
         }),
       );
     });

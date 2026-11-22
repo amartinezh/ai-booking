@@ -2,24 +2,29 @@ import Link from 'next/link';
 import { CAMPOS_POLITICA } from '@/lib/politica-datos/datos';
 import { getMyPaginaPoliticaDatos } from '@/app/actions/politica-datos';
 import { prisma } from '@/lib/prisma';
+import { cargarAlertasEmergencia } from '@/lib/configuracion/alertas-emergencia';
 import TelefonoSoporteForm from '../../TelefonoSoporteForm';
+import AlertasEmergenciaForm from '../../AlertasEmergenciaForm';
 import { Ajuste, Seccion, SectionLoadError, Separador, exigirAdministrador, motivoDelFallo } from '../../comunes';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * 🏢 Datos de la clínica (docs/PLAN_NAVEGACION.md, N9): el teléfono de soporte, que
- * cambia el administrador; el nombre y el logo, que los registra el equipo de
- * AgenIA; y los datos del responsable, que se editan con la página de la política.
+ * cambia el administrador; quién recibe las alertas de posible emergencia
+ * (docs/GUARDRAIL_EMERGENCIAS.md, 2026-11-22); el nombre y el logo, que los registra
+ * el equipo de AgenIA; y los datos del responsable, que se editan con la página de la
+ * política.
  */
 export default async function DatosDeLaClinicaPage() {
     const session = await exigirAdministrador();
-    const [org, pagina] = await Promise.allSettled([
+    const [org, pagina, alertas] = await Promise.allSettled([
         prisma.organization.findUnique({
             where: { id: session.organizationId! },
-            select: { name: true, logoUrl: true, supportPhone: true },
+            select: { name: true, logoUrl: true, supportPhone: true, timezone: true },
         }),
         getMyPaginaPoliticaDatos(),
+        cargarAlertasEmergencia(prisma, session.organizationId!),
     ]);
     const o = org.status === 'fulfilled' ? org.value : null;
     const responsable =
@@ -34,7 +39,7 @@ export default async function DatosDeLaClinicaPage() {
         <Seccion
             titulo="Datos de la clínica"
             icono="🏢"
-            descripcion="El teléfono que el asistente les da a los pacientes, el nombre y el logo, y los datos del responsable del tratamiento de datos."
+            descripcion="El teléfono que el asistente les da a los pacientes, quién recibe las alertas de posible emergencia, el nombre y el logo, y los datos del responsable del tratamiento de datos."
         >
             <Ajuste id="telefono">
                 {o ? (
@@ -43,6 +48,23 @@ export default async function DatosDeLaClinicaPage() {
                     <SectionLoadError
                         title="No pudimos cargar los datos de la clínica"
                         detail={org.status === 'rejected' ? motivoDelFallo(org.reason, 'Error desconocido.') : null}
+                    />
+                )}
+            </Ajuste>
+            <Separador />
+            <Ajuste id="alertas-emergencia">
+                {alertas.status === 'fulfilled' ? (
+                    <AlertasEmergenciaForm
+                        // Tras guardar, la página vuelve con los ids nuevos: se monta de nuevo.
+                        key={alertas.value.personas.map((p) => `${p.id}:${p.phone}:${p.isActive}:${p.label}`).join('|')}
+                        personas={alertas.value.personas}
+                        plantilla={alertas.value.plantilla}
+                        telefonoSoporte={o?.supportPhone ?? null}
+                    />
+                ) : (
+                    <SectionLoadError
+                        title="No pudimos cargar las alertas de posible emergencia"
+                        detail={motivoDelFallo(alertas.reason, 'Error desconocido.')}
                     />
                 )}
             </Ajuste>

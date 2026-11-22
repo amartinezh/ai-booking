@@ -53,7 +53,7 @@ export default async function ResumenDeConfiguracionPage({
     const banderas = await getTenantMirrorFlags(organizationId);
 
     const actorBandeja = banderas.conEspejo ? await resolverActorBandeja(prisma, session) : null;
-    const [ajustes, limites, bloqueos, base, ia, whatsapp, telegram, voz, pagina, espejo, org, avisosAgendadores] = await Promise.allSettled([
+    const [ajustes, limites, bloqueos, base, ia, whatsapp, telegram, voz, pagina, espejo, org, avisosAgendadores, alertas] = await Promise.allSettled([
         getMyOrgSettings(),
         prisma.organizationSettings.findUnique({
             where: { organizationId },
@@ -79,6 +79,11 @@ export default async function ResumenDeConfiguracionPage({
             : Promise.resolve(null),
         prisma.organization.findUnique({ where: { id: organizationId }, select: { supportPhone: true, timezone: true } }),
         actorBandeja?.ok ? estadoAvisos(prisma, actorBandeja.actor) : Promise.resolve(null),
+        // 🚑 Quién recibe la alerta de posible emergencia y si la plantilla está lista.
+        Promise.all([
+            prisma.emergencyAlertRecipient.count({ where: { organizationId, isActive: true } }),
+            prisma.whatsappTemplate.count({ where: { organizationId, kind: 'EMERGENCY_ALERT', isActive: true } }),
+        ]),
     ]);
 
     const s = valor(ajustes);
@@ -108,6 +113,8 @@ export default async function ResumenDeConfiguracionPage({
                     avisos: av?.success ? { salen: av.data.salen, personas: av.data.cobertura.personas } : null,
                 },
         telefonoSoporte: org.status === 'fulfilled' ? (o?.supportPhone?.trim() || null) : undefined,
+        alertasEmergencia:
+            alertas.status === 'fulfilled' ? { personas: alertas.value[0], plantilla: alertas.value[1] > 0 } : null,
     };
     const { avisos, bloques } = armarResumen(datos);
     const mostrarDondeQuedo = diaLocal(new Date(), o?.timezone || undefined) < AVISO_DE_LAS_PESTANAS_HASTA;

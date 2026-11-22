@@ -26,6 +26,7 @@ describe('variablesEsperadas', () => {
     ['PATIENT_REQUEST_ALERT', 3],
     ['WAITLIST_SLOT_OFFER', 3],
     ['ATTENTION_SUMMARY_READY', 2],
+    ['EMERGENCY_ALERT', 3],
   ])('%s manda %i variables', (kind, cuantas) => {
     expect(variablesEsperadas(kind)).toBe(cuantas);
   });

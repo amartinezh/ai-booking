@@ -110,9 +110,11 @@ model Organization {
   hisLookupRequests    HisLookupRequest[]
 
   // 🚨 Bandeja de excepciones de sincronización (Fase 3 del rastreo).
-  syncExceptions      SyncException[]
+  syncExceptions           SyncException[]
   // 📣 Quién recibe los avisos de la bandeja (docs/PLAN_AVISOS_AGENDADORES.md).
-  syncAlertRecipients SyncAlertRecipient[]
+  syncAlertRecipients      SyncAlertRecipient[]
+  // 🚑 Quién recibe la alerta de posible emergencia (docs/GUARDRAIL_EMERGENCIAS.md).
+  emergencyAlertRecipients EmergencyAlertRecipient[]
 
   // 📅 Días y horas sin citas por el asistente (Configuración › Días sin citas).
   bookingBlocks BookingBlock[]
@@ -527,6 +529,11 @@ enum WhatsappTemplateKind {
   // cada una: nombre y comunicado.
   MASS_MESSAGE_TEXT
   MASS_MESSAGE_IMAGE
+  // 🚑 Alerta de posible emergencia al PERSONAL (2026-11-22): el asistente derivó a un
+  // paciente al 123 / Urgencias y alguien debe llamarlo. Va a los celulares de
+  // `EmergencyAlertRecipient`, a cualquier hora. Tres variables: cuándo, el teléfono
+  // del paciente y lo que escribió. Ver packages/shared/src/alertas-emergencia.ts.
+  EMERGENCY_ALERT
 }
 
 model WhatsappTemplate {
@@ -2597,15 +2604,15 @@ model AppointmentLimitRequest {
   phone    String?
 
   // Lo que escribe el paciente al radicar.
-  reasonCategory String? // MOTIVOS_SOLICITUD_CITAS
-  message        String?   @db.Text
-  extraRequested Int?
-  submittedAt    DateTime?
+  reasonCategory           String? // MOTIVOS_SOLICITUD_CITAS
+  message                  String?   @db.Text
+  extraRequested           Int?
+  submittedAt              DateTime?
   // 🔒 La casilla de autorización de datos al radicar (2026-11-20).
   dataConsentAt            DateTime?
   dataConsentPolicyVersion String?
   // El enlace deja de servir para radicar (la fila INVITED queda como rastro).
-  expiresAt      DateTime
+  expiresAt                DateTime
 
   status AppointmentLimitRequestStatus @default(INVITED)
 
@@ -3564,6 +3571,45 @@ model SyncAlertRecipient {
   /// Un mismo celular o una misma persona no reciben dos veces.
   @@unique([organizationId, phone])
   @@unique([organizationId, userId])
+  @@index([organizationId, isActive])
+}
+
+/// 🚑 Quién recibe por WhatsApp la alerta de una posible emergencia médica
+/// (docs/GUARDRAIL_EMERGENCIAS.md, 2026-11-22): el jefe de Urgencias, la coordinación
+/// médica, quien la clínica elija. Se configura en Configuración › Datos de la clínica.
+/// A cualquier hora y con la plantilla `EMERGENCY_ALERT`. Antes iba al teléfono de
+/// soporte con texto libre, y en Anserma ese número es un fijo: las 11 alertas del
+/// 22-oct al 21-nov no le llegaron a nadie.
+model EmergencyAlertRecipient {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Nombre o cargo: «Jefe de enfermería de Urgencias».
+  label String
+  /// Celular de Colombia, solo dígitos, con el 57. Es un teléfono personal: se
+  /// enmascara en la Actividad de usuarios y en las alertas técnicas.
+  phone String
+
+  /// Pausar sin borrar (vacaciones, incapacidad).
+  isActive Boolean @default(true)
+
+  /// La salud por persona: el último envío que Meta aceptó (la entrega se lee en
+  /// `WhatsappMessageLog` por el wamid) y el último rechazo, con su hora.
+  lastSentAt  DateTime?
+  lastWamid   String?
+  lastError   String?
+  lastErrorAt DateTime?
+  /// «Enviar prueba»: como mucho una cada `PRUEBA_EMERGENCIA_CADA_MIN` por persona.
+  lastTestAt  DateTime?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  /// Un mismo celular no recibe dos veces.
+  @@unique([organizationId, phone])
   @@index([organizationId, isActive])
 }
 

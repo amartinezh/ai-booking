@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-11-21
+**Última actualización:** 2026-11-22
 
 ## Contenido
 
@@ -631,7 +631,7 @@ Cada vez que una conversación con el asistente falla o se abandona, queda aquí
 
 ##### Atender una posible emergencia médica
 
-1. Busca las tarjetas «🚑 Posible emergencia médica».
+1. Busca las tarjetas «🚑 Posible emergencia médica». A las personas de Configuración › Datos de la clínica › Alertas de posible emergencia también les llega por WhatsApp.
 2. Llama o escribe al paciente de inmediato: el bot ya lo derivó al 123 o a urgencias, y el seguimiento es tuyo.
 3. Marca el contacto con una nota de lo que respondió.
 
@@ -2055,13 +2055,13 @@ Solo responde lo que está escrito aquí: no inventa datos. Si no lo encuentra, 
 ### 🏢 Datos de la clínica {#config-clinica}
 
 - **Ruta:** `/dashboard/configuracion/clinica`
-- **Resumen:** El teléfono de soporte que el asistente les da a los pacientes y al que llegan las alertas de posible emergencia, el nombre y el logo, y los datos del responsable del tratamiento de datos.
-- **Relacionados:** [Configuración](#configuracion), [Privacidad (Ley 1581)](#config-privacidad), [Caja Negra (Auditoría)](#auditoria)
-- **Palabras clave:** teléfono de soporte, número de la clínica, contacto, celular, fijo, alerta de emergencia, urgencias, nombre de la clínica, logo, responsable, nit, dirección
+- **Resumen:** El teléfono de soporte que el asistente les da a los pacientes, quién recibe las alertas de posible emergencia, el nombre y el logo, y los datos del responsable del tratamiento de datos.
+- **Relacionados:** [Configuración](#configuracion), [Privacidad (Ley 1581)](#config-privacidad), [Caja Negra (Auditoría)](#auditoria), [Canales e IA](#config-canales)
+- **Palabras clave:** teléfono de soporte, número de la clínica, contacto, celular, fijo, alerta de emergencia, alertas de posible emergencia, urgencias, 123, quién recibe la alerta, jefe de urgencias, plantilla de emergencia, alerta_posible_emergencia, nombre de la clínica, logo, responsable, nit, dirección
 
 #### Para qué sirve
 
-Reúne los datos de la clínica que usa AgenIA. El más importante es el teléfono de soporte: el asistente se lo da al paciente cuando no puede ayudarlo y, si detecta una posible emergencia, le manda ahí una alerta por WhatsApp para que alguien llame al paciente. El nombre y el logo los registra el equipo de AgenIA. Los datos del responsable se ven aquí y se editan con la página de la política, en Privacidad (Ley 1581).
+Reúne los datos de la clínica que usa AgenIA. El teléfono de soporte es el que el asistente le da al paciente cuando no puede ayudarlo o cuando le indica llamar al 123; puede ser un fijo. Las alertas de posible emergencia van a las personas que elijas en «Alertas de posible emergencia»: cuando el asistente le indica a un paciente llamar al 123 o ir a Urgencias, les avisa por WhatsApp, a cualquier hora, con el teléfono del paciente y lo que escribió, para que alguien lo llame. El nombre y el logo los registra el equipo de AgenIA. Los datos del responsable se ven aquí y se editan con la página de la política, en Privacidad (Ley 1581).
 
 #### Paso a paso
 
@@ -2069,14 +2069,29 @@ Reúne los datos de la clínica que usa AgenIA. El más importante es el teléfo
 
 1. Abre Configuración › Datos de la clínica.
 2. Escribe el número en «Teléfono». Un celular o un fijo de Colombia se guarda solo con su indicativo: 300 123 4567 queda como +57 300 123 4567 y 606 853 8860 como +57 606 853 8860. Un número de otro país se escribe con + y su indicativo.
-3. Lee el mensaje de abajo: dice cómo queda guardado y si las alertas de posible emergencia pueden salir a ese WhatsApp.
-4. Pulsa «Guardar teléfono». Aplica desde el siguiente mensaje del asistente.
+3. Pulsa «Guardar teléfono». Aplica desde el siguiente mensaje del asistente.
 
-> ⚠️ Con un teléfono fijo el asistente se lo da a los pacientes, pero las alertas de emergencia no llegan por WhatsApp y solo quedan en la Caja Negra. Con un celular salen a ese WhatsApp, pero WhatsApp solo las entrega si ese número le escribió al asistente en las últimas 24 horas. Por eso conviene revisar la Caja Negra todos los días.
+##### Elegir quién recibe las alertas de posible emergencia
+
+1. Abre Configuración › Datos de la clínica y baja hasta «Alertas de posible emergencia».
+2. Pulsa «+ Agregar persona» y escribe su nombre o cargo (por ejemplo «Jefe de enfermería de Urgencias») y su celular con WhatsApp. Hasta 5 personas; solo celulares de Colombia, porque un fijo no recibe WhatsApp.
+3. Pulsa «Guardar la lista».
+4. Pulsa «Enviar prueba» junto a cada persona y pregúntale si le llegó un mensaje que empieza por «PRUEBA, no es un caso real». Se puede repetir cada 5 minutos.
+5. Para que alguien deje de recibirlas sin borrarlo (vacaciones, incapacidad), desmarca «Recibe las alertas» y guarda.
+
+##### Crear y registrar la plantilla de la alerta
+
+1. En «Alertas de posible emergencia», abre «Cómo crear la plantilla en Meta»: ahí están el nombre (`alerta_posible_emergencia`), la categoría (Utilidad), el idioma (Español de Colombia), el pie, los ejemplos de cada variable y el cuerpo, con el botón «Copiar el cuerpo».
+2. Créala en el administrador de WhatsApp de Meta con esos datos, sin encabezado ni botones, y espera la aprobación.
+3. Cuando la aprueben, regístrala en Configuración › Canales e IA › Plantillas de WhatsApp, en «Alerta de posible emergencia (al personal)», con el nombre y el idioma exactos.
+4. Vuelve a Datos de la clínica: debe decir «Plantilla registrada». Envía una prueba.
+
+> ⚠️ Sin la plantilla, la alerta sale como mensaje normal y WhatsApp solo se la entrega a quien le haya escrito al asistente en las últimas 24 horas. Sin nadie en la lista, va al teléfono de soporte solo si es un celular; con un fijo no le llega a nadie. En los dos casos el paciente queda en la Caja Negra y el equipo técnico de AgenIA recibe una alerta si no le salió a nadie.
 
 #### Qué ves en la pantalla
 
-- **Teléfono de soporte:** El número y si las alertas de posible emergencia pueden salir a él por WhatsApp.
+- **Teléfono de soporte:** El número que el asistente les da a los pacientes.
+- **Alertas de posible emergencia:** Si la plantilla de Meta está registrada (y, si no, cómo crearla), y cada persona con su celular y cómo le fue con el último envío: «Entregado», «Leído», «Enviado» (Meta todavía no confirma la entrega), «Meta no lo entregó» o «No le salió», con el motivo.
 - **Nombre y logo:** Los que se ven en el panel. Para cambiarlos, se piden en Soporte y ayuda.
 - **Responsable del tratamiento de datos:** Lo escrito para la página de la política, con el enlace para cambiarlo.
 
@@ -2084,17 +2099,33 @@ Reúne los datos de la clínica que usa AgenIA. El más importante es el teléfo
 
 ##### ¿Puedo dejar la clínica sin teléfono de soporte?
 
-No: el campo no se puede dejar vacío, porque es el número que el asistente les da a los pacientes y al que llegan las alertas de posible emergencia. Sí puedes cambiarlo por otro cuando quieras.
+No: el campo no se puede dejar vacío, porque es el número que el asistente les da a los pacientes. Sí puedes cambiarlo por otro cuando quieras.
 
-##### ¿Quién puede cambiarlo y dónde queda el registro?
+##### ¿A quién conviene poner en la lista de alertas?
 
-Solo el Administrador de la clínica. Cada cambio queda en la Actividad de usuarios, con los últimos cuatro dígitos del número.
+A quien pueda llamar al paciente enseguida, a cualquier hora: por ejemplo, el jefe de enfermería de Urgencias, la coordinación médica o el médico de turno. Pon al menos dos personas, para que la alerta no dependa de un solo celular.
+
+##### ¿Qué dice la alerta?
+
+«🚨 Alerta de posible emergencia médica», que el asistente le indicó al paciente llamar al 123 o ir a Urgencias, cuándo escribió, su teléfono y lo que escribió (hasta 300 caracteres), y que lo llamen y anoten el resultado en la Caja Negra. Si el paciente escribe desde un WhatsApp que no muestra su número, o por Telegram, la alerta dice que lo busquen en la Caja Negra.
+
+##### ¿Quién puede cambiarlos y dónde queda el registro?
+
+Solo el Administrador de la clínica. Cada cambio del teléfono o de la lista, y cada prueba enviada, queda en la Actividad de usuarios, con los últimos cuatro dígitos del número.
 
 #### Si algo no sale bien
 
-##### Sale «No es un celular colombiano».
+##### «Enviar prueba» no se puede pulsar.
 
-El número se puede guardar, pero las alertas de posible emergencia no van a llegar por WhatsApp y hay que revisarlas en la Caja Negra. Un celular de la clínica (10 dígitos que empiezan por 3) puede recibirlas si le escribió al asistente en las últimas 24 horas.
+Falta registrar la plantilla de la alerta en Configuración › Canales e IA › Plantillas de WhatsApp, o la persona tiene cambios sin guardar: guarda la lista primero.
+
+##### La prueba dice «No salió» o la persona dice «Meta no lo entregó».
+
+Revisa que el celular sea el correcto y tenga WhatsApp, y que el nombre y el idioma de la plantilla registrada sean exactamente los que aprobó Meta. Si Meta la pausó o la rechazó, el motivo aparece junto a la persona.
+
+##### Al escribir el celular sale «Un fijo no recibe WhatsApp».
+
+La lista solo acepta celulares de Colombia (10 dígitos que empiezan por 3). El conmutador o un fijo se ponen en el teléfono de soporte, no en la lista.
 
 ### 🔒 Privacidad (Ley 1581) {#config-privacidad}
 
@@ -2211,7 +2242,7 @@ Lo que conecta al asistente: arriba, la salud de la conexión, que prueba en el 
 3. Respeta el orden de las variables que indica cada tipo: Meta lo valida al enviar.
 4. Guarda.
 
-> 💡 Tipos: Recordatorio de cita, Oferta de cupo (lista de espera: el cupo que se liberó, a quien no ha escrito en 24 horas; de 7:00 a 19:00; tres variables: nombre, servicio, y fecha y hora; sin botones, el paciente responde SÍ o NO escribiendo), Aviso de cancelación y Recordatorio masivo (avisos masivos), Aviso al agendador (Bandeja de sincronización; su primera variable es solo el número de citas, porque el texto dice «{{1}} cita(s)»), Confirmación de una cita del hospital (Rastreo, y el aviso de un cambio de hora del hospital), Cita cancelada por el hospital (el aviso al paciente cuando el hospital cancela una cita que agendó con el asistente y no ha escrito en 24 horas; cinco variables: nombre, servicio, médico, fecha y hora, y con quién comunicarse) y Aviso al agendador (pedidos de pacientes) (a las personas de la lista de avisos de la Bandeja cuando un paciente pidió cancelar y no confirmó o avisó que no irá, con la cita a 24 horas o menos; tres variables: cuántos casos, la cita más próxima y qué pidió; sin datos del paciente) y Documentos de la consulta (resumen de la atención: «tiene listos los documentos de su consulta», categoría Utilidad, dos variables: nombre y fecha de la consulta, y un botón de respuesta rápida «Recibir mis documentos»; sin datos clínicos).
+> 💡 Tipos: Recordatorio de cita, Oferta de cupo (lista de espera: el cupo que se liberó, a quien no ha escrito en 24 horas; de 7:00 a 19:00; tres variables: nombre, servicio, y fecha y hora; sin botones, el paciente responde SÍ o NO escribiendo), Aviso de cancelación y Recordatorio masivo (avisos masivos), Aviso al agendador (Bandeja de sincronización; su primera variable es solo el número de citas, porque el texto dice «{{1}} cita(s)»), Confirmación de una cita del hospital (Rastreo, y el aviso de un cambio de hora del hospital), Cita cancelada por el hospital (el aviso al paciente cuando el hospital cancela una cita que agendó con el asistente y no ha escrito en 24 horas; cinco variables: nombre, servicio, médico, fecha y hora, y con quién comunicarse) y Aviso al agendador (pedidos de pacientes) (a las personas de la lista de avisos de la Bandeja cuando un paciente pidió cancelar y no confirmó o avisó que no irá, con la cita a 24 horas o menos; tres variables: cuántos casos, la cita más próxima y qué pidió; sin datos del paciente) y Documentos de la consulta (resumen de la atención: «tiene listos los documentos de su consulta», categoría Utilidad, dos variables: nombre y fecha de la consulta, y un botón de respuesta rápida «Recibir mis documentos»; sin datos clínicos) y Alerta de posible emergencia (al personal) (a las personas de Configuración › Datos de la clínica › Alertas de posible emergencia, a cualquier hora, cuando el asistente le indica a un paciente llamar al 123; categoría Utilidad, tres variables: cuándo, el teléfono del paciente y lo que escribió; el cuerpo para copiar está en Datos de la clínica).
 
 ##### Conectar Telegram
 
@@ -2853,7 +2884,7 @@ Esto se revisa con la conversación en reposo y también dentro del agendamiento
 
 ### 3.8 Barandas
 
-- **Emergencias médicas**: cuatro capas (diccionario antes de la IA, marca de la IA, diccionario sobre la transcripción del audio y regla del prompt de preguntas) derivan al paciente a urgencias o al 123, cierran la conversación, avisan al teléfono de soporte de la clínica y lo dejan en la Caja Negra. Detalle: `docs/GUARDRAIL_EMERGENCIAS.md`.
+- **Emergencias médicas**: cuatro capas (diccionario antes de la IA, marca de la IA, diccionario sobre la transcripción del audio y regla del prompt de preguntas) derivan al paciente a urgencias o al 123, cierran la conversación, avisan al personal y lo dejan en la Caja Negra. Detalle: `docs/GUARDRAIL_EMERGENCIAS.md`. **Aviso al personal** (desde el 2026-11-22, `AlertaEmergenciaService`): a la lista de Configuración › Datos de la clínica (`EmergencyAlertRecipient`, hasta `MAX_DESTINATARIOS_EMERGENCIA` = 5 activas, solo celulares de Colombia), a cualquier hora, con la plantilla `EMERGENCY_ALERT` (tres variables: cuándo, el teléfono del paciente y lo que escribió, hasta 300 caracteres; `parametrosAlertaEmergencia` en `packages/shared/src/alertas-emergencia.ts`, que también tiene el cuerpo sugerido para Meta). Sin la plantilla registrada sale como texto libre (solo llega a quien escribió en 24 h); sin nadie en la lista, al teléfono de soporte solo si es un celular. `InteractionLog.metadata` guarda `staffAlerted` (Meta aceptó el envío a alguien), `alertChannel` (`PLANTILLA`, `TEXTO` o `NINGUNO`), `alertRecipients`, `alertAccepted`, `alertWamids` (para leer la entrega en `WhatsappMessageLog`) y `alertFailure`. Si no salió a nadie, alerta técnica `ALERTA_EMERGENCIA_NO_SALE` (evento, sin datos del paciente). Cada persona guarda su último envío (`lastSentAt`/`lastWamid`) o rechazo (`lastError`), y «Enviar prueba» (`POST /emergency-alerts/recipients/:id/test`, solo administrador, red interna) usa la misma plantilla con un texto de PRUEBA, una vez cada 5 minutos por persona. **Qué no es emergencia** para la IA (regla 4 del prompt de agendamiento, 2026-11-22): quien ya está siendo atendido («voy en la ambulancia», «estoy en urgencias», «ya me vio el médico») y pide cancelar o cambiar, salvo que describa un síntoma agudo que tiene ahora sin atención; ni una enfermedad conocida por la que pide cita, autorización o visita domiciliaria sin síntoma agudo nuevo. De las 11 derivaciones de Anserma del 22-oct al 21-nov, solo una era una emergencia en curso; cuatro le cortaron la cancelación a pacientes que ya estaban en Urgencias o en ambulancia.
 - **Insultos, temas ajenos y reintentos**: tras 3 intentos fallidos en un paso (`maxRetriesPerStep`) o ante insultos, el asistente remite al teléfono de soporte de la clínica (`Organization.supportPhone`).
 - **La última oportunidad** (2026-11-17, `sumarIntentoFallido` y `cerrarPorExcesoDeIntentos` en `chatbot.service.ts`): el contador de intentos fallidos (`error_count`: cuenta en toda la conversación y se borra al cerrarla y, en algunos pasos, al acertar) llega a `maxRetriesPerStep` (3) y el mensaje que sigue se atiende: si es válido («A», «Sí», «Salir») la conversación sigue; si tampoco se entiende, el punto que iba a contestar «no logré entender» corta el turno (`IntentosAgotados`, con el turno de cada mensaje en un `AsyncLocalStorage`) y `processIncomingMessage` cierra en ese momento, con el mismo aviso, la Caja Negra (`MAX_RETRIES`, ahora con `ultimaOportunidad: true`) y la encuesta «Error técnico» (`SYSTEM_ERROR`). Antes se cerraba al llegar el cuarto mensaje, fuera lo que fuera: de 11 cierres del 15 de octubre al 17 de noviembre, 5 fueron con una opción válida («A» tres veces, «D», «Sí») y 2 con «Salir». El contador se guarda antes de cortar: si algo atrapara el corte, el mensaje siguiente cierra al llegar, como antes (también con el contador por encima del tope o fuera de un turno).
 - **Queja no es insulto** (2026-11-13): el chat se cierra por insultos (`guardrailInsulto`, encuesta `BLOCKED_INSULT`) solo si el mensaje, o la transcripción de la nota de voz, tiene una palabra de la lista `[insults]` de `chatbot-patterns.txt`. Si solo la IA lo marca (`intent: insulto_abuso`), es una queja: `quejaDelPaciente` lamenta lo ocurrido y da el contacto del hospital (`contactoDe`), la conversación sigue en el paso en que estaba, sin encuesta (paso `QUEJA_DEL_PACIENTE` en la Caja Negra). Las tres conversaciones que la IA cerró por «insultos» (22, 28 y 29 de octubre) eran quejas: «😡😡😡» tras «no es posible agendar», «tenía cita a las 8 y son las 9», y «¿por qué al niño ya me lo atendieron y ahora no está?» tras tres rechazos del padrón (dos de esos niños los agendó luego el hospital); la última respondió la encuesta con 1 estrella y «Mal».
@@ -3070,7 +3101,7 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
 ## 8. Monitoreo y alertas técnicas
 
 - **Monitor de Servicios** (`/super-admin/monitor`): cada 5 minutos comprueba los servicios externos (IA, voz, Meta, Telegram, el bot del asistente de soporte) y el espejo; abre y cierra incidentes. Un servicio que no aplica (sin configurar o apagado) no abre incidentes, y si tenía uno abierto, lo cierra. La IA y Meta se validan con las credenciales de una clínica testigo, no de todas. Hay además un modo en vivo desde el navegador. Detalle: `docs/MONITOR_SERVICIOS.md`.
-- **Alertas técnicas** (`/super-admin/alertas`, solo super administrador): un bot de Telegram propio de la plataforma avisa a un grupo del equipo técnico cuando algo falla —servicio externo caído, espejo sin latido o sin alcanzar el HIS, tarea programada que revienta, recordatorios que no salen, el aviso de la Bandeja que no le sale a una persona de la lista, los documentos de la consulta (lectura del hospital detenida, avisos que no salen, plantilla que Meta pausó o no encuentra, pocos avisos entregados), errores 5xx, Redis caído, reinicios en bucle—: un mensaje por problema, recordatorios si sigue abierto, «resuelto» con su duración, silencio de noche para advertencias y resumen diario a las 7:00. Nunca lleva datos de pacientes. Operación: `docs/ALERTAS_TECNICAS.md`.
+- **Alertas técnicas** (`/super-admin/alertas`, solo super administrador): un bot de Telegram propio de la plataforma avisa a un grupo del equipo técnico cuando algo falla —servicio externo caído, espejo sin latido o sin alcanzar el HIS, tarea programada que revienta, recordatorios que no salen, el aviso de la Bandeja que no le sale a una persona de la lista, los documentos de la consulta (lectura del hospital detenida, avisos que no salen, plantilla que Meta pausó o no encuentra, pocos avisos entregados), la alerta de posible emergencia que no le llegó a nadie del hospital (categoría «Errores de la API», sin datos del paciente), errores 5xx, Redis caído, reinicios en bucle—: un mensaje por problema, recordatorios si sigue abierto, «resuelto» con su duración, silencio de noche para advertencias y resumen diario a las 7:00. Nunca lleva datos de pacientes. Operación: `docs/ALERTAS_TECNICAS.md`.
 - **Alertas del asistente de soporte** (categoría «Asistente de soporte», que se puede apagar): su webhook caído o con mensajes del personal retenidos (lo detecta el monitor), la IA de una clínica que falla 3 veces en 15 minutos (se resuelve sola con la primera respuesta con IA), una clínica que llega a su tope diario de respuestas con IA (una vez al día) y 20 códigos equivocados en 10 minutos desde cualquier cuenta. El personal sigue recibiendo respuesta en todos los casos.
 - **Casos de Soporte en el grupo** (categoría «Casos de soporte» de las alertas técnicas, que se puede apagar): cada caso nuevo, del panel o del asistente de Telegram, llega al mismo grupo con su número, prioridad, clínica, rol y correo de quien reporta, canal, el título sin cédulas, teléfonos ni correos y el enlace a la Mesa de Ayuda; nunca la descripción. Los de prioridad alta suenan siempre; los normales llegan sin sonido de noche. También avisa el caso reabierto y, una sola vez, el que lleva 2 horas del horario del equipo sin que nadie lo tome. Si el grupo no está conectado, la categoría está apagada o Telegram falla, el caso se abre igual y la Mesa de Ayuda dice por qué no se avisó; se reintenta hasta que pasen 24 horas sin poder avisar.
 - **Espejo en el monitor y eventos rendidos** (2026-11-05, `checkMirror` en `monitor.checkers.ts`): cuenta como rendidos solo los eventos con `deadLettered` y sin `deliveredAt`, como el resto del sistema. Un evento que AgenIA ya cerró (la cita del chat que el hospital no registró se anula y su evento se da por terminado) conserva la marca de rendido; contado, dejó el espejo en estado degradado y la alerta técnica «Espejo con el HIS» abierta desde el 29 de octubre (más de 2.000 veces), y con ella abierta una caída real no habría avisado de nuevo.
@@ -3140,7 +3171,8 @@ Configuración (`/dashboard/configuracion`, solo el administrador) tiene un Resu
 | WhatsApp, plantillas y Telegram | Configuración › Canales e IA | — |
 | Voz | Configuración › Nombre, tono y voz | Google Cloud TTS |
 | Base de conocimiento de la clínica | Configuración › Base de conocimiento | Vacía |
-| Teléfono de soporte (al que el asistente remite y al que llegan las alertas de emergencia) | Configuración › Datos de la clínica (`setMyTelefonoSoporte`: no se deja vacío; un celular se guarda con indicativo) | Sin teléfono: el asistente dice «comuníquese con el hospital» |
+| Teléfono de soporte (al que el asistente remite) | Configuración › Datos de la clínica (`setMyTelefonoSoporte`: no se deja vacío; un celular se guarda con indicativo) | Sin teléfono: el asistente dice «comuníquese con el hospital» |
+| Quién recibe las alertas de posible emergencia | Configuración › Datos de la clínica › Alertas de posible emergencia (hasta 5 celulares, solo el Administrador; necesita la plantilla «Alerta de posible emergencia (al personal)») | Nadie: van al teléfono de soporte solo si es un celular |
 | Zona horaria | Base de datos (sin pantalla) | `America/Bogota` |
 | Espejo: modo de agenda | Configuración › Hospital (espejo) | OFF |
 | Espejo: avisos al agendador | Configuración › Hospital (espejo) › Avisos a los agendadores (lista de personas, solo el Administrador; la Bandeja muestra el estado) | Encendidos (requieren al menos una persona en «Avisos y recordatorios» y la plantilla; los de pedidos de pacientes, su propia plantilla) |
@@ -3155,7 +3187,7 @@ Configuración (`/dashboard/configuracion`, solo el administrador) tiene un Resu
 
 ## 13. Limitaciones conocidas y pendientes
 
-- **La alerta de posible emergencia casi nunca llega al personal** (visto el 2026-11-21): va en texto libre a `Organization.supportPhone`, así que un fijo no la recibe y un celular solo si le escribió al asistente en las últimas 24 horas. Además, `staffAlerted` queda en `true` cuando Meta acepta el envío, aunque después lo rechace (las 10 de Anserma fallaron con 131026). Mientras no salga con plantilla a la lista de avisos, el respaldo es la Caja Negra. Con la clínica sin teléfono, dos caminos de `chatbot.service.ts` le dan al paciente un número inventado (`(601) 555-0199` y `+10 334 45 66`).
+- **La alerta de posible emergencia necesita la lista y la plantilla** (2026-11-22). Hasta esa fecha iba en texto libre al teléfono de soporte, y en Anserma ninguna llegó (un fijo, guardado sin el 57). Ahora va a la lista de Datos de la clínica con la plantilla `EMERGENCY_ALERT`; mientras la clínica no elija a nadie y no registre la plantilla, sigue sin llegar y el respaldo es la Caja Negra. `staffAlerted` dice que Meta aceptó el envío, no que lo entregó: un rechazo posterior (como el 131026) solo se ve en el estado de cada persona y en `WhatsappMessageLog` por `alertWamids`, y no abre alerta técnica. Los casos delicados que no son una emergencia (por ejemplo, una paciente que cuenta que perdió su embarazo, o una queja de negligencia) no se detectan ni se avisan a nadie: el asistente sigue con el menú. Con la clínica sin teléfono, dos caminos de `chatbot.service.ts` le dan al paciente un número inventado (`(601) 555-0199` y `+10 334 45 66`).
 - **Analíticas**: «Completadas» cuenta citas con estado `COMPLETED`, que el flujo normal no escribe (marcar «Asistió» cambia la asistencia), así que suele quedar en 0.
 - **Agendas y cupos**: no hay botón para borrar cupos.
 - **Actividad de usuarios**: lo que solo se consulta se anota por pantalla (una vez cada 30 minutos), no cada búsqueda ni cada ficha que se mira, salvo el Rastreo de paciente y la historia clínica, que anotan cada consulta. Elegir los destinatarios de un lote de avisos y su nota adicional no se anotan uno por uno (sí el lote y su envío). El administrador de la clínica no tiene un botón de «Cerrar sesiones»: lo logra poniéndole una clave nueva a la persona.
@@ -3223,6 +3255,7 @@ Comunicados de la clínica por WhatsApp (`/dashboard/mensajes-masivos`, solo ORG
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-11-22** — Alertas de posible emergencia a las personas que elija la clínica. Cuando el asistente le indica a un paciente llamar al 123 o ir a Urgencias, ahora avisa por WhatsApp, a cualquier hora, a la lista de Configuración › Datos de la clínica › Alertas de posible emergencia (hasta 5 celulares), con el teléfono del paciente y lo que escribió, para que alguien lo llame. Sale con una plantilla nueva de Meta, «Alerta de posible emergencia (al personal)» (`alerta_posible_emergencia`, Utilidad), que la pantalla explica cómo crear; sin ella solo llega a quien escribió en las últimas 24 horas. «Enviar prueba» comprueba cada celular. Si no le sale a nadie, el equipo técnico recibe una alerta. Antes iba al teléfono de soporte, que en Anserma es un fijo: ninguna de las 11 alertas del 22-oct al 21-nov llegó. Además, la IA ya no deriva al 123 a quien cuenta que ya está en Urgencias o en ambulancia y pide cancelar, ni a quien pide cita por una enfermedad conocida sin un síntoma agudo nuevo: de esas 11, solo una era una emergencia en curso, y a cuatro personas se les cortó la cancelación. Para los administradores de todas las clínicas.
 - **2026-11-21** — Teléfono de soporte del Hospital San Vicente corregido a +57 606 853 8860, el conmutador publicado en hsvpanserma.gov.co. Estaba sin indicativo, y la alerta de posible emergencia usa los dígitos tal cual: `6068538860` es para WhatsApp un número de Malasia. Las 10 alertas del 22-oct al 11-nov fallaron en Meta (131026, ninguna entregada, ni a un tercero ni al hospital), aunque la Caja Negra las registró como avisadas. El panel ya guarda los fijos con indicativo, pide + en los de otro país y dice que un celular solo recibe la alerta si le escribió al asistente en las últimas 24 horas.
 - **2026-11-21** — Configuración más fácil de operar (Fase 4 de [PLAN_NAVEGACION.md](../PLAN_NAVEGACION.md)). Nueva sección Datos de la clínica: el Administrador ya puede cambiar el teléfono de soporte, que antes registraba solo el equipo de AgenIA. Un celular se guarda con su indicativo (sin él, la alerta de posible emergencia saldría a un número que no existe), el campo no se deja vacío y, con un fijo, la pantalla y el Resumen avisan que esas alertas no llegan por WhatsApp. Los interruptores ocupan una fila, con «¿Qué pasa si lo apago?» desplegable; los que dependen de otro apagado se ven atenuados y lo dicen. Los formularios dicen «Hay cambios sin guardar» y salir de la sección pide confirmación. Para los administradores de todas las clínicas.
 - **2026-11-21** — Lo suelto ya está en Configuración (Fase 3 de [PLAN_NAVEGACION.md](../PLAN_NAVEGACION.md)). «Límite de citas» sale del menú y pasa a Qué puede hacer el asistente (la dirección vieja lleva allá y lo explica). El modo de agenda y la configuración de los avisos a los agendadores pasan a Hospital (espejo); el Espejo y la Bandeja siguen mostrando cómo están, con el enlace para cambiarlos. Encuestas tiene su dirección, `/dashboard/encuestas`. El Resumen dice a cuántas personas llegan los avisos y si no están saliendo. En el celular, el contenido de Configuración ya no se corta por la derecha. Las visitas a las secciones de Configuración vuelven a quedar en la Actividad de usuarios, y los mensajes del sistema que nombraban las pestañas de antes dicen dónde está cada cosa ahora. Para los administradores; el agendador sigue viendo en la Bandeja si recibe los avisos.

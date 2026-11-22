@@ -7,10 +7,10 @@ import { alertasLleganPorWhatsapp, validarTelefonoSoporte } from '@/lib/configur
 import { AvisoSinGuardar, useAvisoAlSalir } from './CambiosSinGuardar';
 
 /**
- * 📞 El teléfono de soporte (docs/PLAN_NAVEGACION.md, N9). Se dice para qué se usa
- * porque de él dependen las alertas de posible emergencia: un celular las recibe
- * por WhatsApp (si ese número le escribió al asistente en las últimas 24 horas: la
- * alerta es texto libre); un fijo se le da al paciente, pero no las recibe.
+ * 📞 El teléfono de soporte (docs/PLAN_NAVEGACION.md, N9): el que el asistente les da
+ * a los pacientes. Desde el 2026-11-22 la alerta de posible emergencia va a la lista de
+ * «Alertas de posible emergencia» (abajo, en esta misma sección); a este número solo
+ * si esa lista está vacía y es un celular.
  */
 export default function TelefonoSoporteForm({ inicial }: { inicial: string | null }) {
     const [guardado, setGuardado] = useState(inicial ?? '');
@@ -51,8 +51,9 @@ export default function TelefonoSoporteForm({ inicial }: { inicial: string | nul
                 <div>
                     <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Teléfono de soporte</h2>
                     <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                        El número que el asistente les da a los pacientes cuando no puede ayudarlos, y al que manda por
-                        WhatsApp la alerta de una posible emergencia. Aplica desde el siguiente mensaje.
+                        El número que el asistente les da a los pacientes cuando no puede ayudarlos o cuando les indica
+                        llamar al 123. Puede ser un fijo. Quién recibe la alerta de una posible emergencia se elige abajo.
+                        Aplica desde el siguiente mensaje.
                     </p>
                 </div>
             </div>
@@ -79,8 +80,8 @@ export default function TelefonoSoporteForm({ inicial }: { inicial: string | nul
                         }`}
                     >
                         {llegan
-                            ? `Se guarda como ${v.valor}. La alerta de posible emergencia sale a este WhatsApp, pero WhatsApp solo la entrega si este número le escribió al asistente en las últimas 24 horas; si no, queda en la Caja Negra.`
-                            : `Se guarda como ${v.valor}. No es un celular colombiano: el asistente se lo da a los pacientes, pero las alertas de posible emergencia no llegan por WhatsApp y solo quedan en la Caja Negra.`}
+                            ? `Se guarda como ${v.valor}.`
+                            : `Se guarda como ${v.valor}. No es un celular: el asistente se lo da a los pacientes; las alertas de posible emergencia van a las personas de la lista de abajo.`}
                     </p>
                 )}
                 {error && (

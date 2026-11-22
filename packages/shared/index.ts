@@ -1055,3 +1055,26 @@ export type {
   MotivoOmision,
   ResultadoDestinatario,
 } from './src/mensajes-masivos-envio';
+// 🚑 Alertas de posible emergencia al personal (2026-11-22).
+export {
+  CUERPO_PLANTILLA_EMERGENCIA,
+  EJEMPLOS_PLANTILLA_EMERGENCIA,
+  MAX_DESTINATARIOS_EMERGENCIA,
+  MAX_MENSAJE_EN_ALERTA,
+  NOMBRE_PLANTILLA_EMERGENCIA,
+  PIE_PLANTILLA_EMERGENCIA,
+  PRUEBA_EMERGENCIA_CADA_MIN,
+  celularLegible,
+  parametrosAlertaEmergencia,
+  parametrosPruebaAlertaEmergencia,
+  remitenteParaAlerta,
+  textoLibreAlertaEmergencia,
+  validarCelularEmergencia,
+  validarNombreEmergencia,
+  variableDePlantilla,
+} from './src/alertas-emergencia';
+export type {
+  CelularValidado,
+  NombreValidado,
+  ResultadoAlertaEmergencia,
+} from './src/alertas-emergencia';

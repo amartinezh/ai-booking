@@ -38,7 +38,8 @@ export type TemplateKind =
   | 'PATIENT_REQUEST_ALERT'
   | 'ATTENTION_SUMMARY_READY'
   | 'MASS_MESSAGE_TEXT'
-  | 'MASS_MESSAGE_IMAGE';
+  | 'MASS_MESSAGE_IMAGE'
+  | 'EMERGENCY_ALERT';
 
 export interface ContratoPlantilla {
   label: string;
@@ -145,6 +146,17 @@ export const TEMPLATE_CONTRACTS: Record<TemplateKind, ContratoPlantilla> = {
     description:
       'Igual al comunicado sin imagen, pero con ENCABEZADO de tipo Imagen (en Meta: Encabezado → Multimedia → Imagen). Las dos variables del cuerpo son las mismas. Debe ser una plantilla aparte: una plantilla con encabezado de imagen no se puede enviar sin imagen, ni al revés.',
     variables: ['Nombre de la persona (o «paciente» si no hay)', 'El comunicado'],
+  },
+  // 🚑 2026-11-22: alerta de posible emergencia al personal (packages/shared/src/alertas-emergencia.ts).
+  EMERGENCY_ALERT: {
+    label: 'Alerta de posible emergencia (al personal)',
+    description:
+      'Va a los celulares elegidos en Configuración › Datos de la clínica › Alertas de posible emergencia, no a un paciente, a cualquier hora. Sale cuando el asistente le indica a un paciente llamar al 123 o ir a Urgencias, para que alguien lo llame. Sin esta plantilla la alerta sale como texto libre y WhatsApp solo se la entrega a quien le haya escrito al asistente en las últimas 24 horas. Crear en Meta como Utilidad, español de Colombia, nombre sugerido `alerta_posible_emergencia`: «🚨 *Alerta de posible emergencia médica* Un paciente le escribió al asistente virtual algo que podría ser una emergencia, y el asistente le indicó llamar al 123 o ir a Urgencias. Cuándo: {{1}} Teléfono del paciente: {{2}} Lo que escribió: {{3}} Por favor llámelo cuanto antes para hacer el seguimiento y anote el resultado en la Caja Negra del panel de AgenIA.» (cada dato en su propia línea; el texto exacto está en esa sección, con un botón para copiarlo).',
+    variables: [
+      'Cuándo escribió (por ejemplo «sábado, 21 de noviembre a las 11:22 p. m.»)',
+      'Teléfono del paciente (por ejemplo «+57 312 345 6789»)',
+      'Lo que escribió, entre comillas y hasta 300 caracteres',
+    ],
   },
 };
 

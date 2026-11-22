@@ -181,4 +181,19 @@ describe('prompts fijos', () => {
       expect(SCHEDULING_EXTRACTION_PROMPT).toContain(campo);
     }
   });
+
+  // 🚑 2026-11-22: de 11 derivaciones al 123 en Anserma, 4 eran de pacientes que ya
+  // estaban en Urgencias o en ambulancia y solo querían cancelar, y otras 5 de
+  // enfermedades conocidas por las que pedían cita. Lo agudo se sigue derivando.
+  it('el de agendamiento no deriva al 123 a quien ya está siendo atendido, pero sí lo agudo', () => {
+    expect(SCHEDULING_EXTRACTION_PROMPT).toContain('voy en la ambulancia');
+    expect(SCHEDULING_EXTRACTION_PROMPT).toContain('ya lo atendieron');
+    expect(SCHEDULING_EXTRACTION_PROMPT).toContain(
+      'Sí lo es si además describe un síntoma agudo que tiene AHORA',
+    );
+    expect(SCHEDULING_EXTRACTION_PROMPT).toContain(
+      'Ante duda razonable con un síntoma AGUDO, prefiere true',
+    );
+    expect(SCHEDULING_EXTRACTION_PROMPT).toContain('visita domiciliaria');
+  });
 });

@@ -27,6 +27,7 @@ const TODO_BIEN: DatosDelResumen = {
     voz: { activeProvider: 'ELEVENLABS', gender: 'FEMENINO' },
     politicaPublicada: true,
     telefonoSoporte: '+57 300 000 0000',
+    alertasEmergencia: { personas: 2, plantilla: true },
 };
 
 const fila = (r: ReturnType<typeof armarResumen>, bloque: string, nombre: string) =>
@@ -101,11 +102,31 @@ describe('armarResumen (docs/PLAN_NAVEGACION.md §5.1)', () => {
         expect(fila(r, 'Base de conocimiento', 'Contenido')).toMatchObject({ valor: 'Vacía', estado: 'falta' });
     });
 
-    it('un teléfono fijo: se dice que las alertas de emergencia no llegan por WhatsApp', () => {
-        const r = armarResumen({ ...TODO_BIEN, telefonoSoporte: '(606) 859 1010' });
-        expect(fila(r, 'Datos de la clínica', 'Alertas de emergencia')).toMatchObject({ valor: 'No llegan por WhatsApp', estado: 'falta' });
-        expect(r.avisos.map((a) => a.href)).toEqual(['/dashboard/configuracion/clinica#telefono']);
-        expect(fila(armarResumen(TODO_BIEN), 'Datos de la clínica', 'Alertas de emergencia')?.valor).toBe('Por WhatsApp, si escribió en 24 h');
+    it('las alertas de emergencia: a la lista y con la plantilla, todo bien', () => {
+        expect(fila(armarResumen(TODO_BIEN), 'Datos de la clínica', 'Alertas de emergencia')).toMatchObject({
+            valor: 'A 2 personas',
+            estado: 'encendido',
+            href: '/dashboard/configuracion/clinica#alertas-emergencia',
+        });
+    });
+
+    it('nadie en la lista y un fijo de soporte (Anserma, 2026-11-22): no le llegan a nadie, y va arriba', () => {
+        const r = armarResumen({ ...TODO_BIEN, telefonoSoporte: '+57 606 853 8860', alertasEmergencia: { personas: 0, plantilla: false } });
+        expect(fila(r, 'Datos de la clínica', 'Alertas de emergencia')).toMatchObject({ valor: 'No le llegan a nadie', estado: 'falta' });
+        expect(r.avisos.map((a) => a.href)).toEqual(['/dashboard/configuracion/clinica#alertas-emergencia']);
+        expect(r.avisos[0].texto).toMatch(/Nadie recibe las alertas de posible emergencia/);
+    });
+
+    it('con la lista pero sin la plantilla de Meta: falta, porque solo llegaría a quien escribió en 24 h', () => {
+        const r = armarResumen({ ...TODO_BIEN, alertasEmergencia: { personas: 1, plantilla: false } });
+        expect(fila(r, 'Datos de la clínica', 'Alertas de emergencia')).toMatchObject({ valor: 'A 1 persona, falta la plantilla', estado: 'falta' });
+        expect(r.avisos[0].texto).toMatch(/Falta la plantilla de Meta.*24 horas/);
+    });
+
+    it('sin lista pero con un celular de soporte: van a ese celular (como antes)', () => {
+        const r = armarResumen({ ...TODO_BIEN, alertasEmergencia: { personas: 0, plantilla: true } });
+        expect(fila(r, 'Datos de la clínica', 'Alertas de emergencia')?.valor).toBe('Al teléfono de soporte');
+        expect(r.avisos).toEqual([]);
     });
 
     it('WhatsApp con número y token pero apagado: apagado, no «sin conectar»', () => {

@@ -98,7 +98,7 @@ export const TEXTO_CATEGORIA_ALERTA: Record<
   },
   ERRORES: {
     titulo: 'Errores de la API',
-    descripcion: 'Errores 5xx y excepciones sin atrapar.',
+    descripcion: 'Errores 5xx, excepciones sin atrapar y la alerta de posible emergencia que no le llega a nadie del hospital.',
   },
   ARRANQUES: {
     titulo: 'Arranques de la API',
@@ -169,6 +169,7 @@ export const TIPOS_ALERTA = [
   'RESUMEN_AVISOS_FALLIDOS',
   'RESUMEN_PLANTILLA_FALLA',
   'RESUMEN_NO_ENTREGADOS',
+  'ALERTA_EMERGENCIA_NO_SALE',
 ] as const;
 export type TipoAlerta = (typeof TIPOS_ALERTA)[number];
 
@@ -294,6 +295,15 @@ export const CATALOGO_ALERTAS: Record<TipoAlerta, DefinicionAlerta> = {
     evento: false,
     titulo: 'Muchos avisos de los documentos no se entregan',
   },
+  // 🚑 2026-11-22: un paciente fue derivado al 123 y la alerta al personal no le salió
+  // a nadie (sin lista, sin plantilla o Meta la rechazó). Un evento por caso: el
+  // equipo técnico debe avisarle al hospital, que busca el caso en la Caja Negra.
+  ALERTA_EMERGENCIA_NO_SALE: {
+    categoria: 'ERRORES',
+    gravedad: 'CRITICA',
+    evento: true,
+    titulo: 'La alerta de posible emergencia no le llegó a nadie',
+  },
 };
 
 /** ABIERTA | RESUELTA | EVENTO (suelto: nunca se abre ni se cierra). */
@@ -383,6 +393,9 @@ export const claveAlerta = {
   /** El comienzo de las de una clínica, para cerrar las de quien ya no está en la lista. */
   avisoDestinatarioPrefijo: (organizationId: string): string =>
     `${PREFIJO_AVISO_DESTINATARIO}${organizationId}:`,
+  /** La alerta de posible emergencia de una clínica que no salió (2026-11-22). */
+  alertaEmergencia: (organizationId: string): string =>
+    `emergencia:alerta-no-sale:${organizationId}`,
   redis: (): string => 'servicio:redis',
   /** Por firma: código, método, ruta sin ids y clase de la excepción. Nunca el mensaje. */
   error5xx: (

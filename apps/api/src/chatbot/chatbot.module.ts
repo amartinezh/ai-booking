@@ -21,6 +21,8 @@ import { TelegramCoreModule } from '../telegram/telegram-core.module';
 import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 import { AttentionSummaryModule } from '../attention-summary/attention-summary.module';
 import { MassMessageModule } from '../mass-message/mass-message.module';
+import { AlertaEmergenciaService } from './alerta-emergencia.service';
+import { EmergencyAlertsController } from './emergency-alerts.controller';
 
 @Module({
   imports: [
@@ -41,7 +43,7 @@ import { MassMessageModule } from '../mass-message/mass-message.module';
     // 📢 «No más comunicados»: la baja de los mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md §9).
     MassMessageModule,
   ],
-  controllers: [ChatbotController],
+  controllers: [ChatbotController, EmergencyAlertsController],
   providers: [
     ChatbotService,
     ChatbotCron,
@@ -60,9 +62,14 @@ import { MassMessageModule } from '../mass-message/mass-message.module';
     // provee aquí y no se importa MirrorModule, que ya depende de este módulo
     // (Mirror → Waitlist → Chatbot).
     MirrorExceptionsService,
+    // 🚑 La alerta de posible emergencia al personal (docs/GUARDRAIL_EMERGENCIAS.md).
+    // Depende de Prisma, de las plantillas (WhatsappConfigModule) y de las alertas
+    // técnicas (globales).
+    AlertaEmergenciaService,
   ],
   exports: [
     ChatbotService,
+    AlertaEmergenciaService,
     KnowledgeBaseService,
     OrganizationSettingsService,
     // El webhook de Telegram encola en la MISMA cola que WhatsApp: un solo
