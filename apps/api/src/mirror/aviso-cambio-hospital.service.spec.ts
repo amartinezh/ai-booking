@@ -990,6 +990,192 @@ describe('AvisoCambioHospitalService — 🙏 la corrección cuando la cita vuel
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// 🩺 2026-11-25: los «médicos disponibles» del hospital (MDD1 y MDD2) son agendas
+// funcionales que se le muestran al paciente como «Médico general». A algunas de
+// sus citas el hospital les asigna después un médico con nombre, a la misma hora.
+// ────────────────────────────────────────────────────────────────────────────
+describe('AvisoCambioHospitalService — 🩺 agendas funcionales («Médico general»)', () => {
+  const SERVICIO = { name: 'Consulta ambulatoria de medicina general' };
+  const MEDICO_GENERAL = {
+    fullName: 'Médico general',
+    isFunctionalAgenda: true,
+  };
+  const enLaAgenda = (doctorId: string, over: Record<string, any> = {}) =>
+    cita({
+      scheduleSlot: {
+        startTime: EN_2H,
+        doctorId,
+        doctor: MEDICO_GENERAL,
+        service: SERVICIO,
+      },
+      ...over,
+    });
+  const conMedico = (startTime: Date) => ({
+    ...cita({ id: 'apt-nueva', origin: 'MIRROR' }),
+    scheduleSlot: {
+      startTime,
+      doctorId: 'doc-daniela',
+      doctor: {
+        fullName: 'DANIELA CARDENAS CASTRILLON',
+        isFunctionalAgenda: false,
+      },
+      service: SERVICIO,
+    },
+  });
+  const enMdd2 = enLaAgenda('doc-mdd2');
+  const enMdd1 = enLaAgenda('doc-mdd1', { id: 'apt-nueva', origin: 'MIRROR' });
+
+  it('le asignaron médico a la misma hora: se le dice quién lo atiende, sin «antes/ahora», y el caso se cierra solo', async () => {
+    const t = armar({ cita: enMdd2, nueva: conMedico(EN_2H) });
+    await t.correr();
+
+    expect(t.texto()).toContain(
+      'ya tiene médico asignado: *Dr(a). DANIELA CARDENAS CASTRILLON*',
+    );
+    expect(t.texto()).toContain('La hora sigue igual');
+    expect(t.texto()).not.toMatch(/Antes:|Ahora:|Médico general|cambió/);
+    expect(t.final()).toMatchObject({
+      severity: 'MEDIA',
+      meta: { aviso: 'ENVIADO', medicoAsignado: true },
+    });
+    expect(t.exceptions.autoResolver).toHaveBeenCalledWith(
+      ORG,
+      'caso-1',
+      expect.stringMatching(/asignó médico a la misma hora.*se le avisó/),
+      DESPUES,
+    );
+    expect(t.interactionLog.log.mock.calls[0][0].metadata).toMatchObject({
+      tipo: 'MEDICO_ASIGNADO',
+    });
+  });
+
+  it('fuera de las 24 h: la plantilla de confirmación con el médico asignado, y el caso igual se cierra solo', async () => {
+    const t = armar({
+      cita: enMdd2,
+      nueva: conMedico(EN_2H),
+      dentroDeVentana: false,
+    });
+    await t.correr();
+
+    expect(t.templates.sendTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'HIS_APPOINTMENT_CONFIRMATION',
+        bodyParams: [
+          'Victoria',
+          'Consulta ambulatoria de medicina general',
+          'Dr(a). DANIELA CARDENAS CASTRILLON',
+          expect.any(String),
+        ],
+      }),
+    );
+    expect(t.exceptions.autoResolver).toHaveBeenCalled();
+  });
+
+  it('si no se le pudo avisar, tampoco hay que llamarlo: su hora no cambió (MEDIA y cerrado)', async () => {
+    const t = armar({
+      cita: enMdd2,
+      nueva: conMedico(EN_2H),
+      dentroDeVentana: false,
+      plantilla: { success: false, error: 'template-not-configured' },
+    });
+    await t.correr();
+
+    expect(t.final()).toMatchObject({
+      severity: 'MEDIA',
+      meta: { aviso: 'NO_ENVIADO', medicoAsignado: true },
+    });
+    expect(t.exceptions.autoResolver).toHaveBeenCalledWith(
+      ORG,
+      'caso-1',
+      expect.stringContaining('No se le pudo avisar'),
+      DESPUES,
+    );
+  });
+
+  it('de una agenda a la otra (MDD2 → MDD1) a la misma hora: para el paciente es la misma cita, ni caso ni aviso', async () => {
+    const t = armar({ cita: enMdd2, nueva: enMdd1 });
+    await t.correr();
+
+    expect(t.exceptions.registrar).not.toHaveBeenCalled();
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.templates.sendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('…y si la otra agenda llega después de cancelar, el caso se cierra solo sin escribirle', async () => {
+    const t = armar({ cita: enMdd2, nuevaDespues: enMdd1 });
+    await t.correr();
+
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.final()).toMatchObject({
+      meta: { aviso: 'NO_HIZO_FALTA', motivo: 'MISMA_CITA' },
+    });
+    expect(t.exceptions.autoResolver).toHaveBeenCalled();
+  });
+
+  it('entre dos agendas que se nombran distinto (un programa → «Médico general»), a la misma hora: es un cambio de médico', async () => {
+    const enElPrograma = cita({
+      scheduleSlot: {
+        startTime: EN_2H,
+        doctorId: 'doc-hta',
+        doctor: {
+          fullName: 'Programa de Hipertensión',
+          isFunctionalAgenda: true,
+        },
+        service: SERVICIO,
+      },
+    });
+    const t = armar({ cita: enElPrograma, nueva: enMdd1 });
+    await t.correr();
+
+    expect(t.texto()).toContain('cambió el médico de su cita');
+    expect(t.texto()).toContain('con Programa de Hipertensión');
+    expect(t.texto()).toContain('con *Médico general*');
+    expect(t.texto()).not.toContain('ya tiene médico asignado');
+    expect(t.exceptions.autoResolver).not.toHaveBeenCalled();
+  });
+
+  it('de la agenda a un médico a OTRA hora: es un cambio de verdad, con «antes/ahora» y el caso abierto', async () => {
+    const t = armar({ cita: enMdd2, nueva: conMedico(MANANA) });
+    await t.correr();
+
+    expect(t.texto()).toContain('el hospital cambió su cita');
+    expect(t.texto()).toContain('con Médico general');
+    expect(t.texto()).not.toContain('Dr(a). Médico general');
+    expect(t.exceptions.autoResolver).not.toHaveBeenCalled();
+  });
+
+  it('de un médico a la agenda, a la misma hora: se le avisa el cambio de médico (sin «Dr(a).» delante de la agenda)', async () => {
+    const t = armar({
+      nueva: enLaAgenda('doc-mdd2', { id: 'apt-nueva', origin: 'MIRROR' }),
+    });
+    await t.correr();
+
+    expect(t.texto()).toContain('cambió el médico de su cita');
+    expect(t.texto()).toContain('con *Médico general*');
+    expect(t.texto()).not.toContain('Dr(a). Médico general');
+    expect(t.exceptions.autoResolver).not.toHaveBeenCalled();
+  });
+
+  it('sin espera (el camino inmediato) también cierra solo el caso del médico asignado', async () => {
+    const t = armar({ cita: enMdd2, nueva: conMedico(EN_2H) });
+    (t.svc as any).esperaAvisoMs = 0;
+    t.prisma.syncException.findFirst.mockImplementation(
+      async ({ where }: any) => (where?.dedupeKey ? { id: 'caso-9' } : null),
+    );
+
+    await t.svc.alCancelarElHospital(ORG, 'apt-bot', AHORA);
+
+    expect(t.texto()).toContain('ya tiene médico asignado');
+    expect(t.exceptions.autoResolver).toHaveBeenCalledWith(
+      ORG,
+      'caso-9',
+      expect.stringContaining('asignó médico'),
+      AHORA,
+    );
+  });
+});
+
 describe('momentoDelAviso', () => {
   const T0 = new Date('2026-10-28T14:18:00.000Z'); // 9:18 en Bogotá
   const min = (n: number) => new Date(T0.getTime() + n * 60_000);

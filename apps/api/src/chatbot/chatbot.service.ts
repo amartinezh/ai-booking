@@ -3004,6 +3004,10 @@ export class ChatbotService implements OnModuleInit {
       return hits.length === 1 ? hits[0].id : null;
     };
 
+    // 🩺 Una agenda funcional (un programa, o el «Médico general» de los médicos
+    // disponibles del hospital) no es una persona a la que se pida por su nombre
+    // (2026-11-25): «medicina general» no debe dejar a nadie esperando solo los
+    // cupos de esa agenda.
     // 1º intento: médicos agendables de ESE servicio (más preciso).
     const byService = await this.prisma.doctorProfile.findMany({
       where: {
@@ -3011,6 +3015,7 @@ export class ChatbotService implements OnModuleInit {
         serviceId,
         isActive: true,
         whatsappBookingEnabled: true,
+        isFunctionalAgenda: false,
       },
       select: { id: true, fullName: true },
     });
@@ -3019,7 +3024,12 @@ export class ChatbotService implements OnModuleInit {
 
     // 2º intento: cualquier médico agendable de la organización.
     const inOrg = await this.prisma.doctorProfile.findMany({
-      where: { organizationId, isActive: true, whatsappBookingEnabled: true },
+      where: {
+        organizationId,
+        isActive: true,
+        whatsappBookingEnabled: true,
+        isFunctionalAgenda: false,
+      },
       select: { id: true, fullName: true },
     });
     return pickUnique(inOrg);

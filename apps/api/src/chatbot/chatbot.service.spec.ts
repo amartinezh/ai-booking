@@ -642,6 +642,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           serviceId: SERVICE_ID,
           isActive: true,
           whatsappBookingEnabled: true,
+          isFunctionalAgenda: false,
         },
         select: { id: true, fullName: true },
       });
@@ -682,9 +683,26 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           organizationId: ORG_ID,
           isActive: true,
           whatsappBookingEnabled: true,
+          isFunctionalAgenda: false,
         },
         select: { id: true, fullName: true },
       });
+    });
+
+    // 🩺 2026-11-25: los «médicos disponibles» del hospital se muestran como
+    // «Médico general». Nadie pide una agenda por su nombre: «medicina general»
+    // no debe dejar a la persona esperando solo los cupos de esa agenda.
+    it('🩺 una agenda funcional no se resuelve por su nombre, en ninguno de los dos intentos', async () => {
+      prisma.doctorProfile.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      await expect(resolve('medicina general')).resolves.toBeNull();
+
+      expect(prisma.doctorProfile.findMany).toHaveBeenCalledTimes(2);
+      for (const llamada of prisma.doctorProfile.findMany.mock.calls) {
+        expect(llamada[0].where).toMatchObject({ isFunctionalAgenda: false });
+      }
     });
 
     it('ambigüedad: varias coincidencias devuelven null (nunca asigna al azar)', async () => {

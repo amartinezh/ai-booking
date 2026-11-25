@@ -265,7 +265,7 @@ export class AvisoCambioHospitalService {
 
     // Anulada y vuelta a crear igual (mismo médico y hora): para el paciente no
     // cambió nada. Ni aviso ni caso.
-    if (nueva && esLaMismaCita(cita, nueva)) {
+    if (nueva && esLaMismaParaElPaciente(cita, nueva)) {
       this.logger.log(
         `Cita ${cita.id}: el hospital la anuló y la volvió a crear igual (${nueva.id}); no se le avisa al paciente.`,
       );
@@ -328,23 +328,43 @@ export class AvisoCambioHospitalService {
     if (registro !== 'CREADA' || avisarDesde) return;
 
     const aviso = await this.avisar(organizationId, cita, nueva, kind, ahora);
+    const asignado = !!nueva && esMedicoAsignado(cita, nueva);
 
-    // Sin aviso, alguien tiene que comunicarse con el paciente: al menos ALTA.
+    // Sin aviso, alguien tiene que comunicarse con el paciente: al menos ALTA
+    // (salvo si solo le asignaron médico a la misma hora).
     const base: SeveridadExcepcion =
-      aviso.aviso === 'ENVIADO' ? 'MEDIA' : 'ALTA';
+      aviso.aviso === 'ENVIADO' || asignado ? 'MEDIA' : 'ALTA';
     await this.prisma.syncException.updateMany({
       where: { organizationId, dedupeKey },
       data: {
-        severity: severidadPorCercania(base, minutosParaLaCita),
+        severity: asignado
+          ? 'MEDIA'
+          : severidadPorCercania(base, minutosParaLaCita),
         meta: {
           ...metaBase,
           ...aviso,
           ...(aviso.aviso === 'ENVIADO'
             ? { informadaCitaId: nueva?.id ?? null }
             : {}),
+          ...(asignado ? { medicoAsignado: true } : {}),
         },
       },
     });
+    // 🩺 Le asignaron médico a la misma hora: nadie tiene que llamarlo.
+    if (asignado) {
+      const elCaso = await this.prisma.syncException.findFirst({
+        where: { organizationId, dedupeKey },
+        select: { id: true },
+      });
+      if (elCaso) {
+        await this.exceptions.autoResolver(
+          organizationId,
+          elCaso.id,
+          notaMedicoAsignado(aviso),
+          ahora,
+        );
+      }
+    }
   }
 
   /**
@@ -590,7 +610,7 @@ export class AvisoCambioHospitalService {
       ),
       ahora,
     );
-    if (!nueva || !esLaMismaCita(cita, nueva)) return;
+    if (!nueva || !esLaMismaParaElPaciente(cita, nueva)) return;
 
     // Reclamarlo: compare-and-set sobre la última escritura del caso. Si otra
     // réplica o una persona lo tocó entretanto, se mira en la vuelta siguiente.
@@ -845,7 +865,7 @@ export class AvisoCambioHospitalService {
     }
 
     // Para el paciente no cambió nada: tiene la que cree tener.
-    if (nueva && informada && esLaMismaCita(informada, nueva)) {
+    if (nueva && informada && esLaMismaParaElPaciente(informada, nueva)) {
       await terminar({
         aviso: 'NO_HIZO_FALTA',
         // MISMA_CITA: la suya, como la agendó; COMO_SE_LE_AVISO: la del último aviso.
@@ -891,18 +911,31 @@ export class AvisoCambioHospitalService {
       );
       const minutosParaLaCita =
         (nueva.scheduleSlot.startTime.getTime() - ahora.getTime()) / MS_MIN;
+      const asignado = esMedicoAsignado(informada ?? cita, nueva);
       await terminar(
         {
           nuevaIso: nueva.scheduleSlot.startTime.toISOString(),
           nuevaCitaId: nueva.id,
           ...resultadoCompleto(aviso),
           ...(aviso.aviso === 'ENVIADO' ? { informadaCitaId: nueva.id } : {}),
+          ...(asignado ? { medicoAsignado: true } : {}),
         },
-        severidadPorCercania(
-          aviso.aviso === 'ENVIADO' ? 'MEDIA' : 'ALTA',
-          minutosParaLaCita,
-        ),
+        asignado
+          ? 'MEDIA'
+          : severidadPorCercania(
+              aviso.aviso === 'ENVIADO' ? 'MEDIA' : 'ALTA',
+              minutosParaLaCita,
+            ),
       );
+      // 🩺 Le asignaron médico a la misma hora: nadie tiene que llamarlo.
+      if (asignado) {
+        await this.exceptions.autoResolver(
+          organizationId,
+          caso.id,
+          notaMedicoAsignado(aviso),
+          ahora,
+        );
+      }
       return;
     }
 
@@ -1078,34 +1111,44 @@ export class AvisoCambioHospitalService {
               medico: doctorLabel(nueva.scheduleSlot.doctor) || 'su médico',
               contacto: contactoClinica,
             })
-          : nueva
-            ? MSGS.citaMovidaPorElHospital({
-                nombre,
-                clinica,
-                servicio,
-                fechaAntes: fecha,
-                fechaNueva: formatAppointmentLong(
-                  nueva.scheduleSlot.startTime,
-                  {
-                    timeZone,
-                  },
-                ),
-                medicoAntes:
-                  doctorLabel(antes.scheduleSlot.doctor) || undefined,
-                medicoNuevo:
-                  doctorLabel(nueva.scheduleSlot.doctor) || 'su médico',
-                contacto: contactoClinica,
-              })
-            : MSGS.citaCanceladaPorElHospital({
+          : nueva && esMedicoAsignado(antes, nueva)
+            ? MSGS.citaConMedicoAsignado({
                 nombre,
                 clinica,
                 servicio,
                 fecha,
-                medico: doctorLabel(antes.scheduleSlot.doctor) || 'su médico',
+                medico: doctorLabel(nueva.scheduleSlot.doctor) || 'su médico',
                 contacto: contactoClinica,
-                puedeAgendar: (await ajustes.operacionesDelBot(organizationId))
-                  .agendar,
-              });
+              })
+            : nueva
+              ? MSGS.citaMovidaPorElHospital({
+                  nombre,
+                  clinica,
+                  servicio,
+                  fechaAntes: fecha,
+                  fechaNueva: formatAppointmentLong(
+                    nueva.scheduleSlot.startTime,
+                    {
+                      timeZone,
+                    },
+                  ),
+                  medicoAntes:
+                    doctorLabel(antes.scheduleSlot.doctor) || undefined,
+                  medicoNuevo:
+                    doctorLabel(nueva.scheduleSlot.doctor) || 'su médico',
+                  contacto: contactoClinica,
+                })
+              : MSGS.citaCanceladaPorElHospital({
+                  nombre,
+                  clinica,
+                  servicio,
+                  fecha,
+                  medico: doctorLabel(antes.scheduleSlot.doctor) || 'su médico',
+                  contacto: contactoClinica,
+                  puedeAgendar: (
+                    await ajustes.operacionesDelBot(organizationId)
+                  ).agendar,
+                });
       via = 'TEXTO';
       resultado = await chatbot.sendOutboundForOrg(
         organizationId,
@@ -1178,7 +1221,12 @@ export class AvisoCambioHospitalService {
         patientUserId: cita.patient.userId,
         metadata: {
           outbound: true,
-          tipo: modo === 'SIGUE_EN_PIE' ? 'CITA_SIGUE_EN_PIE' : kind,
+          tipo:
+            modo === 'SIGUE_EN_PIE'
+              ? 'CITA_SIGUE_EN_PIE'
+              : nueva && esMedicoAsignado(antes, nueva)
+                ? 'MEDICO_ASIGNADO'
+                : kind,
           via,
           appointmentId: cita.id,
           ...(nueva ? { nuevaCitaId: nueva.id } : {}),
@@ -1211,6 +1259,49 @@ function esLaMismaCita(a: CitaParaAviso, b: CitaParaAviso): boolean {
     a.scheduleSlot.doctorId === b.scheduleSlot.doctorId &&
     a.scheduleSlot.startTime.getTime() === b.scheduleSlot.startTime.getTime()
   );
+}
+
+const mismaHora = (a: CitaParaAviso, b: CitaParaAviso): boolean =>
+  a.scheduleSlot.startTime.getTime() === b.scheduleSlot.startTime.getTime();
+
+/**
+ * 🩺 Para el paciente es la misma cita (2026-11-25): mismo médico y hora, o dos
+ * agendas funcionales que se le nombran igual, a la misma hora. Los «médicos
+ * disponibles» del hospital (MDD1 y MDD2) se le muestran los dos como «Médico
+ * general»: si el hospital pasa la cita de uno al otro, no ve ningún cambio.
+ */
+function esLaMismaParaElPaciente(a: CitaParaAviso, b: CitaParaAviso): boolean {
+  if (esLaMismaCita(a, b)) return true;
+  const nombre = doctorLabel(a.scheduleSlot.doctor);
+  return (
+    mismaHora(a, b) &&
+    a.scheduleSlot.doctor?.isFunctionalAgenda === true &&
+    b.scheduleSlot.doctor?.isFunctionalAgenda === true &&
+    nombre !== '' &&
+    nombre === doctorLabel(b.scheduleSlot.doctor)
+  );
+}
+
+/**
+ * 🩺 El hospital le asignó médico (2026-11-25): la cita estaba en una agenda
+ * funcional (un «médico disponible», que se le muestra como «Médico general») y
+ * pasó, a la misma hora, a un médico con nombre. El hospital lo hace con algunas
+ * citas de esas agendas. No es un cambio que el paciente tenga que atender: se le
+ * dice quién lo atiende y el caso de la Bandeja se cierra solo.
+ */
+function esMedicoAsignado(antes: CitaParaAviso, nueva: CitaParaAviso): boolean {
+  return (
+    mismaHora(antes, nueva) &&
+    antes.scheduleSlot.doctor?.isFunctionalAgenda === true &&
+    nueva.scheduleSlot.doctor?.isFunctionalAgenda !== true
+  );
+}
+
+/** La nota con que se cierra solo el caso de un médico asignado. */
+function notaMedicoAsignado(aviso: ResultadoAviso): string {
+  return aviso.aviso === 'ENVIADO'
+    ? 'El hospital le asignó médico a la misma hora (la cita estaba en una agenda funcional): se le avisó al paciente quién lo atiende. No hay nada que hacer.'
+    : 'El hospital le asignó médico a la misma hora (la cita estaba en una agenda funcional). No se le pudo avisar, pero su hora no cambió y el recordatorio ya dice quién lo atiende. No hay nada que hacer.';
 }
 
 /**

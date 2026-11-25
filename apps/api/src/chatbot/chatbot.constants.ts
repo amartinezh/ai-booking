@@ -1410,6 +1410,14 @@ const FORMAL = {
   // 🙏 Se le avisó que el hospital canceló su cita y el hospital la volvió a crear
   // igual (2026-10-30: lo hace al recibir al paciente en ventanilla; a un paciente le
   // llegó «cancelada» 16 minutos antes de su cita y fue atendido).
+  // 🩺 La cita estaba en una agenda funcional del hospital («Médico general») y el
+  // hospital le asignó un médico con nombre a la misma hora (2026-11-25). No es un
+  // cambio para el paciente: se le dice quién lo atiende.
+  citaConMedicoAsignado: (p: AvisoCitaSigueEnPie) =>
+    `Hola${p.nombre ? `, ${p.nombre}` : ''}. Le escribimos de *${p.clinica}*. 🏥\n\n` +
+    `Su cita de *${p.servicio}* del *${p.fecha}* ya tiene médico asignado: *${p.medico}*. La hora sigue igual.\n\n` +
+    `Si tiene alguna duda, comuníquese con ${p.contacto}.`,
+
   citaSigueEnPie: (p: AvisoCitaSigueEnPie) =>
     `Hola${p.nombre ? `, ${p.nombre}` : ''}. Le escribimos de *${p.clinica}*. 🏥\n\n` +
     `Disculpe la confusión: hace un momento le avisamos que su cita de *${p.servicio}* del *${p.fecha}* con *${p.medico}* había sido cancelada, pero el hospital la volvió a registrar. *Su cita sigue en pie.*\n\n` +
@@ -2936,6 +2944,11 @@ const INFORMAL = {
       : `Te contamos que el hospital cambió tu cita de *${p.servicio}*:\n\n`) +
     `❌ Antes: ${p.fechaAntes}${p.medicoAntes ? ` con ${p.medicoAntes}` : ''}\n` +
     `✅ Ahora: *${p.fechaNueva}* con *${p.medicoNuevo}*\n\n` +
+    `Si tienes alguna duda, comunícate con ${p.contacto}.`,
+
+  citaConMedicoAsignado: (p: AvisoCitaSigueEnPie) =>
+    `Hola${p.nombre ? `, ${p.nombre}` : ''}. Te escribimos de *${p.clinica}*. 🏥\n\n` +
+    `Tu cita de *${p.servicio}* del *${p.fecha}* ya tiene médico asignado: *${p.medico}*. La hora sigue igual. 😊\n\n` +
     `Si tienes alguna duda, comunícate con ${p.contacto}.`,
 
   citaSigueEnPie: (p: AvisoCitaSigueEnPie) =>
