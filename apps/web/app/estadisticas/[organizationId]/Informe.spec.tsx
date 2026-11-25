@@ -76,6 +76,58 @@ describe('estadísticas — la página', () => {
         expect(seccion).toHaveTextContent('Ley 1581 de 2012');
     });
 
+    // 🩺 2026-11-25
+    it('🩺 la ocupación de la agenda: mes a mes y por médico, primero el que dejó más cupos sin agendar', () => {
+        const sin = armarInforme(datos, corte, { conHospital: true })!;
+        const { unmount } = render(<Informe informe={sin} clinica="Clínica" organizationId={ORG} />);
+        expect(
+            screen.queryByRole('heading', { name: '¿Qué tan ocupada estuvo la agenda de los médicos?' }),
+        ).not.toBeInTheDocument();
+        unmount();
+
+        const con = armarInforme(
+            {
+                ...datos,
+                ocupacion: [
+                    { nombre: 'ISABELLA GOMEZ VILLEGAS', codigo: 'MD09', chat: true, mes: '2026-10', personal: 177, asistente: 18, libres: 5 },
+                    { nombre: 'MEDICO DISPONIBLE HSVP 02', codigo: 'MDD2', chat: false, mes: '2026-10', personal: 300, asistente: 0, libres: 71 },
+                    { nombre: 'Programa de Hipertensión', codigo: '76', chat: true, mes: '2026-10', personal: 33, asistente: 0, libres: 40 },
+                ],
+            },
+            corte,
+            { conHospital: true },
+        )!;
+        render(<Informe informe={con} clinica="Clínica" organizationId={ORG} />);
+        const seccion = screen
+            .getByRole('heading', { name: '¿Qué tan ocupada estuvo la agenda de los médicos?' })
+            .closest('section')!;
+        // El mes: 528 con cita de 644 cupos.
+        expect(seccion).toHaveTextContent('Octubre de 2026');
+        expect(seccion).toHaveTextContent('82,0 % ocupada · 644 cupos');
+        expect(seccion).toHaveTextContent('510 por el personal · 18 por chat · 116 sin agendar');
+        expect(seccion).toHaveTextContent('el hospital cerró sin cita');
+        // Por médico: el de más cupos sin agendar primero, con su código y el nombre legible.
+        const nombres = within(seccion)
+            .getAllByText(/ · /, { selector: 'span.font-semibold' })
+            .map((e) => e.textContent);
+        expect(nombres).toEqual([
+            'MDD2 · Medico Disponible Hsvp 02',
+            '76 · Programa de Hipertensión',
+            'MD09 · Isabella Gomez Villegas',
+        ]);
+        // Cada médico dice si se agenda por chat.
+        const bloque = (nombre: string) => within(seccion).getByText(nombre).closest('div')!;
+        expect(bloque('MDD2 · Medico Disponible Hsvp 02')).toHaveTextContent('No se agenda por chat');
+        expect(bloque('MD09 · Isabella Gomez Villegas')).toHaveTextContent('Se agenda por chat');
+        expect(bloque('MD09 · Isabella Gomez Villegas')).not.toHaveTextContent('No se agenda por chat');
+        expect(seccion).toHaveTextContent('45,2 % ocupada · 73 cupos');
+        expect(seccion).toHaveTextContent('de consulta ambulatoria de medicina general; los de otros servicios, no.');
+        // La barra se lee sin verla.
+        expect(
+            within(seccion).getByRole('img', { name: /^Octubre de 2026: 82,0 % ocupada\./ }),
+        ).toBeInTheDocument();
+    });
+
     it('arriba, la conclusión y las seis cifras con el período completo', () => {
         const informe = armarInforme(datos, corte, { conHospital: true })!;
         render(<Informe informe={informe} clinica="Hospital San Vicente de Paúl" organizationId={ORG} />);

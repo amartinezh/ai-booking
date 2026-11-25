@@ -1,5 +1,5 @@
 import type { DatosDeEstadisticas } from './consultas';
-import { GESTION, armarInforme } from './informe';
+import { GESTION, armarInforme, armarOcupacion, ocupacionDelMes } from './informe';
 import type { CorteDeEstadisticas } from './periodo';
 
 const corte = (ultimoDia: string, hasta: string): CorteDeEstadisticas => ({
@@ -224,5 +224,85 @@ describe('estadísticas — de las cifras a la página', () => {
             armarInforme({ ...datosDel24(), autorizaciones: { aceptaron: 40, noAceptaron: 2, retiraron: 1 } }, c, { conHospital: true })!
                 .autorizaciones,
         ).toEqual({ aceptaron: 40, noAceptaron: 2, retiraron: 1 });
+    });
+});
+
+// 🩺 2026-11-25: qué tan ocupada estuvo la agenda de los médicos.
+describe('estadísticas — ocupación de la agenda de los médicos', () => {
+    const fila = (over: Partial<import('./consultas').FilaDeOcupacion>) => ({
+        nombre: 'ISABELLA GOMEZ VILLEGAS',
+        codigo: 'MD09',
+        chat: true,
+        mes: '2026-10',
+        personal: 0,
+        asistente: 0,
+        libres: 0,
+        ...over,
+    });
+
+    it('un renglón por médico con todos los meses; el mes sin agenda queda vacío', () => {
+        const o = armarOcupacion([
+            fila({ mes: '2026-10', personal: 177, asistente: 18, libres: 3 }),
+            fila({ mes: '2026-11', personal: 237, asistente: 74, libres: 0 }),
+            fila({ nombre: 'MEDICO DISPONIBLE HSVP 02', codigo: 'MDD2', chat: false, mes: '2026-11', personal: 232, libres: 71 }),
+        ])!;
+        expect(o.meses).toEqual(['2026-10', '2026-11']);
+        const md09 = o.medicos.find((m) => m.codigo === 'MD09')!;
+        expect(md09.meses).toEqual([
+            { mes: '2026-10', personal: 177, asistente: 18, libres: 3 },
+            { mes: '2026-11', personal: 237, asistente: 74, libres: 0 },
+        ]);
+        const mdd2 = o.medicos.find((m) => m.codigo === 'MDD2')!;
+        expect(mdd2.meses[0]).toBeNull();
+        expect(mdd2).toMatchObject({ chat: false, libres: 71 });
+    });
+
+    it('los totales suman a todos los médicos por mes', () => {
+        const o = armarOcupacion([
+            fila({ mes: '2026-10', personal: 177, asistente: 18, libres: 3 }),
+            fila({ codigo: 'AP04', nombre: 'FABIO', chat: false, mes: '2026-10', personal: 128, libres: 90 }),
+            fila({ mes: '2026-11', personal: 237, asistente: 74 }),
+        ])!;
+        expect(o.totales).toEqual([
+            { mes: '2026-10', personal: 305, asistente: 18, libres: 93 },
+            { mes: '2026-11', personal: 237, asistente: 74, libres: 0 },
+        ]);
+    });
+
+    it('primero los que dejaron más cupos sin agendar', () => {
+        const o = armarOcupacion([
+            fila({ codigo: 'MD09', libres: 3 }),
+            fila({ codigo: 'AP04', nombre: 'FABIO', libres: 90 }),
+            fila({ codigo: 'MDD1', nombre: 'MEDICO DISPONIBLE HSVP 01', libres: 84 }),
+        ])!;
+        expect(o.medicos.map((m) => m.codigo)).toEqual(['AP04', 'MDD1', 'MD09']);
+    });
+
+    it('agendas con el mismo nombre van separadas por su código; sin código, por el nombre', () => {
+        const o = armarOcupacion([
+            fila({ codigo: '76', nombre: 'Programa de Hipertensión', personal: 33, libres: 40 }),
+            fila({ codigo: '077', nombre: 'Programa de Hipertensión', personal: 38, libres: 27 }),
+            fila({ codigo: null, nombre: 'Dra. Ruiz', personal: 5 }),
+            fila({ codigo: null, nombre: 'Dra. Ruiz', mes: '2026-11', personal: 6 }),
+        ])!;
+        expect(o.medicos).toHaveLength(3);
+        expect(o.medicos.find((m) => m.nombre === 'Dra. Ruiz')!.meses.map((m) => m?.personal)).toEqual([5, 6]);
+    });
+
+    it('ocupación = cupos con cita entre todos los cupos; sin cupos, 0', () => {
+        expect(ocupacionDelMes({ personal: 33, asistente: 0, libres: 40 })).toBeCloseTo(33 / 73, 5);
+        expect(ocupacionDelMes({ personal: 0, asistente: 0, libres: 0 })).toBe(0);
+    });
+
+    it('sin filas (o un corte de antes sin ellas) no hay sección', () => {
+        expect(armarOcupacion([])).toBeNull();
+        expect(armarOcupacion(undefined)).toBeNull();
+        expect(armarInforme(datosDel24(), corte('2026-10-24', '2026-10-25'), { conHospital: true })!.ocupacion).toBeNull();
+        const i = armarInforme(
+            { ...datosDel24(), ocupacion: [fila({ personal: 10, asistente: 2, libres: 1 })] },
+            corte('2026-10-24', '2026-10-25'),
+            { conHospital: true },
+        )!;
+        expect(i.ocupacion!.totales).toEqual([{ mes: '2026-10', personal: 10, asistente: 2, libres: 1 }]);
     });
 });

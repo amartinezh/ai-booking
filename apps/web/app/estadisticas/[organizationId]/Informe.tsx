@@ -1,6 +1,12 @@
 import type { ReactNode } from 'react';
-import { fechaEnPalabras } from '@agenia/shared';
-import { ESTANDAR_DIAS, type CanalDeEspera, type Informe as DatosDelInforme } from '@/lib/estadisticas/informe';
+import { MESES, fechaEnPalabras } from '@agenia/shared';
+import {
+    ESTANDAR_DIAS,
+    type CanalDeEspera,
+    type Informe as DatosDelInforme,
+    type OcupacionDeMedico,
+    type OcupacionDelMes,
+} from '@/lib/estadisticas/informe';
 import { ESTADISTICAS, diaCorto, esHoraFueraDeOficina, horaCorta } from '@/lib/estadisticas/periodo';
 import Barras, { type ColumnaDeBarras } from './Barras';
 import BotonSalir from './BotonSalir';
@@ -32,6 +38,29 @@ const TRAMOS = [
 const NOMBRE_DEL_CANAL: Record<CanalDeEspera['canal'], string> = {
     chat: 'Por chat (WhatsApp y Telegram)',
     personal: 'Por el personal del hospital (ventanilla, teléfono o panel)',
+};
+
+// 🩺 Ocupación de la agenda: lo del personal en azul claro, lo del chat en el azul de
+// la página y lo que se quedó sin agendar en naranja (lo que se perdió).
+const OCUPACION = [
+    { clave: 'personal', nombre: 'Agendadas por el personal (ventanilla, teléfono o panel)', color: '#a9c8ef', claro: true },
+    { clave: 'asistente', nombre: 'Agendadas por chat', color: COLOR.serie1, claro: false },
+    { clave: 'libres', nombre: 'Sin agendar: el cupo pasó libre', color: COLOR.serie2, claro: false },
+] as const;
+
+/** '2026-11' → «Noviembre de 2026». */
+const nombreDelMes = (mes: string) => {
+    const [y, m] = mes.split('-').map(Number);
+    return `${mayuscula(MESES[m - 1] ?? mes)} de ${y}`;
+};
+
+/** «RU71 · Adrian Camilo Salazar Sanchez»: el nombre del HIS en mayúsculas se lee mejor así. */
+const nombreDelMedico = (m: Pick<OcupacionDeMedico, 'nombre' | 'codigo'>) => {
+    const nombre =
+        m.nombre === m.nombre.toUpperCase()
+            ? m.nombre.toLowerCase().replace(/(^|\s)\p{L}/gu, (l) => l.toUpperCase())
+            : m.nombre;
+    return m.codigo ? `${m.codigo} · ${nombre}` : nombre;
 };
 
 const HORARIO = `antes de las ${horaCorta(ESTADISTICAS.OFICINA_DESDE)}, desde las ${horaCorta(ESTADISTICAS.OFICINA_HASTA)} o en sábado y domingo`;
@@ -98,6 +127,7 @@ export default function Informe({
     const porChat = esp?.canales.find((c) => c.canal === 'chat');
     const porPersonal = esp?.canales.find((c) => c.canal === 'personal');
     const medicinaGeneral = esp?.servicios.some((s) => /medicina general/i.test(s)) ?? false;
+    const oc = d.ocupacion && d.ocupacion.meses.length > 0 ? d.ocupacion : null;
 
     return (
         <main className="min-h-screen bg-[#f4f6f9] text-[#101a2a] text-base leading-normal">
@@ -418,6 +448,52 @@ export default function Informe({
                     </Seccion>
                 )}
 
+                {oc && (
+                    <Seccion titulo="¿Qué tan ocupada estuvo la agenda de los médicos?">
+                        <Tarjeta
+                            titulo="Ocupación de la agenda, mes a mes"
+                            nota={`Cupos de los médicos cuya hora ya pasó, desde el 1 de ${MESES[Number(oc.meses[0].slice(5)) - 1]}: con cita del personal, con cita por chat, o libres hasta su hora (nadie los agendó). No cuenta los cupos que ${
+                                cc.enHospital !== null ? 'el hospital cerró sin cita' : 'se cerraron sin cita'
+                            }: esa hora ya no estaba libre. El mes en curso va hasta el ${dia(d.ultimoDia)}.`}
+                        >
+                            <Leyenda items={OCUPACION.map((t) => [t.color, t.nombre] as [string, string])} />
+                            <div className="grid gap-5">
+                                {oc.totales.map((m) => (
+                                    <FilaDeOcupacion key={m.mes} etiqueta={nombreDelMes(m.mes)} mes={m} destacada />
+                                ))}
+                            </div>
+                        </Tarjeta>
+                        <Tarjeta
+                            titulo="Por médico"
+                            nota={`Toda la agenda de cada médico, también las citas de otros servicios en el mismo turno. Primero los que dejaron más cupos sin agendar. «Se agenda por chat»: el asistente puede ofrecer sus cupos${
+                                esp && esp.servicios.length > 0 ? ` de ${esp.servicios.join(', ').toLowerCase()}` : ''
+                            }; los de otros servicios, no.`}
+                        >
+                            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-x-8 gap-y-7">
+                                {oc.medicos.map((med) => (
+                                    <div key={med.codigo ?? med.nombre} className="grid min-w-0 content-start gap-2.5">
+                                        <p className="m-0 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                                            <span className="font-semibold">{nombreDelMedico(med)}</span>
+                                            <span className="text-[12px] text-[#586378]">
+                                                {med.chat ? 'Se agenda por chat' : 'No se agenda por chat'}
+                                            </span>
+                                        </p>
+                                        {med.meses.map((m, i) =>
+                                            m ? (
+                                                <FilaDeOcupacion
+                                                    key={oc.meses[i]}
+                                                    etiqueta={mayuscula(MESES[Number(oc.meses[i].slice(5)) - 1] ?? oc.meses[i])}
+                                                    mes={m}
+                                                />
+                                            ) : null,
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </Tarjeta>
+                    </Seccion>
+                )}
+
                 {d.mensajes.total > 0 && (
                     <Seccion titulo="El chat atiende cuando el hospital está cerrado">
                         <Tarjeta
@@ -600,6 +676,63 @@ function FilaDeEspera({ canal: c }: { canal: CanalDeEspera }) {
                     ) : null,
                 )}
             </div>
+        </div>
+    );
+}
+
+/** Un mes: la ocupación, la barra (personal · chat · sin agendar) y las cifras. */
+function FilaDeOcupacion({
+    etiqueta,
+    mes: m,
+    destacada = false,
+}: {
+    etiqueta: string;
+    mes: OcupacionDelMes;
+    destacada?: boolean;
+}) {
+    const cupos = m.personal + m.asistente + m.libres;
+    const valores = [m.personal, m.asistente, m.libres];
+    const ocupacion = pct(m.personal + m.asistente, cupos);
+    const resumen = `${etiqueta}: ${ocupacion} ocupada. ${OCUPACION.map((t, i) => `${t.nombre}: ${ent(valores[i])}`).join('; ')}.`;
+    return (
+        <div className="grid gap-1.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                <span className={destacada ? 'font-semibold' : 'text-[14px]'}>{etiqueta}</span>
+                <span className="text-[13px] text-[#586378]">
+                    <b
+                        className={`font-normal tabular-nums text-[#101a2a] ${
+                            destacada ? 'font-serif text-[1.7rem]' : 'font-semibold text-[15px]'
+                        }`}
+                    >
+                        {ocupacion}
+                    </b>{' '}
+                    ocupada · {ent(cupos)} cupos
+                </span>
+            </div>
+            <div
+                role="img"
+                aria-label={resumen}
+                className={`flex overflow-hidden rounded bg-[#e9edf3] ${destacada ? 'h-8' : 'h-5'}`}
+            >
+                {valores.map((n, i) =>
+                    n > 0 ? (
+                        <div
+                            key={OCUPACION[i].clave}
+                            title={`${OCUPACION[i].nombre}: ${ent(n)} (${pct(n, cupos)})`}
+                            className={`flex items-center justify-center overflow-hidden whitespace-nowrap text-[12px] font-semibold tabular-nums ${
+                                OCUPACION[i].claro ? 'text-[#101a2a]' : 'text-white'
+                            }`}
+                            style={{ width: `${(100 * n) / cupos}%`, background: OCUPACION[i].color }}
+                        >
+                            {destacada && n / cupos >= 0.08 ? ent(n) : ''}
+                        </div>
+                    ) : null,
+                )}
+            </div>
+            <p className="m-0 text-[12px] text-[#586378] tabular-nums">
+                {ent(m.personal)} por el personal · {ent(m.asistente)} por chat ·{' '}
+                <span className="font-semibold text-[#101a2a]">{ent(m.libres)} sin agendar</span>
+            </p>
         </div>
     );
 }

@@ -57,6 +57,32 @@ export interface DatosDeEstadisticas {
      * corte guardado de antes no la trae.
      */
     autorizaciones?: { aceptaron: number; noAceptaron: number; retiraron: number };
+    /**
+     * 🩺 Ocupación de la agenda de los médicos (2026-11-25): por médico y mes, los
+     * cupos cuya hora ya pasó, desde el primer día del mes en que empezó AgenIA.
+     * Médicos con cupos de algún servicio activo; se cuenta toda su agenda (también
+     * las citas de otros servicios en el mismo turno). Opcional: un corte de antes
+     * no la trae.
+     */
+    ocupacion?: FilaDeOcupacion[];
+}
+
+/** Un médico en un mes: con cita (del personal o del asistente) y sin agendar. */
+export interface FilaDeOcupacion {
+    /** Nombre del perfil (el que ve el paciente). */
+    nombre: string;
+    /** Su código en el sistema del hospital, si la clínica está conectada. */
+    codigo: string | null;
+    /** WhatsApp ON: el asistente puede agendar con él. */
+    chat: boolean;
+    /** 'YYYY-MM' en la hora de la clínica. */
+    mes: string;
+    /** Con cita del personal: el hospital (ventanilla o teléfono) o el panel. */
+    personal: number;
+    /** Con cita del asistente (WhatsApp o Telegram). */
+    asistente: number;
+    /** Siguieron libres hasta su hora: nadie los agendó. */
+    libres: number;
 }
 
 type Db = Pick<PrismaClient, '$queryRaw'>;
@@ -250,6 +276,46 @@ export async function consultarEstadisticas(
         espera = { oportunidad, servicios: servicios.map((s) => s.nombre), conversacion, listaEspera };
     }
 
+    // 🩺 Ocupación de la agenda de los médicos (2026-11-25): cupos cuya hora ya pasó,
+    // desde el primer día del mes en que empezó AgenIA. Un cupo cerrado sin cita no
+    // cuenta: el hospital lo quitó o lo ocupó con algo que AgenIA no ve, así que esa
+    // hora ya no estaba libre. Un cupo con varias citas cuenta la última vigente.
+    let ocupacion: FilaDeOcupacion[] = [];
+    if (inicio) {
+        const [y, m] = inicio.split('-').map(Number);
+        const desdeElMes = comoColumna(horaLocalAUtc(y, m, 1, 0, timeZone));
+        ocupacion = await db.$queryRaw<FilaDeOcupacion[]>(Prisma.sql`
+            WITH medicos AS (
+                SELECT DISTINCT s."doctorId" AS id
+                  FROM "ScheduleSlot" s JOIN "MedicalService" sv ON sv.id = s."serviceId"
+                 WHERE s."organizationId" = ${org} AND sv."isActive"
+                   AND s."startTime" >= ${desdeElMes} AND s."startTime" < ${hasta}),
+            cupos AS (
+                SELECT s.id, s."doctorId", s."isAvailable", to_char(${local('s."startTime"')}, 'YYYY-MM') AS mes
+                  FROM "ScheduleSlot" s JOIN medicos m ON m.id = s."doctorId"
+                 WHERE s."organizationId" = ${org} AND s."startTime" >= ${desdeElMes} AND s."startTime" < ${hasta}),
+            vivas AS (
+                SELECT DISTINCT ON (a."scheduleSlotId") a."scheduleSlotId" AS cupo, a.origin
+                  FROM "Appointment" a JOIN cupos c ON c.id = a."scheduleSlotId"
+                 WHERE a."organizationId" = ${org} AND a.status <> 'CANCELLED'
+                 ORDER BY a."scheduleSlotId", a."createdAt" DESC)
+            SELECT d."fullName" AS nombre,
+                   (SELECT e."externalKey" FROM "MirrorEntityMap" e
+                     WHERE e."organizationId" = ${org} AND e."entityType" = 'DOCTOR' AND e."agenIAId" = d.id
+                     LIMIT 1) AS codigo,
+                   d."whatsappBookingEnabled" AS chat,
+                   c.mes,
+                   count(*) FILTER (WHERE v.origin IS NOT NULL AND v.origin NOT IN ('WHATSAPP', 'TELEGRAM'))::int AS personal,
+                   count(*) FILTER (WHERE v.origin IN ('WHATSAPP', 'TELEGRAM'))::int AS asistente,
+                   count(*) FILTER (WHERE v.cupo IS NULL AND c."isAvailable")::int AS libres
+              FROM cupos c
+              JOIN "DoctorProfile" d ON d.id = c."doctorId"
+              LEFT JOIN vivas v ON v.cupo = c.id
+             GROUP BY d.id, d."fullName", d."whatsappBookingEnabled", c.mes
+            HAVING count(v.cupo) + count(*) FILTER (WHERE v.cupo IS NULL AND c."isAvailable") > 0
+             ORDER BY c.mes, d."fullName"`);
+    }
+
     // 📄 Documentos de la consulta (plan del resumen §8.10): sin el día del primer
     // aviso a un paciente, la sección no existe.
     const [primerAviso] = await db.$queryRaw<[{ dia: string | null }]>(Prisma.sql`
@@ -284,6 +350,7 @@ export async function consultarEstadisticas(
     return {
         documentos,
         autorizaciones,
+        ocupacion,
         recordatoriosPorDia,
         confirmacionesPorDia,
         confirmaciones,

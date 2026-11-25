@@ -1,5 +1,5 @@
 import { sumarDiasAFecha } from '@agenia/shared';
-import type { DatosDeEstadisticas } from './consultas';
+import type { DatosDeEstadisticas, FilaDeOcupacion } from './consultas';
 import type { EmbudoDelEnvio } from '@/lib/resumen/trazabilidad';
 import { ESTADISTICAS, diasEntre, type CorteDeEstadisticas } from './periodo';
 
@@ -59,6 +59,85 @@ export interface Informe {
     documentos: DocumentosDeLaConsulta | null;
     /** 🔒 Autorización de datos por chat; null (o ausente) mientras nadie haya respondido. */
     autorizaciones?: AutorizacionesPorChat | null;
+    /** 🩺 Ocupación de la agenda de los médicos; null (o ausente) sin cupos que contar. */
+    ocupacion?: OcupacionDeLaAgenda | null;
+}
+
+/** 🩺 Cupos de un mes: con cita del personal, con cita del asistente y sin agendar. */
+export interface OcupacionDelMes {
+    /** 'YYYY-MM'. */
+    mes: string;
+    personal: number;
+    asistente: number;
+    libres: number;
+}
+
+export interface OcupacionDeMedico {
+    nombre: string;
+    codigo: string | null;
+    /** WhatsApp ON: el asistente puede agendar con él. */
+    chat: boolean;
+    /** Uno por mes de `OcupacionDeLaAgenda.meses`; null el mes que no tuvo agenda. */
+    meses: (OcupacionDelMes | null)[];
+    /** Cupos sin agendar en todo el período (el orden de la lista). */
+    libres: number;
+}
+
+export interface OcupacionDeLaAgenda {
+    /** 'YYYY-MM', del más antiguo al más reciente. */
+    meses: string[];
+    /** Todos los médicos juntos, uno por mes. */
+    totales: OcupacionDelMes[];
+    /** Primero los que dejaron más cupos sin agendar. */
+    medicos: OcupacionDeMedico[];
+}
+
+/** Proporción (0 a 1) de los cupos del mes que tuvieron cita; 0 sin cupos. */
+export function ocupacionDelMes(m: Pick<OcupacionDelMes, 'personal' | 'asistente' | 'libres'>): number {
+    const conCita = m.personal + m.asistente;
+    const cupos = conCita + m.libres;
+    return cupos > 0 ? conCita / cupos : 0;
+}
+
+/**
+ * 🩺 Ocupación de la agenda de los médicos (2026-11-25): de las filas por médico y
+ * mes a lo que muestra la página. El mismo médico (por su código del hospital o,
+ * sin él, por su nombre) va en un solo renglón con todos los meses.
+ */
+export function armarOcupacion(filas: FilaDeOcupacion[] | undefined): OcupacionDeLaAgenda | null {
+    if (!filas?.length) return null;
+    const meses = [...new Set(filas.map((f) => f.mes))].sort();
+    const porMedico = new Map<string, OcupacionDeMedico>();
+    for (const f of filas) {
+        const clave = f.codigo ?? `nombre:${f.nombre}`;
+        let medico = porMedico.get(clave);
+        if (!medico) {
+            medico = { nombre: f.nombre, codigo: f.codigo, chat: f.chat, meses: meses.map(() => null), libres: 0 };
+            porMedico.set(clave, medico);
+        }
+        const i = meses.indexOf(f.mes);
+        const antes = medico.meses[i];
+        medico.meses[i] = {
+            mes: f.mes,
+            personal: (antes?.personal ?? 0) + f.personal,
+            asistente: (antes?.asistente ?? 0) + f.asistente,
+            libres: (antes?.libres ?? 0) + f.libres,
+        };
+        medico.libres += f.libres;
+    }
+    const totales = meses.map((mes) => {
+        const delMes = filas.filter((f) => f.mes === mes);
+        return {
+            mes,
+            personal: delMes.reduce((a, f) => a + f.personal, 0),
+            asistente: delMes.reduce((a, f) => a + f.asistente, 0),
+            libres: delMes.reduce((a, f) => a + f.libres, 0),
+        };
+    });
+    const medicos = [...porMedico.values()].sort(
+        (a, b) => b.libres - a.libres || a.nombre.localeCompare(b.nombre, 'es') || (a.codigo ?? '').localeCompare(b.codigo ?? ''),
+    );
+    return { meses, totales, medicos };
 }
 
 /** 🔒 Personas que autorizaron (o no) el tratamiento de sus datos por chat. */
@@ -215,6 +294,7 @@ export function armarInforme(
         documentos: armarDocumentos(d.documentos, corte, desdeGrafica, ventana),
         autorizaciones:
             d.autorizaciones && d.autorizaciones.aceptaron + d.autorizaciones.noAceptaron > 0 ? d.autorizaciones : null,
+        ocupacion: armarOcupacion(d.ocupacion),
     };
 }
 
