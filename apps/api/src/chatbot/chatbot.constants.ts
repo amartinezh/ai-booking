@@ -1872,6 +1872,24 @@ const FORMAL = {
     `Revisé la agenda de *${servicio}* con *${eps}* y por este medio ya no quedan cupos para estos días.\n\n` +
     `Si lo desea, le anoto en la *lista de espera* y le aviso por aquí apenas se libere un cupo. ¿Le anoto? Responda *SÍ* o *NO*.`,
 
+  // 🔔 Sin cupos porque los que quedan están apartados para otras personas
+  // (2026-11-25): ofertas a la lista de espera (media hora) o pacientes del chat
+  // que terminan de agendar (diez minutos). Antes se decía «por este medio ya no
+  // quedan», como si fuera la reserva para la atención presencial.
+  sinCuposApartados: (servicio: string, eps: string) =>
+    `Revisé la agenda de *${servicio}* con *${eps}*: en este momento los cupos que quedan están apartados para otras personas mientras confirman (quienes estaban antes en la lista de espera o están terminando de agendar). Si alguno no se toma, vuelve a quedar libre.\n\n` +
+    `Si lo desea, le anoto en la *lista de espera* y le aviso por aquí apenas haya un cupo para usted. ¿Le anoto? Responda *SÍ* o *NO*.`,
+
+  // 🪪 El hospital no tiene al paciente y le faltan datos para crearlo
+  // (2026-11-25): pasa a quien se anotó en la lista de espera solo con su
+  // documento y su nombre. El cupo queda apartado mientras contesta.
+  datosParaElHospitalNacimiento: (fecha: string) =>
+    `Para que el hospital registre su cita del *${fecha}* me faltan unos datos del paciente: es la primera vez que lo va a tener en su sistema. Mientras tanto le guardo el horario. 🙏\n\n` +
+    `¿Cuál es la *fecha de nacimiento* del paciente?\n\nPuede escribirla como *15/03/1980* o "15 de marzo de 1980".`,
+  datosParaElHospitalSexo: (fecha: string) =>
+    `Para que el hospital registre su cita del *${fecha}* me falta un dato del paciente: es la primera vez que lo va a tener en su sistema. Mientras tanto le guardo el horario. 🙏\n\n` +
+    `¿Cuál es el *sexo* del paciente?\n\n*A)* Masculino\n*B)* Femenino`,
+
   respuestaInvalidaSiNo: () =>
     pick([
       `No logré interpretar su respuesta. ¿Me ayuda respondiendo *SÍ* para confirmar o *NO* para cancelar?`,
@@ -3307,6 +3325,17 @@ const INFORMAL = {
   sinCuposPorEsteMedio: (servicio: string, eps: string) =>
     `Revisé la agenda de *${servicio}* con *${eps}* y por aquí ya no quedan cupos para estos días. 🙏\n\n` +
     `Si quieres, te anoto en la *lista de espera* y te aviso por acá apenas se libere un cupo. ¿Te anoto? Responde *SÍ* o *NO*.`,
+
+  sinCuposApartados: (servicio: string, eps: string) =>
+    `Revisé la agenda de *${servicio}* con *${eps}*: en este momento los cupos que quedan están apartados para otras personas mientras confirman (quienes estaban antes en la lista de espera o están terminando de agendar). Si alguno no se toma, vuelve a quedar libre. 🙏\n\n` +
+    `Si quieres, te anoto en la *lista de espera* y te aviso por acá apenas haya un cupo para ti. ¿Te anoto? Responde *SÍ* o *NO*.`,
+
+  datosParaElHospitalNacimiento: (fecha: string) =>
+    `Para que el hospital registre tu cita del *${fecha}* me faltan unos datos del paciente: es la primera vez que lo va a tener en su sistema. Mientras tanto te guardo el horario. 🙏\n\n` +
+    `¿Cuál es la *fecha de nacimiento* del paciente? 📅\n\nPuedes escribirla como *15/03/1980* o "15 de marzo de 1980".`,
+  datosParaElHospitalSexo: (fecha: string) =>
+    `Para que el hospital registre tu cita del *${fecha}* me falta un dato del paciente: es la primera vez que lo va a tener en su sistema. Mientras tanto te guardo el horario. 🙏\n\n` +
+    `¿Cuál es el *sexo* del paciente?\n\n*A)* Masculino\n*B)* Femenino`,
 
   respuestaInvalidaSiNo: () =>
     pick([

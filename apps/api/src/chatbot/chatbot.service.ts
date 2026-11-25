@@ -2928,6 +2928,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
       `temp_waitlist_pending:${organizationId}:${senderId}`,
       `temp_waitlist_regimen:${organizationId}:${senderId}`,
+      this.datosParaElHospitalKey(organizationId, senderId),
       `temp_eps_oferta_particular:${organizationId}:${senderId}`,
       this.padronRechazoKey(organizationId, senderId),
       this.particularPorConfirmarKey(organizationId, senderId),
@@ -6221,22 +6222,42 @@ export class ChatbotService implements OnModuleInit {
    * asistente ya tomó su parte de la agenda) y no porque la agenda esté llena?
    * Sin reserva, o si la consulta falla, false: se responde como siempre.
    */
-  private async sinCuposPorLaReserva(
+  /**
+   * 🏥 Por qué no hay cupos que ofrecerle, si no es el plazo: la reserva para la
+   * atención presencial, cupos apartados para otras personas, o nada (agenda
+   * llena). Con lo mismo que usa el menú (`cuposParaElMenu`): lo apartado por
+   * otros y, si ya se le dijo que el sábado no, sin sábados (2026-11-25). Ante un
+   * error, null: se le dice lo de siempre.
+   */
+  private async motivoSinCupos(
+    organizationId: string,
+    senderId: string,
     serviceName: string,
     epsId: string | null,
-    organizationId: string,
-  ): Promise<boolean> {
+    excluir?: readonly string[],
+  ): Promise<'RESERVA' | 'APARTADOS' | null> {
     try {
-      return await this.appointmentsService.sinCuposPorLaReserva(
+      const sinSabado =
+        (await this.redis.get(this.sinSabadoKey(organizationId, senderId))) ===
+        '1';
+      return await this.appointmentsService.motivoSinCupos(
         serviceName,
         epsId,
         organizationId,
+        {
+          apartados: await this.cuposApartadosPorOtros(
+            organizationId,
+            senderId,
+          ),
+          ...(excluir?.length ? { excluir } : {}),
+          ...(sinSabado ? { sabados: 'EXCLUIR' as const } : {}),
+        },
       );
     } catch (error: unknown) {
       this.logger.warn(
-        `No se pudo revisar la reserva presencial (org ${organizationId}): ${getErrorMessage(error)}`,
+        `No se pudo revisar por qué no hay cupos (org ${organizationId}): ${getErrorMessage(error)}`,
       );
-      return false;
+      return null;
     }
   }
 
@@ -9624,14 +9645,17 @@ export class ChatbotService implements OnModuleInit {
             epsIdForSlots,
             organizationId,
           );
-          // 🏥 ¿O es la reserva para la atención presencial? Entonces la agenda
-          // no está «completa»: por este medio ya no quedan (2026-11-13).
-          const porReserva = masAlla
-            ? false
-            : await this.sinCuposPorLaReserva(
+          // 🏥 ¿O es la reserva para la atención presencial (por este medio ya no
+          // quedan, 2026-11-13), o los que quedan están apartados para otras
+          // personas mientras confirman (2026-11-25)? Entonces la agenda no está
+          // «completa».
+          const motivo = masAlla
+            ? null
+            : await this.motivoSinCupos(
+                organizationId,
+                senderId,
                 resolvedServiceName as string,
                 epsIdForSlots,
-                organizationId,
               );
           const reply = masAlla
             ? MSGS.sinCuposEnElPlazo(
@@ -9640,15 +9664,20 @@ export class ChatbotService implements OnModuleInit {
                 masAlla.hasta,
                 masAlla.desde,
               )
-            : porReserva
+            : motivo === 'RESERVA'
               ? MSGS.sinCuposPorEsteMedio(
                   resolvedServiceName as string,
                   resolvedEpsName,
                 )
-              : MSGS.preguntaWaitlist(
-                  resolvedServiceName as string,
-                  resolvedEpsName,
-                );
+              : motivo === 'APARTADOS'
+                ? MSGS.sinCuposApartados(
+                    resolvedServiceName as string,
+                    resolvedEpsName,
+                  )
+                : MSGS.preguntaWaitlist(
+                    resolvedServiceName as string,
+                    resolvedEpsName,
+                  );
           await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(
             organizationId,
@@ -9664,7 +9693,8 @@ export class ChatbotService implements OnModuleInit {
               service: resolvedServiceName,
               eps: resolvedEpsName,
               ...(masAlla ? { porPlazo: true, desde: masAlla.desdeIso } : {}),
-              ...(porReserva ? { porReserva: true } : {}),
+              ...(motivo === 'RESERVA' ? { porReserva: true } : {}),
+              ...(motivo === 'APARTADOS' ? { porApartados: true } : {}),
             },
           });
           return;
@@ -10360,6 +10390,9 @@ export class ChatbotService implements OnModuleInit {
     const key = this.cupoApartadoKey(organizationId, slotId);
     const duenio = await this.redis.get(key);
     if (duenio && duenio !== senderId) return false;
+    // Eligió un horario: si un cupo de la lista esperaba los datos que pidió el
+    // hospital, esta conversación ya es otra (2026-11-25).
+    await this.redis.del(this.datosParaElHospitalKey(organizationId, senderId));
     // Eligió otro: se suelta el que tenía.
     const anterior = await this.redis.get(
       `temp_selected_slot_id:${organizationId}:${senderId}`,
@@ -10479,9 +10512,12 @@ export class ChatbotService implements OnModuleInit {
    * llegó al hospital y si el personal ya le escribió (2026-10-29). Ante la duda,
    * ninguna: se le dice lo de siempre.
    */
-  private async rechazoDelHisDe(
-    appointmentId: string,
-  ): Promise<{ noLlego: boolean; yaSeLeEscribio: boolean }> {
+  private async rechazoDelHisDe(appointmentId: string): Promise<{
+    noLlego: boolean;
+    yaSeLeEscribio: boolean;
+    /** 🪪 El hospital no tiene al paciente y faltan datos para crearlo (2026-11-25). */
+    faltanDatos: boolean;
+  }> {
     try {
       const cita = await this.prisma.appointment.findUnique({
         where: { id: appointmentId },
@@ -10493,9 +10529,10 @@ export class ChatbotService implements OnModuleInit {
       return {
         noLlego: r?.noLlego === true,
         yaSeLeEscribio: r?.yaSeLeEscribio === true,
+        faltanDatos: r?.faltanDatos === true,
       };
     } catch {
-      return { noLlego: false, yaSeLeEscribio: false };
+      return { noLlego: false, yaSeLeEscribio: false, faltanDatos: false };
     }
   }
 
@@ -11163,13 +11200,16 @@ export class ChatbotService implements OnModuleInit {
           p.epsIdForSlots,
           organizationId,
         );
-    const porReserva =
+    // Sin los horarios que ya vio: esos no los quiso (2026-11-25).
+    const motivo =
       masAlla || p.pedida
-        ? false
-        : await this.sinCuposPorLaReserva(
+        ? null
+        : await this.motivoSinCupos(
+            organizationId,
+            senderId,
             p.serviceName,
             p.epsIdForSlots,
-            organizationId,
+            await this.cuposVistos(organizationId, senderId),
           );
     const reply = p.pedida
       ? MSGS.listaDeEsperaPedida()
@@ -11188,7 +11228,8 @@ export class ChatbotService implements OnModuleInit {
         desde: p.pedida ? 'LISTA_PEDIDA_EN_HORARIOS' : 'OTRO_HORARIO_SIN_CUPOS',
         pedido: p.pedido,
         ...(masAlla ? { porPlazo: true, plazoDesde: masAlla.desdeIso } : {}),
-        ...(porReserva ? { porReserva: true } : {}),
+        ...(motivo === 'RESERVA' ? { porReserva: true } : {}),
+        ...(motivo === 'APARTADOS' ? { porApartados: true } : {}),
       },
     });
     return true;
@@ -11632,8 +11673,12 @@ export class ChatbotService implements OnModuleInit {
 
     // Esta pregunta es del alta, no de la lista de espera: un cupo de lista que
     // quedó esperando el régimen en otra conversación no debe reservarse con la
-    // respuesta de esta (ver `handleAwaitingRegime`).
-    await this.redis.del(this.listaRegimenKey(organizationId, senderId));
+    // respuesta de esta (ver `handleAwaitingRegime`). Lo mismo un cupo que
+    // esperaba los datos que pidió el hospital (2026-11-25).
+    await this.redis.del(
+      this.listaRegimenKey(organizationId, senderId),
+      this.datosParaElHospitalKey(organizationId, senderId),
+    );
     await this.smartReply(organizationId, senderId, porDato.reply);
     await this.auditarAlta(
       organizationId,
@@ -12069,6 +12114,9 @@ export class ChatbotService implements OnModuleInit {
    * construyen con el MISMO código de siempre, sin duplicar esa lógica aquí.
    */
   private async continuarAlta(ctx: ChatTurnContext): Promise<void> {
+    // 🪪 Son los datos que pidió el hospital para un cupo de la lista de espera
+    // (2026-11-25): se completa la ficha y se agenda ese cupo.
+    if (await this.retomarCupoConDatosDelPaciente(ctx)) return;
     const { organizationId, senderId, MSGS } = ctx;
     const [epsId, cedula] = await Promise.all([
       this.redis.get(`temp_eps_id:${organizationId}:${senderId}`),
@@ -12772,7 +12820,43 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      const nombrePaciente = nombrePrevio || 'Paciente';
+      // 🪪 El documento llegó antes de buscar al paciente (en el primer mensaje):
+      // sin un nombre de verdad —el de su ficha, o el que ya dio— se le pide, como
+      // cuando da el documento aquí (2026-11-25: dos fichas nacieron como
+      // «Paciente» y el bot les dijo «Perfecto, Paciente»). Su respuesta pasa por
+      // el paso del documento de la lista, que además revisa el padrón.
+      const fichaPrevia = await this.prisma.patientProfile.findFirst({
+        where: { cedula: cedulaPrevia, organizationId },
+        select: { fullName: true },
+      });
+      const nombrePaciente = [fichaPrevia?.fullName, nombrePrevio].find(
+        (n): n is string => !!n && !esNombreDeRelleno(n),
+      );
+      if (!nombrePaciente) {
+        await this.redis.set(
+          `temp_waitlist_pending:${organizationId}:${senderId}`,
+          '1',
+          'EX',
+          SESSION_TTL,
+        );
+        const reply = MSGS.nombreParaLista();
+        await this.smartReply(organizationId, senderId, reply);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_NAME,
+        );
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            step: 'WAITLIST_OPTIN_ASK_NAME',
+            cedula: cedulaPrevia,
+            documentoPrevio: true,
+          },
+        });
+        return;
+      }
       const patientForWl = await this.ensurePatientPersisted({
         cedula: cedulaPrevia,
         nombre: nombrePaciente,
@@ -14797,6 +14881,24 @@ export class ChatbotService implements OnModuleInit {
         fechaTexto: fechaFormateada,
       });
       if (enElHospital === 'RECHAZADA') {
+        // 🪪 El hospital no tiene al paciente y le faltan datos para crearlo
+        // (2026-11-25): se le piden y se le vuelve a agendar ESTE cupo.
+        if (
+          bookingResult.appointmentId &&
+          (await this.pedirDatosParaElHospital({
+            organizationId,
+            senderId,
+            MSGS,
+            appointmentId: bookingResult.appointmentId,
+            slotId,
+            patientId,
+            epsId,
+            fechaTexto: fechaFormateada,
+            userMessage: text,
+          }))
+        ) {
+          return true;
+        }
         // El hospital no la registró: vuelve a la lista en su puesto. Aquí no hay
         // menú del que elegir «otro» (2026-10-30).
         const { otraOferta } = await this.responderCupoDeListaNoDisponible({
@@ -14896,6 +14998,10 @@ export class ChatbotService implements OnModuleInit {
           patientId,
         },
       });
+      // La conversación sigue en la pregunta del régimen (2026-11-25): sin esto,
+      // quien la llamó limpiaba la sesión y la respuesta ya no reservaba el cupo
+      // (20-nov: la persona contestó y el bot no la entendió).
+      return true;
     } else if (
       bookingResult.reason === 'PATIENT_LIMIT_REACHED' &&
       bookingResult.limite
@@ -15017,6 +15123,234 @@ export class ChatbotService implements OnModuleInit {
         );
     await this.smartReply(p.organizationId, p.senderId, reply);
     return { reply, otraOferta: false };
+  }
+
+  /** El cupo que espera los datos que pidió el hospital (2026-11-25). */
+  private datosParaElHospitalKey(
+    organizationId: string,
+    senderId: string,
+  ): string {
+    return `temp_waitlist_datos:${organizationId}:${senderId}`;
+  }
+
+  /**
+   * 🪪 El hospital no tiene al paciente y le faltan su nacimiento o su sexo para
+   * crearlo (2026-11-25).
+   *
+   * Quien se anota en la lista de espera da solo su documento y su nombre. Si el
+   * hospital no lo tiene, la cita del cupo que acepta no puede entrar. Antes se
+   * reintentaba diez veces (unos 14 minutos), se rendía y se le decía que no quedó
+   * registrada: el 24-nov dos personas perdieron así su cupo. Ahora la API la
+   * rechaza al primer intento (`MirrorDispatchService`, `faltanDatos`) y aquí:
+   *
+   *  · el cupo se le aparta (solo en AgenIA, como al elegir un horario) y se vuelve
+   *    a abrir, si nadie más tiene una cita en él;
+   *  · se le pregunta lo que le falta a su ficha, con los mismos pasos del alta;
+   *  · con los datos, `retomarCupoConDatosDelPaciente` le agenda el mismo cupo otra
+   *    vez y la cita sale al hospital con ellos.
+   *
+   * Su entrada de la lista sigue confirmada mientras contesta; si no termina, la
+   * lista la devuelve a esperar con su turno (`WaitlistService`). false —y se le
+   * responde como siempre— si el rechazo no es por esos datos, si a la ficha no le
+   * falta ninguno (con un nombre de relleno la API tampoco le manda al hospital con
+   * qué crearlo) o si el cupo ya es de otro.
+   */
+  private async pedirDatosParaElHospital(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    appointmentId: string;
+    slotId: string;
+    patientId: string;
+    epsId: string | null;
+    fechaTexto: string;
+    userMessage?: string;
+  }): Promise<boolean> {
+    const { organizationId, senderId, slotId } = p;
+    if (!(await this.rechazoDelHisDe(p.appointmentId)).faltanDatos) {
+      return false;
+    }
+    const ficha = await this.prisma.patientProfile.findUnique({
+      where: { id: p.patientId },
+      select: {
+        fullName: true,
+        nombres: true,
+        dateOfBirth: true,
+        gender: true,
+      },
+    });
+    if (!ficha || (esNombreDeRelleno(ficha.fullName) && !ficha.nombres)) {
+      return false;
+    }
+    const dato: 'nacimiento' | 'sexo' | null = !ficha.dateOfBirth
+      ? 'nacimiento'
+      : !ficha.gender
+        ? 'sexo'
+        : null;
+    if (!dato) return false;
+
+    const apartadoKey = this.cupoApartadoKey(organizationId, slotId);
+    const duenio = await this.redis.get(apartadoKey);
+    if (duenio && duenio !== senderId) return false;
+    await this.redis.set(apartadoKey, senderId, 'EX', CUPO_APARTADO_TTL);
+    // La API lo cerró al anular la cita; el hospital no lo tiene ocupado.
+    const reabierto = await this.prisma.scheduleSlot.updateMany({
+      where: {
+        id: slotId,
+        organizationId,
+        appointments: { none: { status: { not: 'CANCELLED' } } },
+      },
+      data: { isAvailable: true },
+    });
+    if (reabierto.count === 0) {
+      await this.soltarCupoApartado(organizationId, senderId, slotId);
+      return false;
+    }
+    // Con el cupo en la sesión, cada respuesta renueva lo apartado y limpiar la
+    // sesión lo suelta (como al elegir un horario).
+    await this.redis.set(
+      `temp_selected_slot_id:${organizationId}:${senderId}`,
+      slotId,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.redis.set(
+      this.datosParaElHospitalKey(organizationId, senderId),
+      JSON.stringify({
+        slotId,
+        patientId: p.patientId,
+        epsId: p.epsId,
+      }),
+      'EX',
+      SESSION_TTL,
+    );
+    // Lo de un alta anterior en esta conversación no es de esta persona.
+    await this.redis.del(
+      this.altaKey(organizationId, senderId, 'nacimiento'),
+      this.altaKey(organizationId, senderId, 'sexo'),
+      `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`,
+      this.nacimientoKey(organizationId, senderId),
+      this.nacimientoFallasKey(organizationId, senderId),
+    );
+    await this.waitlistService
+      .esperarDatosDelPaciente({
+        whatsappId: senderId,
+        organizationId,
+        slotId,
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `No se pudo marcar que la lista espera los datos de ${senderId}: ${getErrorMessage(error)}`,
+        );
+      });
+
+    const reply =
+      dato === 'nacimiento'
+        ? p.MSGS.datosParaElHospitalNacimiento(p.fechaTexto)
+        : p.MSGS.datosParaElHospitalSexo(p.fechaTexto);
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      dato === 'nacimiento'
+        ? ChatState.AWAITING_BIRTHDATE
+        : ChatState.AWAITING_GENDER,
+    );
+    await this.extenderSesionDeAlta(organizationId, senderId);
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: p.userMessage || '[confirmación del hospital]',
+      botReply: reply,
+      metadata: {
+        step: 'DATOS_PARA_EL_HOSPITAL',
+        appointmentId: p.appointmentId,
+        slotId,
+        patientId: p.patientId,
+        falta: dato,
+      },
+    });
+    return true;
+  }
+
+  /**
+   * 🪪 Contestó lo que pidió el hospital (`pedirDatosParaElHospital`): se completa
+   * su ficha —solo lo que falta, sin pisar nada— y, con todo, se le agenda el mismo
+   * cupo de la lista. false si no hay un cupo esperando sus datos: el alta sigue
+   * como siempre.
+   */
+  private async retomarCupoConDatosDelPaciente(
+    ctx: ChatTurnContext,
+  ): Promise<boolean> {
+    const { organizationId, senderId, MSGS, text } = ctx;
+    const key = this.datosParaElHospitalKey(organizationId, senderId);
+    const guardado = await this.redis.get(key);
+    if (!guardado) return false;
+    const { slotId, patientId, epsId } = JSON.parse(guardado) as {
+      slotId: string;
+      patientId: string;
+      epsId: string | null;
+    };
+
+    const nacimientoKey = this.altaKey(organizationId, senderId, 'nacimiento');
+    const sexoKey = this.altaKey(organizationId, senderId, 'sexo');
+    const [nacimiento, sexo] = await Promise.all([
+      this.redis.get(nacimientoKey),
+      this.redis.get(sexoKey),
+    ]);
+    if (nacimiento) {
+      await this.prisma.patientProfile.updateMany({
+        where: { id: patientId, organizationId, dateOfBirth: null },
+        data: { dateOfBirth: new Date(nacimiento) },
+      });
+    }
+    if (sexo) {
+      await this.prisma.patientProfile.updateMany({
+        where: { id: patientId, organizationId, gender: null },
+        data: { gender: sexo },
+      });
+    }
+    await this.redis.del(nacimientoKey, sexoKey);
+
+    const ficha = await this.prisma.patientProfile.findUnique({
+      where: { id: patientId },
+      select: { dateOfBirth: true, gender: true },
+    });
+    if (ficha && !ficha.dateOfBirth) {
+      await this.responderAlta(
+        ctx,
+        MSGS.pedirNacimiento(),
+        'ALTA_PEDIR_NACIMIENTO',
+      );
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_BIRTHDATE,
+      );
+      return true;
+    }
+    if (ficha && !ficha.gender) {
+      await this.responderAlta(ctx, MSGS.pedirSexo(), 'ALTA_PEDIR_SEXO');
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_GENDER,
+      );
+      return true;
+    }
+
+    await this.redis.del(key);
+    const sigue = await this.reservarCupoDeLista(
+      organizationId,
+      senderId,
+      text,
+      MSGS,
+      slotId,
+      patientId,
+      epsId ?? null,
+    );
+    // Si reservó, el cupo ya es de la cita; si no, queda para los demás.
+    await this.soltarCupoApartado(organizationId, senderId, slotId);
+    if (sigue !== true) await this.cleanUpSession(organizationId, senderId);
+    return true;
   }
 
   /**
@@ -15888,6 +16222,29 @@ export class ChatbotService implements OnModuleInit {
       // le dice que no quedó registrada. Y si el personal ya le escribió desde la
       // Bandeja, no se le repite.
       const rechazo = await this.rechazoDelHisDe(p.appointmentId);
+      // 🪪 Al hospital le faltan datos del paciente para crearlo (2026-11-25): se
+      // le piden y se le agenda el mismo cupo, en vez de «no quedó registrada».
+      if (rechazo.faltanDatos && !rechazo.yaSeLeEscribio) {
+        const cita = await this.prisma.appointment.findUnique({
+          where: { id: p.appointmentId },
+          select: { patientId: true, scheduleSlotId: true, epsId: true },
+        });
+        if (
+          cita &&
+          (await this.pedirDatosParaElHospital({
+            organizationId,
+            senderId,
+            MSGS,
+            appointmentId: p.appointmentId,
+            slotId: cita.scheduleSlotId,
+            patientId: cita.patientId,
+            epsId: cita.epsId ?? null,
+            fechaTexto: p.fechaTexto,
+          }))
+        ) {
+          return;
+        }
+      }
       if (!rechazo.yaSeLeEscribio) {
         const contacto = org?.supportPhone
           ? MSGS.contactoClinica(org.supportPhone)

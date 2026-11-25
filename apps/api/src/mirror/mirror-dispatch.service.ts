@@ -25,7 +25,10 @@ import {
   OutboxEventDto,
   OutboxEventContext,
 } from './dto/mirror.types';
-import { esRechazoPorAgendaDelHis } from './rechazo-del-his';
+import {
+  esRechazoPorAgendaDelHis,
+  esRechazoPorFaltarDatosDelPaciente,
+} from './rechazo-del-his';
 import { getErrorMessage } from '../common/error-message.util';
 import { esNombreDeRelleno } from '../common/nombre-de-relleno';
 
@@ -645,6 +648,9 @@ export class MirrorDispatchService {
     // definitiva (hora tomada o cruce). Reintentarla no cambia nada: se anula en
     // AgenIA para que el bot le ofrezca otra hora al paciente.
     const rechazos = new Set<string>();
+    // 🪪 2026-11-25: el hospital no tiene al paciente y faltan su nacimiento o su
+    // sexo para crearlo. Reintentar no los trae: el chat se los pide.
+    const faltanDatos = new Set<string>();
     for (const f of input.failures ?? []) {
       if (f && typeof f.seq === 'string' && SEQ_RE.test(f.seq)) {
         motivos.set(f.seq, typeof f.error === 'string' ? f.error : '');
@@ -652,6 +658,8 @@ export class MirrorDispatchService {
         // el motivo (2026-10-29, ver rechazo-del-his.ts).
         if (f.rechazoDelHis === true || esRechazoPorAgendaDelHis(f.error)) {
           rechazos.add(f.seq);
+        } else if (esRechazoPorFaltarDatosDelPaciente(f.error)) {
+          faltanDatos.add(f.seq);
         }
       }
     }
@@ -663,6 +671,14 @@ export class MirrorDispatchService {
       if (
         rechazos.has(seq) &&
         (await this.markRejectedByHis(organizationId, seq, motivos.get(seq)))
+      ) {
+        continue;
+      }
+      if (
+        faltanDatos.has(seq) &&
+        (await this.markRejectedByHis(organizationId, seq, motivos.get(seq), {
+          faltanDatos: true,
+        }))
       ) {
         continue;
       }
@@ -705,7 +721,17 @@ export class MirrorDispatchService {
      * se ocupó—, y `yaSeLeEscribio` que no le escriba si el personal ya lo hizo
      * desde la Bandeja. Sin ellas, todo queda como siempre.
      */
-    opts: { noLlego?: boolean; yaSeLeEscribio?: boolean } = {},
+    opts: {
+      noLlego?: boolean;
+      yaSeLeEscribio?: boolean;
+      /**
+       * 🪪 2026-11-25: el hospital no tiene al paciente y faltan su nacimiento o
+       * su sexo para crearlo. Solo para el ALTA de una cita del chat (WhatsApp o
+       * Telegram): el bot le pide los datos y la vuelve a enviar con el mismo
+       * cupo. Cualquier otra se reintenta como siempre.
+       */
+      faltanDatos?: boolean;
+    } = {},
   ): Promise<boolean> {
     const evento = await this.prisma.syncOutbox.findFirst({
       where: { seq: BigInt(seq), organizationId },
@@ -718,6 +744,18 @@ export class MirrorDispatchService {
       },
     });
     if (!evento || evento.entityType !== 'APPOINTMENT') return false;
+    if (opts.faltanDatos) {
+      if (evento.op !== 'INSERT') return false;
+      const deChat = await this.prisma.appointment.findFirst({
+        where: {
+          id: evento.entityId,
+          organizationId,
+          origin: { in: ['WHATSAPP', 'TELEGRAM'] },
+        },
+        select: { id: true },
+      });
+      if (!deChat) return false;
+    }
     const operacion = operacionHisDelEvento(evento);
     if (operacion === 'CANCELAR') {
       return this.cerrarCancelacionNoAplicada(
@@ -757,6 +795,7 @@ export class MirrorDispatchService {
                 en: new Date().toISOString(),
                 ...(opts.noLlego ? { noLlego: true } : {}),
                 ...(opts.yaSeLeEscribio ? { yaSeLeEscribio: true } : {}),
+                ...(opts.faltanDatos ? { faltanDatos: true } : {}),
               },
             },
           },
@@ -790,8 +829,12 @@ export class MirrorDispatchService {
           detail: opts.noLlego
             ? `La cita no llegó al hospital (${texto}). Se anuló en AgenIA y el ` +
               `cupo quedó cerrado; el bot le avisa al paciente que no quedó registrada.`
-            : `El HIS rechazó la cita (${texto}). Se anuló en AgenIA y el cupo ` +
-              `quedó cerrado; el bot le ofrece otra hora al paciente.`,
+            : opts.faltanDatos
+              ? `El hospital no tiene al paciente y faltan datos para crearlo (${texto}). ` +
+                `Se anuló en AgenIA; el bot le pide el nacimiento y el sexo y, con ` +
+                `ellos, le vuelve a agendar el mismo cupo.`
+              : `El HIS rechazó la cita (${texto}). Se anuló en AgenIA y el cupo ` +
+                `quedó cerrado; el bot le ofrece otra hora al paciente.`,
         },
       });
     });

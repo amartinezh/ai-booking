@@ -2058,19 +2058,59 @@ describe('AppointmentsService — reserva para la atención presencial (tope del
       expect(where(findMany)).not.toHaveProperty('NOT');
     });
 
-    it('sinCuposPorLaReserva: sin reserva es false sin mirar la agenda', async () => {
-      const { svc, findMany } = await conReserva(null);
-      expect(await svc.sinCuposPorLaReserva('Medicina', null, 'org1')).toBe(
-        false,
-      );
-      expect(findMany).not.toHaveBeenCalled();
-    });
+    // 🏥 2026-11-25: por qué no hay cupos. Antes lo apartado contaba como libre y
+    // el chat decía «por este medio ya no quedan» sin reserva configurada.
+    describe('motivoSinCupos', () => {
+      it('sin reserva y sin nada apartado: null sin mirar la agenda', async () => {
+        const { svc, findMany } = await conReserva(null);
+        expect(await svc.motivoSinCupos('Medicina', null, 'org1')).toBeNull();
+        expect(findMany).not.toHaveBeenCalled();
+      });
 
-    it('sinCuposPorLaReserva: con reserva y cupos que solo ella esconde, true', async () => {
-      const { svc } = await conReserva(80);
-      expect(await svc.sinCuposPorLaReserva('Medicina', null, 'org1')).toBe(
-        true,
-      );
+      it('con reserva y un cupo libre que nadie tiene apartado: RESERVA', async () => {
+        const { svc } = await conReserva(80);
+        expect(await svc.motivoSinCupos('Medicina', null, 'org1')).toBe(
+          'RESERVA',
+        );
+      });
+
+      it('sin reserva, el cupo libre está apartado para otra persona: APARTADOS', async () => {
+        const { svc } = await conReserva(null);
+        expect(
+          await svc.motivoSinCupos('Medicina', null, 'org1', {
+            apartados: ['s1'],
+          }),
+        ).toBe('APARTADOS');
+      });
+
+      it('con reserva, si lo único libre está apartado: APARTADOS (no es la reserva)', async () => {
+        const { svc } = await conReserva(80);
+        expect(
+          await svc.motivoSinCupos('Medicina', null, 'org1', {
+            apartados: ['s1'],
+          }),
+        ).toBe('APARTADOS');
+      });
+
+      it('sin reserva, con apartados que no son de esta búsqueda: null (agenda llena)', async () => {
+        const { svc } = await conReserva(null);
+        expect(
+          await svc.motivoSinCupos('Medicina', null, 'org1', {
+            apartados: ['s9'],
+          }),
+        ).toBeNull();
+      });
+
+      it('busca sin la reserva, sin quitar lo apartado y sin lo que ya vio', async () => {
+        const { svc, findMany, queryRaw } = await conReserva(80);
+        await svc.motivoSinCupos('Medicina', null, 'org1', {
+          apartados: ['s1'],
+          excluir: ['s7'],
+        });
+        expect(queryRaw).not.toHaveBeenCalled();
+        expect(where(findMany)).not.toHaveProperty('NOT');
+        expect(where(findMany).id).toEqual({ notIn: ['s7'] });
+      });
     });
   });
 

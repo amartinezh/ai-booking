@@ -113,7 +113,7 @@ export class AppointmentsService {
     // `hora`: pidió una hora («para las 3:30», 2026-10-28): se ofrecen los
     // cupos más cercanos a ella en vez de mitad mañana y mitad tarde.
     // `ignorarReserva`: sin la reserva para la atención presencial. Solo para
-    // saber si el «no hay cupos» es por la reserva (`sinCuposPorLaReserva`);
+    // saber si el «no hay cupos» es por la reserva (`motivoSinCupos`);
     // nunca para ofrecerlos.
     // `apartados`: cupos que otros pacientes del chat tienen apartados ahora;
     // con la reserva cuentan como del chat (2026-11-13).
@@ -349,28 +349,57 @@ export class AppointmentsService {
   }
 
   /**
-   * 🏥 No hay cupos para ofrecer, ¿y es por la reserva para la atención
-   * presencial? Sí cuando la clínica tiene reserva y, sin ella, el asistente
-   * tendría algún cupo dentro del plazo. Entonces no puede decir «la agenda está
-   * completa»: dice que por este medio ya no quedan. Sin reserva, false sin
-   * consultar la agenda.
+   * 🏥 No hay cupos para ofrecer dentro del plazo: ¿por qué, si la agenda no está
+   * llena? (2026-11-25)
+   *
+   *  · 'RESERVA': la reserva para la atención presencial deja fuera cupos libres
+   *    que nadie tiene apartados. El chat dice que por este medio ya no quedan.
+   *  · 'APARTADOS': los cupos libres que quedan están apartados para otras
+   *    personas mientras confirman —ofertas de la lista de espera (media hora) o
+   *    pacientes del chat que terminan de agendar (diez minutos)—. Si no los toman,
+   *    vuelven a quedar libres.
+   *  · null: la agenda está llena (o la clínica no tiene reserva y nadie aparta).
+   *
+   * `apartados` son los cupos que otros tienen apartados ahora, y `excluir` y
+   * `sabados` los mismos que usó la búsqueda que no encontró nada. Antes
+   * (`sinCuposPorLaReserva`) lo apartado contaba como libre: el 24 y el 25-nov, 76
+   * respuestas dijeron «por este medio ya no quedan cupos» sin reserva configurada
+   * —eran los cupos recién abiertos que se ofrecían a la lista de espera—. Solo
+   * lectura.
    */
-  async sinCuposPorLaReserva(
+  async motivoSinCupos(
     serviceName: string,
     epsId: string | null,
     organizationId: string,
-  ): Promise<boolean> {
-    if (!(await parteDelChatDeLaClinica(this.prisma, organizationId))) {
-      return false;
-    }
+    opts: {
+      apartados?: readonly string[];
+      excluir?: readonly string[];
+      sabados?: 'INCLUIR' | 'EXCLUIR';
+    } = {},
+  ): Promise<'RESERVA' | 'APARTADOS' | null> {
+    const apartados = new Set(opts.apartados ?? []);
+    const conReserva = !!(await parteDelChatDeLaClinica(
+      this.prisma,
+      organizationId,
+    ));
+    if (!conReserva && apartados.size === 0) return null;
     const cupos = await this.getAvailableSlots(
       serviceName,
       epsId,
       organizationId,
       null,
-      { todos: true, ignorarReserva: true },
+      {
+        todos: true,
+        ignorarReserva: true,
+        ...(opts.excluir?.length ? { excluir: opts.excluir } : {}),
+        ...(opts.sabados ? { sabados: opts.sabados } : {}),
+      },
     );
-    return cupos.length > 0;
+    if (conReserva && cupos.some((c) => !apartados.has(c.slotId))) {
+      return 'RESERVA';
+    }
+    if (cupos.some((c) => apartados.has(c.slotId))) return 'APARTADOS';
+    return null;
   }
 
   /**

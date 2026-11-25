@@ -1944,6 +1944,8 @@ describe('MirrorDispatchService — rechazo definitivo del HIS', () => {
         findFirst: jest.fn(async () => evento()),
       },
       syncAudit: { create: jest.fn(async () => ({})) },
+      // La cita es del chat (WhatsApp o Telegram), salvo que la prueba diga otra cosa.
+      appointment: { findFirst: jest.fn(async () => ({ id: 'apt-1' })) },
       $transaction: jest.fn(async (cb: (t: any) => unknown) => cb(tx)),
     };
     service = new MirrorDispatchService(prisma);
@@ -2076,6 +2078,75 @@ describe('MirrorDispatchService — rechazo definitivo del HIS', () => {
     expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
       where: { id: 'slot-1' },
       data: { isAvailable: false },
+    });
+  });
+
+  // 🪪 2026-11-25: el hospital no tiene al paciente y faltan su nacimiento o su
+  // sexo. Antes se reintentaba diez veces (unos 14 minutos) y se rendía.
+  describe('el hospital no tiene al paciente y faltan datos para crearlo', () => {
+    const FALTAN =
+      'El paciente 55555 no existe en el HIS y faltan datos para darlo de alta (nacimiento y/o sexo). PACIENTES los exige NOT NULL.';
+    const ackFaltanDatos = () =>
+      service.ack(ORG, {
+        seqs: [],
+        failedSeqs: ['7'],
+        failures: [{ seq: '7', error: FALTAN }],
+      });
+
+    it('una cita del chat: rechazo definitivo al primer intento, con la marca para que el bot pida los datos', async () => {
+      await ackFaltanDatos();
+
+      expect(prisma.appointment.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 'apt-1',
+          organizationId: ORG,
+          origin: { in: ['WHATSAPP', 'TELEGRAM'] },
+        },
+        select: { id: true },
+      });
+      const upd = tx.appointment.update.mock.calls[0][0];
+      expect(upd.data.status).toBe('CANCELLED');
+      expect(upd.data.metaLog.rechazoDelHis).toMatchObject({
+        motivo: FALTAN,
+        faltanDatos: true,
+      });
+      expect(upd.data.metaLog.rechazoDelHis.noLlego).toBeUndefined();
+      // El cupo se cierra como en todo rechazo: el chat lo reabre para el paciente.
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-1' },
+        data: { isAvailable: false },
+      });
+      const cierre = tx.syncOutbox.updateMany.mock.calls[0][0].data;
+      expect(cierre.deliveredAt).toBeInstanceOf(Date);
+      expect(cierre.lastError).toBe(`Rechazada por el HIS: ${FALTAN}`);
+      expect(tx.syncAudit.create.mock.calls[0][0].data.detail).toMatch(
+        /no tiene al paciente.*le pide el nacimiento y el sexo/,
+      );
+    });
+
+    it('una cita del personal o del hospital se sigue reintentando como siempre', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(null);
+
+      await ackFaltanDatos();
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      const llamadas = prisma.syncOutbox.updateMany.mock.calls.map(
+        (c: any[]) => c[0].data,
+      );
+      expect(
+        llamadas.some(
+          (d: any) => d.attempts?.increment === 1 && !d.deliveredAt,
+        ),
+      ).toBe(true);
+    });
+
+    it('en un cambio de fecha (no es un alta) se sigue reintentando', async () => {
+      prisma.syncOutbox.findFirst.mockResolvedValue(evento({ op: 'UPDATE' }));
+
+      await ackFaltanDatos();
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
     });
   });
 

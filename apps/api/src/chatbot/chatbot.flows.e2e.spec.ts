@@ -263,6 +263,16 @@ function createPrisma(db: Db) {
         if (p) Object.assign(p, data);
         return p;
       }),
+      // Solo rellena huecos: `{ campo: null }` en el where exige que esté vacío.
+      updateMany: jest.fn(({ where, data }: any) => {
+        const p = db.patients.find((x) => x.id === where.id);
+        if (!p) return { count: 0 };
+        for (const [k, v] of Object.entries(where)) {
+          if (v === null && p[k] != null) return { count: 0 };
+        }
+        Object.assign(p, data);
+        return { count: 1 };
+      }),
     },
     user: { create: jest.fn(() => ({ id: `user-${Date.now()}` })) },
     doctorProfile: { findMany: jest.fn(() => []) },
@@ -307,6 +317,17 @@ function createPrisma(db: Db) {
     scheduleSlot: {
       findUnique: tx.scheduleSlot.findUnique,
       update: tx.scheduleSlot.update,
+      // `appointments: { none: … }`: solo si ninguna cita viva lo ocupa.
+      updateMany: jest.fn(({ where, data }: any) => {
+        const s = db.slots.find((x) => x.id === where.id);
+        if (!s) return { count: 0 };
+        const ocupado = db.appointments.some(
+          (a) => a.scheduleSlotId === s.id && a.status !== 'CANCELLED',
+        );
+        if (where.appointments?.none && ocupado) return { count: 0 };
+        Object.assign(s, data);
+        return { count: 1 };
+      }),
     },
     $transaction: jest.fn((arg: any) =>
       Array.isArray(arg) ? Promise.all(arg) : arg(tx),
@@ -373,6 +394,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     regimenDelPadron: jest.Mock;
     cupoMasAllaDelPlazo: jest.Mock;
     hayCuposDesde: jest.Mock;
+    motivoSinCupos: jest.Mock;
   };
   // La Bandeja: lo que el bot deja para el personal.
   let avisos: { registrar: jest.Mock };
@@ -381,6 +403,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     notifyWaitlist: jest.Mock;
     confirmFromWaitlist: jest.Mock;
     volverAEsperar: jest.Mock;
+    esperarDatosDelPaciente: jest.Mock;
     ofertaPendiente: jest.Mock;
     respuestaTardia: jest.Mock;
     ofrecerOtroCupo: jest.Mock;
@@ -451,6 +474,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       getAvailableSlots: jest.fn(() => []),
       // Sin otro día que ofrecer: el menú de siempre, sin la opción «Otro día».
       hayCuposDesde: jest.fn(async () => false),
+      // Sin reserva ni cupos apartados: «agenda completa» es agenda completa.
+      motivoSinCupos: jest.fn(async () => null),
       bookAppointment: jest.fn(() => ({
         success: true,
         appointmentId: 'apt-new',
@@ -502,6 +527,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         patientId: null,
       })),
       volverAEsperar: jest.fn(async () => true),
+      esperarDatosDelPaciente: jest.fn(async () => undefined),
       // Sin oferta por responder, salvo que la prueba la ponga.
       ofertaPendiente: jest.fn(async () => null),
       // Sin oferta vencida reciente, salvo que la prueba la ponga.
@@ -4356,6 +4382,431 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   // ──────────────────────────────────────────────────────────────────
   // 5. AISLAMIENTO MULTI-TENANT
   // ──────────────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────
+  // 4D. Al aceptar un cupo de la lista, el hospital no tiene al paciente y le
+  // faltan su nacimiento o su sexo para crearlo (2026-11-25). Antes se
+  // reintentaba 14 minutos, se rendía y se le decía «no quedó registrada»: el
+  // 24-nov dos personas perdieron así su cupo.
+  // ──────────────────────────────────────────────────────────────────
+  describe('4D. El hospital no tiene al paciente que aceptó un cupo de la lista', () => {
+    const FALTAN =
+      'El paciente 55555 no existe en el HIS y faltan datos para darlo de alta (nacimiento y/o sexo). PACIENTES los exige NOT NULL.';
+    let confirmacion: Record<string, jest.Mock>;
+    const confirmacionesFinales = () =>
+      sendSpy.mock.calls.filter(
+        (c: any[]) => c[2]?.kind === 'BOOKING_CONFIRMATION',
+      );
+    const cupo = () => db.slots.find((s) => s.id === 'slot-free')!;
+    const ficha = () => db.patients.find((p) => p.id === 'pat-wl');
+
+    beforeEach(() => {
+      db.slots.push(slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA));
+      db.patients.push({
+        id: 'pat-wl',
+        cedula: '55555',
+        fullName: 'Rosa Díaz',
+        nombres: null,
+        organizationId: ORG_ID,
+        epsId: null,
+        eps: null,
+        dateOfBirth: null,
+        gender: null,
+      });
+      waitlist.confirmFromWaitlist.mockResolvedValue({
+        slotId: 'slot-free',
+        patientId: 'pat-wl',
+        epsId: null,
+      });
+      confirmacion = {
+        requiereConfirmacion: jest.fn(async () => true),
+        puedeAgendar: jest.fn(async () => true),
+        compuertas: jest.fn(async () => ({
+          agendar: true,
+          cancelar: true,
+          modificar: true,
+          otros: true,
+        })),
+        esperar: jest.fn(async () => 'CONFIRMADA'),
+        registrarPendiente: jest.fn(async () => undefined),
+        pendientes: jest.fn(async () => []),
+        estado: jest.fn(async () => 'PENDIENTE'),
+        reclamar: jest.fn(async () => true),
+      };
+      (service as any).confirmacionHis = confirmacion;
+    });
+
+    // Lo que hace la API con el rechazo: anula la cita con la marca y cierra el cupo.
+    const anuladaPorFaltarDatos = (otras: any[] = []) => {
+      db.appointments.push(
+        {
+          id: 'apt-new',
+          patientId: 'pat-wl',
+          scheduleSlotId: 'slot-free',
+          epsId: null,
+          status: 'CANCELLED',
+          metaLog: { rechazoDelHis: { motivo: FALTAN, faltanDatos: true } },
+        },
+        ...otras,
+      );
+      cupo().isAvailable = false;
+    };
+    const elHospitalLaRechaza = (otras: any[] = []) =>
+      confirmacion.esperar.mockImplementationOnce(async () => {
+        anuladaPorFaltarDatos(otras);
+        return 'RECHAZADA';
+      });
+    const aceptarLaOferta = async () => {
+      sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
+      await service.notifyWaitlistCandidate({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        nombre: 'Rosa Díaz',
+        especialidad: 'Medicina General',
+        doctor: 'Ana Pérez',
+        slotDate: FECHA_C,
+      });
+      await say('Sí');
+    };
+
+    it('4D.1 le pide el nacimiento y el sexo con el cupo apartado y le agenda el MISMO cupo', async () => {
+      elHospitalLaRechaza();
+      await aceptarLaOferta();
+
+      expect(lastSent()).toMatch(/me faltan unos datos del paciente/);
+      expect(lastSent()).toMatch(/\*fecha de nacimiento\* del paciente/);
+      expect(sent().join('\n')).not.toMatch(
+        /no quedó registrada|sigue en la \*lista de espera\*/,
+      );
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      expect(waitlist.volverAEsperar).not.toHaveBeenCalled();
+      expect(waitlist.esperarDatosDelPaciente).toHaveBeenCalledWith({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        slotId: 'slot-free',
+      });
+      // El cupo: abierto otra vez en AgenIA y apartado para ella.
+      expect(cupo().isAvailable).toBe(true);
+      expect(redis.store.get(`cupo_apartado:${ORG_ID}:slot-free`)).toBe(SENDER);
+
+      await say('15/03/1980');
+      await say('SI');
+      expect(await state()).toBe(ChatState.AWAITING_GENDER);
+      await say('B');
+
+      expect(ficha().dateOfBirth).toBeInstanceOf(Date);
+      expect(ficha().dateOfBirth.toISOString()).toMatch(/^1980-03-15/);
+      expect(ficha().gender).toBe('F');
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(2);
+      expect(appointments.bookAppointment).toHaveBeenLastCalledWith(
+        'pat-wl',
+        'slot-free',
+        null,
+        'WHATSAPP',
+        ORG_ID,
+      );
+      expect(confirmacionesFinales()).toHaveLength(1);
+      expect(await state()).toBe(ChatState.IDLE);
+      expect(
+        redis.store.get(`temp_waitlist_datos:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
+      expect(
+        redis.store.get(`cupo_apartado:${ORG_ID}:slot-free`),
+      ).toBeUndefined();
+    });
+
+    it('4D.2 si solo le falta el sexo, solo se le pregunta eso', async () => {
+      ficha().dateOfBirth = new Date('1971-07-12');
+      elHospitalLaRechaza();
+      await aceptarLaOferta();
+
+      expect(lastSent()).toMatch(/me falta un dato del paciente/);
+      expect(lastSent()).toMatch(/\*sexo\* del paciente/);
+      expect(await state()).toBe(ChatState.AWAITING_GENDER);
+      await say('A');
+
+      expect(ficha().gender).toBe('M');
+      expect(ficha().dateOfBirth).toEqual(new Date('1971-07-12'));
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(2);
+      expect(confirmacionesFinales()).toHaveLength(1);
+    });
+
+    it('4D.3 si el rechazo llega después (barrido de pendientes), igual le pide los datos y le agenda el mismo cupo', async () => {
+      anuladaPorFaltarDatos();
+      confirmacion.pendientes.mockResolvedValueOnce([
+        {
+          organizationId: ORG_ID,
+          senderId: SENDER,
+          appointmentId: 'apt-new',
+          fechaTexto: 'lunes 5 de octubre, 8:00 a. m.',
+          desde: new Date().toISOString(),
+        },
+      ]);
+      confirmacion.estado.mockResolvedValue('RECHAZADA');
+
+      await service.atenderConfirmacionesHisPendientes();
+
+      expect(lastSent()).toMatch(/me faltan unos datos del paciente/);
+      expect(lastSent()).toContain('lunes 5 de octubre, 8:00 a. m.');
+      expect(lastSent()).not.toMatch(/no pudo registrar|no quedó registrada/);
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+
+      await say('15/03/1980');
+      await say('SI');
+      await say('B');
+      expect(appointments.bookAppointment).toHaveBeenCalledWith(
+        'pat-wl',
+        'slot-free',
+        null,
+        'WHATSAPP',
+        ORG_ID,
+      );
+      expect(confirmacionesFinales()).toHaveLength(1);
+    });
+
+    it.each([
+      [
+        'la ficha tiene nombre de relleno (sin nombre la API tampoco manda con qué crearlo)',
+        () => {
+          ficha().fullName = 'Paciente';
+        },
+        [],
+      ],
+      [
+        'a la ficha no le falta nada',
+        () => {
+          ficha().dateOfBirth = new Date('1971-07-12');
+          ficha().gender = 'F';
+        },
+        [],
+      ],
+      [
+        'el cupo ya lo tiene otra cita',
+        () => undefined,
+        [{ id: 'apt-otro', scheduleSlotId: 'slot-free', status: 'SCHEDULED' }],
+      ],
+    ])(
+      '4D.4 no se le piden datos si %s: vuelve a la lista como siempre',
+      async (_caso, preparar, otras) => {
+        preparar();
+        elHospitalLaRechaza(otras as any[]);
+        await aceptarLaOferta();
+
+        expect(sent().join('\n')).not.toMatch(
+          /me faltan? un(os)? datos? del paciente/,
+        );
+        expect(waitlist.volverAEsperar).toHaveBeenCalledWith({
+          whatsappId: SENDER,
+          organizationId: ORG_ID,
+          slotId: 'slot-free',
+        });
+        expect(lastSent()).toContain('sigue en la *lista de espera*');
+        expect(cupo().isAvailable).toBe(false);
+        expect(redis.store.get(`cupo_apartado:${ORG_ID}:slot-free`)).toBe(
+          undefined,
+        );
+        expect(await state()).toBe(ChatState.IDLE);
+      },
+    );
+
+    it('4D.5 un rechazo por otra razón (la agenda del hospital) sigue como siempre', async () => {
+      confirmacion.esperar.mockImplementationOnce(async () => {
+        db.appointments.push({
+          id: 'apt-new',
+          patientId: 'pat-wl',
+          scheduleSlotId: 'slot-free',
+          status: 'CANCELLED',
+          metaLog: {
+            rechazoDelHis: {
+              motivo:
+                'El médico RU71 no tiene turno el 2026-11-27: la agenda de AgenIA y la del HIS no coinciden.',
+            },
+          },
+        });
+        cupo().isAvailable = false;
+        return 'RECHAZADA';
+      });
+      await aceptarLaOferta();
+
+      expect(sent().join('\n')).not.toMatch(
+        /me faltan? un(os)? datos? del paciente/,
+      );
+      expect(waitlist.volverAEsperar).toHaveBeenCalled();
+      expect(cupo().isAvailable).toBe(false);
+    });
+
+    it('4D.6 si empieza otra cosa y elige otro horario, sus respuestas ya no reservan el cupo de la lista', async () => {
+      elHospitalLaRechaza();
+      await aceptarLaOferta();
+      expect(
+        redis.store.get(`temp_waitlist_datos:${ORG_ID}:${SENDER}`),
+      ).toBeDefined();
+
+      // Elegir un horario en el menú suelta lo que esperaba los datos.
+      await (service as any).apartarCupo(ORG_ID, SENDER, 'slot-otro');
+      expect(
+        redis.store.get(`temp_waitlist_datos:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
+    });
+
+    // 2026-11-20: a quien le faltaba el régimen se le preguntaba, pero la sesión se
+    // limpiaba enseguida y su respuesta ya no reservaba el cupo.
+    it('4D.7 le falta el régimen: la pregunta queda viva y su respuesta le agenda el cupo', async () => {
+      appointments.bookAppointment.mockResolvedValueOnce({
+        success: false,
+        reason: 'PATIENT_REGIME_MISSING',
+      });
+      await aceptarLaOferta();
+
+      expect(await state()).toBe(ChatState.AWAITING_REGIME);
+      expect(
+        redis.store.get(`temp_waitlist_regimen:${ORG_ID}:${SENDER}`),
+      ).toBeDefined();
+      await say('B');
+
+      expect(ficha().regime).toBe('CONTRIBUTIVO');
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(2);
+      expect(appointments.bookAppointment).toHaveBeenLastCalledWith(
+        'pat-wl',
+        'slot-free',
+        null,
+        'WHATSAPP',
+        ORG_ID,
+      );
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 4N. La lista de espera con el documento del primer mensaje (2026-11-25):
+  // el bot anotaba sin preguntar el nombre y la ficha nacía «Paciente».
+  // ──────────────────────────────────────────────────────────────────
+  describe('4N. Lista de espera con el documento dado en el primer mensaje', () => {
+    const conDocumentoYSinCupos = async (cedula: string) => {
+      appointments.getAvailableSlots.mockResolvedValue([]);
+      provider.extractSchedulingIntent.mockImplementation(({ text }: any) =>
+        String(text).includes(cedula)
+          ? extraction({ intent: 'agendar_cita', cedula })
+          : extraction(),
+      );
+      await say(`quiero una cita, mi cédula es ${cedula}`);
+      await say('A'); // Medicina General
+      await elegirParticular();
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+      await say('Sí');
+    };
+    const sinNombre = /(Perfecto|Listo|Hecho), Paciente\b/;
+
+    it('4N.1 un paciente nuevo: se le pide el nombre completo y la ficha nace con él', async () => {
+      await conDocumentoYSinCupos('1077000333');
+
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      expect(lastSent()).toMatch(/nombre completo/);
+      expect(waitlist.joinWaitlist).not.toHaveBeenCalled();
+
+      await say('Marta Gómez');
+      expect(waitlist.joinWaitlist).toHaveBeenCalledTimes(1);
+      const ficha = db.patients.find((p) => p.cedula === '1077000333');
+      expect(ficha.fullName).toBe('Marta Gómez');
+      expect(sent().join('\n')).not.toMatch(sinNombre);
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    it('4N.2 una ficha con el nombre de relleno: se le pide y se corrige', async () => {
+      db.patients.push({
+        id: 'pat-relleno',
+        cedula: '1077000444',
+        fullName: 'Paciente',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+      });
+      await conDocumentoYSinCupos('1077000444');
+
+      expect(await state()).toBe(ChatState.AWAITING_NAME);
+      await say('Carlos Ruiz');
+      expect(waitlist.joinWaitlist).toHaveBeenCalledTimes(1);
+      expect(db.patients.find((p) => p.id === 'pat-relleno').fullName).toBe(
+        'Carlos Ruiz',
+      );
+      expect(sent().join('\n')).not.toMatch(sinNombre);
+    });
+
+    it('4N.3 una ficha con nombre de verdad entra a la lista enseguida, con su nombre', async () => {
+      db.patients.push({
+        id: 'pat-rosa',
+        cedula: '1077000555',
+        fullName: 'Rosa Díaz',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+      });
+      await conDocumentoYSinCupos('1077000555');
+
+      expect(waitlist.joinWaitlist).toHaveBeenCalledWith(
+        expect.objectContaining({ patientId: 'pat-rosa' }),
+      );
+      expect(lastSent()).toContain('Rosa Díaz');
+      expect(sent().join('\n')).not.toMatch(sinNombre);
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 4R. Sin cupos: por qué (2026-11-25). Los cupos apartados para otras
+  // personas no son la reserva para la atención presencial.
+  // ──────────────────────────────────────────────────────────────────
+  describe('4R. Sin cupos que ofrecer: por qué', () => {
+    const hastaSinCupos = async () => {
+      appointments.getAvailableSlots.mockResolvedValue([]);
+      await say('Hola');
+      await say('A');
+      await elegirParticular();
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+    };
+    const pasoSinCupos = () =>
+      interactionLog.logSuccess.mock.calls
+        .map((c: any[]) => c[0]?.metadata)
+        .find((m: any) => m?.step === 'WAITLIST_OPTIN_OFFERED');
+
+    it('4R.1 los que quedan están apartados para otros: lo dice, ofrece la lista y lo cuenta aparte', async () => {
+      appointments.motivoSinCupos.mockResolvedValue('APARTADOS');
+      redis.store.set(`cupo_apartado:${ORG_ID}:slot-x`, 'otro-numero');
+
+      await hastaSinCupos();
+
+      expect(lastSent()).toMatch(/apartados para otras personas/);
+      expect(lastSent()).toMatch(/lista de espera/);
+      expect(lastSent()).not.toMatch(/por este medio ya no quedan/);
+      expect(appointments.motivoSinCupos).toHaveBeenCalledWith(
+        expect.any(String),
+        null,
+        ORG_ID,
+        expect.objectContaining({ apartados: ['slot-x'] }),
+      );
+      expect(pasoSinCupos()).toMatchObject({ porApartados: true });
+      expect(pasoSinCupos().porReserva).toBeUndefined();
+    });
+
+    it('4R.2 la reserva para la atención presencial: «por este medio ya no quedan»', async () => {
+      appointments.motivoSinCupos.mockResolvedValue('RESERVA');
+
+      await hastaSinCupos();
+
+      expect(lastSent()).toMatch(/por este medio ya no quedan/);
+      expect(pasoSinCupos()).toMatchObject({ porReserva: true });
+      expect(pasoSinCupos().porApartados).toBeUndefined();
+    });
+
+    it('4R.3 la agenda está llena: lo de siempre', async () => {
+      await hastaSinCupos();
+
+      expect(lastSent()).not.toMatch(
+        /apartados para otras personas|por este medio ya no quedan/,
+      );
+      expect(pasoSinCupos().porApartados).toBeUndefined();
+      expect(pasoSinCupos().porReserva).toBeUndefined();
+    });
+  });
+
   describe('5. Aislamiento multi-tenant', () => {
     const ORG2 = 'org-2';
     const PHONE_ID2 = 'phone-number-id-456';

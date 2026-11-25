@@ -24,3 +24,21 @@ export function esRechazoPorAgendaDelHis(motivo: unknown): boolean {
     (SIN_TURNO.test(motivo) || FUERA_DEL_TURNO.test(motivo))
   );
 }
+
+/**
+ * 🪪 2026-11-25: «El paciente 123 no existe en el HIS y faltan datos para darlo
+ * de alta (nacimiento y/o sexo)». Lo escribe `ensurePaciente` del mismo driver.
+ *
+ * Quien se anota en la lista de espera da solo su documento y su nombre. Si el
+ * hospital no lo tiene, al aceptar un cupo no hay con qué crearlo: reintentar no
+ * trae esos datos. Antes se reintentaba diez veces (unos 14 minutos), la cita se
+ * rendía y al paciente se le decía que no quedó registrada (dos personas el
+ * 24-nov). Ahora es un rechazo definitivo y el chat le pide los datos.
+ */
+const FALTAN_DATOS_DEL_PACIENTE =
+  /no existe en el HIS y faltan datos para darlo de alta/i;
+
+/** ¿El hospital no tiene al paciente y faltan su nacimiento o su sexo para crearlo? */
+export function esRechazoPorFaltarDatosDelPaciente(motivo: unknown): boolean {
+  return typeof motivo === 'string' && FALTAN_DATOS_DEL_PACIENTE.test(motivo);
+}

@@ -1515,6 +1515,129 @@ describe('WaitlistService', () => {
     });
   });
 
+  // 🪪 2026-11-25: el hospital no tiene al paciente y el chat le pide los datos.
+  describe('esperarDatosDelPaciente', () => {
+    it('marca la entrada confirmada de ESE cupo, sin cambiarle el estado', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue({
+        id: 'w1',
+        metadata: { pendingSlotId: 'slot-1', rechazados: ['slot-0'] },
+      });
+      await service.esperarDatosDelPaciente({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        slotId: 'slot-1',
+      });
+
+      expect(prisma.waitlistEntry.findFirst).toHaveBeenCalledWith({
+        where: {
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          status: 'CONFIRMED',
+          metadata: { path: ['pendingSlotId'], equals: 'slot-1' },
+        },
+        select: { id: true, metadata: true },
+      });
+      const { data } = prisma.waitlistEntry.update.mock.calls[0][0];
+      expect(data).not.toHaveProperty('status');
+      expect(data.metadata).toMatchObject({
+        pendingSlotId: 'slot-1',
+        rechazados: ['slot-0'],
+      });
+      expect(Number.isNaN(Date.parse(data.metadata.datosPendientesDesde))).toBe(
+        false,
+      );
+    });
+
+    it('sin entrada de la lista (no venía de ella) no hace nada', async () => {
+      await service.esperarDatosDelPaciente({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        slotId: 'slot-1',
+      });
+      expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('devolverSinDatosALaLista (cron)', () => {
+    const ahora = new Date('2026-11-25T16:00:00Z');
+    const hace = (min: number) =>
+      new Date(ahora.getTime() - min * 60_000).toISOString();
+    const confirmada = (desde: string | undefined) => ({
+      id: 'w1',
+      patientId: 'p1',
+      whatsappId: '573001112233',
+      metadata: {
+        pendingSlotId: 'slot-1',
+        ...(desde ? { datosPendientesDesde: desde } : {}),
+      },
+    });
+
+    it('no terminó a tiempo: vuelve a esperar con su turno y sin ese cupo', async () => {
+      prisma.waitlistEntry.findMany.mockResolvedValue([confirmada(hace(80))]);
+
+      await expect(service.devolverSinDatosALaLista(ahora)).resolves.toBe(1);
+
+      expect(prisma.waitlistEntry.findMany.mock.calls[0][0].where).toEqual({
+        status: 'CONFIRMED',
+        updatedAt: { gte: new Date(ahora.getTime() - 24 * 3_600_000) },
+      });
+      expect(prisma.appointment.findFirst).toHaveBeenCalledWith({
+        where: {
+          patientId: 'p1',
+          scheduleSlotId: 'slot-1',
+          status: { not: 'CANCELLED' },
+        },
+        select: { id: true },
+      });
+      expect(prisma.waitlistEntry.update).toHaveBeenCalledWith({
+        where: { id: 'w1' },
+        data: {
+          status: 'WAITING',
+          notifiedAt: null,
+          expiresAt: null,
+          metadata: { rechazados: ['slot-1'] },
+        },
+      });
+      const { data } = prisma.waitlistEntry.update.mock.calls[0][0];
+      expect(data).not.toHaveProperty('createdAt');
+    });
+
+    it('todavía está contestando: no se toca', async () => {
+      prisma.waitlistEntry.findMany.mockResolvedValue([confirmada(hace(30))]);
+
+      await expect(service.devolverSinDatosALaLista(ahora)).resolves.toBe(0);
+      expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+    });
+
+    it('ya tiene la cita de ese cupo: solo se le quita la marca', async () => {
+      prisma.waitlistEntry.findMany.mockResolvedValue([confirmada(hace(80))]);
+      prisma.appointment.findFirst.mockResolvedValue({ id: 'apt-1' });
+
+      await expect(service.devolverSinDatosALaLista(ahora)).resolves.toBe(0);
+      expect(prisma.waitlistEntry.update).toHaveBeenCalledWith({
+        where: { id: 'w1' },
+        data: { metadata: { pendingSlotId: 'slot-1' } },
+      });
+    });
+
+    it('una confirmada sin la marca (la de siempre) no se toca', async () => {
+      prisma.waitlistEntry.findMany.mockResolvedValue([confirmada(undefined)]);
+
+      await expect(service.devolverSinDatosALaLista(ahora)).resolves.toBe(0);
+      expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
+      expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+    });
+
+    it('si la base falla no lanza', async () => {
+      jest
+        .spyOn(service['logger'], 'error')
+        .mockImplementation(() => undefined);
+      prisma.waitlistEntry.findMany.mockRejectedValue(new Error('bd'));
+
+      await expect(service.devolverSinDatosALaLista(ahora)).resolves.toBe(0);
+    });
+  });
+
   describe('expireStaleNotifications (cron)', () => {
     const vencida = entrada({
       status: 'NOTIFIED',

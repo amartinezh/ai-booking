@@ -68,6 +68,12 @@ interface WaitlistNotificationMetadata {
   ultimaOferta?: OfertaVencida;
   /** Por qué salió de la lista sin tomar un cupo de ella (`YA_TIENE_CITA`). */
   motivo?: string;
+  /**
+   * 🪪 ISO 8601: desde cuándo el chat le pide los datos que el hospital necesita
+   * para crearlo (2026-11-25). Mientras, la entrada sigue confirmada con su cupo;
+   * si no termina, vuelve a esperar con su turno (`devolverSinDatosALaLista`).
+   */
+  datosPendientesDesde?: string;
   /** La cita que consiguió por otro camino. */
   appointmentId?: string;
 }
@@ -216,6 +222,13 @@ export const ESPERA_CUPO_NUEVO_MS = 10 * 60_000;
 
 /** El dueño del apartado mientras espera un cupo liberado por el hospital. */
 const APARTADO_HOSPITAL = 'HOSPITAL';
+
+/**
+ * 🪪 Cuánto se esperan los datos que pidió el hospital para crear al paciente
+ * (2026-11-25): lo que dura la conversación en el chat (una hora) y un margen.
+ * Después, quien no terminó vuelve a esperar en la lista con su turno.
+ */
+export const ESPERA_DATOS_DEL_PACIENTE_MS = 70 * 60_000;
 
 /** Hasta cuántas horas después de vencer una oferta se atiende su respuesta tardía. */
 export const HORAS_RESPUESTA_TARDIA = 24;
@@ -847,6 +860,107 @@ export class WaitlistService {
       `El cupo ${slotId} de la lista de espera no se pudo tomar: ${whatsappId} vuelve a esperar con su turno`,
     );
     return true;
+  }
+
+  /**
+   * 🪪 El hospital no tiene al paciente y el chat le pide su nacimiento o su sexo
+   * para agendarle el cupo que aceptó (2026-11-25). Su entrada sigue confirmada con
+   * ese cupo y queda marcada: si no termina, `devolverSinDatosALaLista` la devuelve
+   * a esperar con su turno. Sin entrada (no venía de la lista) no hace nada.
+   */
+  async esperarDatosDelPaciente(params: {
+    whatsappId: string;
+    organizationId: string;
+    slotId: string;
+  }): Promise<void> {
+    const { whatsappId, organizationId, slotId } = params;
+    const entrada = await this.prisma.waitlistEntry.findFirst({
+      where: {
+        whatsappId,
+        organizationId,
+        status: 'CONFIRMED',
+        metadata: { path: ['pendingSlotId'], equals: slotId },
+      },
+      select: { id: true, metadata: true },
+    });
+    if (!entrada) return;
+    await this.prisma.waitlistEntry.update({
+      where: { id: entrada.id },
+      data: {
+        metadata: {
+          ...(readWaitlistMetadata(entrada.metadata) as Prisma.InputJsonObject),
+          datosPendientesDesde: new Date().toISOString(),
+        },
+      },
+    });
+  }
+
+  /**
+   * 🪪 Quien no terminó de dar los datos que pidió el hospital vuelve a esperar en
+   * la lista con su turno (`createdAt` intacto), sin que se le vuelva a ofrecer ese
+   * cupo (2026-11-25). Si ya tiene la cita de ese cupo, solo se quita la marca.
+   * Devuelve cuántas volvieron a esperar. Nunca lanza.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async devolverSinDatosALaLista(ahora = new Date()): Promise<number> {
+    try {
+      const entradas = await this.prisma.waitlistEntry.findMany({
+        where: {
+          status: 'CONFIRMED',
+          updatedAt: { gte: new Date(ahora.getTime() - 24 * 3_600_000) },
+        },
+        select: { id: true, patientId: true, whatsappId: true, metadata: true },
+      });
+      let devueltas = 0;
+      for (const e of entradas) {
+        const m = readWaitlistMetadata(e.metadata);
+        if (!m.datosPendientesDesde || !m.pendingSlotId) continue;
+        const { datosPendientesDesde, ...sinMarca } = m;
+        const conCita = await this.prisma.appointment.findFirst({
+          where: {
+            patientId: e.patientId,
+            scheduleSlotId: m.pendingSlotId,
+            status: { not: 'CANCELLED' },
+          },
+          select: { id: true },
+        });
+        if (conCita) {
+          await this.prisma.waitlistEntry.update({
+            where: { id: e.id },
+            data: { metadata: sinMarca as Prisma.InputJsonObject },
+          });
+          continue;
+        }
+        if (
+          ahora.getTime() - new Date(datosPendientesDesde).getTime() <
+          ESPERA_DATOS_DEL_PACIENTE_MS
+        ) {
+          continue;
+        }
+        await this.prisma.waitlistEntry.update({
+          where: { id: e.id },
+          data: {
+            status: 'WAITING',
+            notifiedAt: null,
+            expiresAt: null,
+            metadata: loQueConserva({
+              ...m,
+              rechazados: conUnoMas(m.rechazados, m.pendingSlotId),
+            }),
+          },
+        });
+        devueltas++;
+        this.logger.log(
+          `${e.whatsappId} no terminó de dar los datos que pidió el hospital: vuelve a esperar en la lista con su turno`,
+        );
+      }
+      return devueltas;
+    } catch (error: unknown) {
+      this.logger.error(
+        `Lista de espera: no se pudo revisar a quienes debían datos para el hospital: ${getErrorMessage(error)}`,
+      );
+      return 0;
+    }
   }
 
   // ════════════════════════════════════════════════════════════
