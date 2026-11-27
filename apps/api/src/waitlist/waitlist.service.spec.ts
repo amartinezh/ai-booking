@@ -1338,7 +1338,7 @@ describe('WaitlistService', () => {
 
       expect(prisma.waitlistEntry.findFirst).toHaveBeenCalledWith({
         where: { whatsappId: 'x', organizationId: ORG, status: 'NOTIFIED' },
-        include: { patient: true },
+        include: { patient: true, service: true },
       });
     });
   });
@@ -2270,6 +2270,499 @@ describe('WaitlistService', () => {
       expect(redis.store.get(`cupo_apartado:${ORG}:slot-1`)).toBe(
         '573005550000',
       );
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────
+  // 2026-11-26 (docs/PLAN_PERMANENCIA_LISTA_ESPERA.md): el médico director del
+  // hospital y otro paciente pidieron salir de la lista y no pudieron; la mitad de
+  // la cola llevaba tres NO o más (3,6 % de esas ofertas terminaron en cita).
+  describe('salir de la lista y «¿todavía necesita la cita?»', () => {
+    const ofertaPendiente = (over: Record<string, any> = {}) =>
+      entrada({
+        status: 'NOTIFIED',
+        metadata: {
+          pendingSlotId: 'slot-7',
+          doctorName: 'Dra. Ruiz',
+          slotDate: '2030-06-01T14:00:00.000Z',
+          ...(over.metadata ?? {}),
+        },
+        ...Object.fromEntries(
+          Object.entries(over).filter(([k]) => k !== 'metadata'),
+        ),
+      });
+    const decirNo = () =>
+      service.confirmFromWaitlist({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        confirmed: false,
+      });
+
+    describe('la pregunta tras un NO (L5)', () => {
+      it('con el NO del tercer día se le pregunta y queda pendiente (sin ofertas mientras)', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(
+            ofertaPendiente({
+              metadata: { diasRechazados: ['2030-05-28', '2030-05-30'] },
+            }),
+          )
+          .mockResolvedValueOnce(null);
+
+        const r = await decirNo();
+
+        expect(r.preguntarSiSigue).toEqual({
+          servicio: 'Medicina General',
+          dias: 3,
+        });
+        const m = prisma.waitlistEntry.update.mock.calls[0][0].data.metadata;
+        expect(m).toMatchObject({
+          rechazados: ['slot-7'],
+          diasRechazados: ['2030-05-28', '2030-05-30', '2030-06-01'],
+        });
+        expect(typeof m.preguntaSigueDesde).toBe('string');
+        expect(prisma.waitlistEntry.update.mock.calls[0][0].data.status).toBe(
+          'WAITING',
+        );
+      });
+
+      it('con el segundo día rechazado todavía no se pregunta', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(
+            ofertaPendiente({ metadata: { diasRechazados: ['2030-05-30'] } }),
+          )
+          .mockResolvedValueOnce(null);
+
+        const r = await decirNo();
+
+        expect(r).not.toHaveProperty('preguntarSiSigue');
+        expect(
+          prisma.waitlistEntry.update.mock.calls[0][0].data.metadata,
+        ).not.toHaveProperty('preguntaSigueDesde');
+      });
+
+      it('quien ya contestó que sigue no recibe la pregunta hasta 3 días rechazados más', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(
+            ofertaPendiente({
+              metadata: {
+                diasRechazados: ['2030-05-26', '2030-05-28', '2030-05-30'],
+                preguntarConDias: 6,
+              },
+            }),
+          )
+          .mockResolvedValueOnce(null);
+
+        const r = await decirNo();
+
+        expect(r).not.toHaveProperty('preguntarSiSigue');
+        // Lo que contestó viaja con la entrada.
+        expect(
+          prisma.waitlistEntry.update.mock.calls[0][0].data.metadata,
+        ).toMatchObject({ preguntarConDias: 6 });
+      });
+
+      it('L6: si tuvo cita de otro servicio después de anotarse, se le pregunta con su primer NO, nombrando la cita', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(ofertaPendiente())
+          .mockResolvedValueOnce(null);
+        prisma.appointment.findFirst.mockResolvedValueOnce({
+          id: 'cita-lectura',
+          scheduleSlot: {
+            startTime: new Date('2030-05-20T11:50:00Z'),
+            service: { name: 'Lectura de exámenes' },
+          },
+        });
+
+        const r = await decirNo();
+
+        expect(r.preguntarSiSigue).toEqual({
+          servicio: 'Medicina General',
+          dias: 1,
+          otraCita: {
+            servicio: 'Lectura de exámenes',
+            fecha: new Date('2030-05-20T11:50:00Z'),
+          },
+        });
+        expect(
+          prisma.waitlistEntry.update.mock.calls[0][0].data.metadata,
+        ).toMatchObject({ citasPreguntadas: ['cita-lectura'] });
+        // Solo citas de OTRO servicio, creadas después de anotarse y vivas.
+        expect(prisma.appointment.findFirst.mock.calls[0][0].where).toEqual({
+          organizationId: ORG,
+          patientId: 'p1',
+          status: { not: 'CANCELLED' },
+          createdAt: { gt: new Date('2026-05-01T10:00:00Z') },
+          scheduleSlot: { serviceId: { not: 'svc-1' } },
+        });
+      });
+
+      it('L6: por una cita que ya se le preguntó no se repite', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(
+            ofertaPendiente({
+              metadata: { citasPreguntadas: ['cita-lectura'] },
+            }),
+          )
+          .mockResolvedValueOnce(null);
+
+        await decirNo();
+
+        expect(prisma.appointment.findFirst.mock.calls[0][0].where.id).toEqual({
+          notIn: ['cita-lectura'],
+        });
+      });
+
+      it('si la consulta de la otra cita falla, solo cuentan los días', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(ofertaPendiente())
+          .mockResolvedValueOnce(null);
+        prisma.appointment.findFirst.mockRejectedValueOnce(new Error('bd'));
+
+        const r = await decirNo();
+
+        expect(r).not.toHaveProperty('preguntarSiSigue');
+        expect(prisma.waitlistEntry.update).toHaveBeenCalled();
+      });
+
+      it('un NO tardío del tercer día también pregunta', async () => {
+        const VENCIO = new Date(Date.now() - 40 * 60_000).toISOString();
+        prisma.waitlistEntry.findMany.mockResolvedValue([
+          entrada({
+            status: 'WAITING',
+            metadata: {
+              diasRechazados: ['2030-05-28', '2030-05-30'],
+              ultimaOferta: {
+                slotId: 'slot-7',
+                slotDate: '2030-06-01T14:00:00.000Z',
+                doctorName: 'Dra. Ruiz',
+                epsDelCupo: null,
+                vencioIso: VENCIO,
+              },
+            },
+          }),
+        ]);
+
+        const r = await service.respuestaTardia({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          acepta: false,
+        });
+
+        expect(r).toEqual({
+          tipo: 'RECHAZADO',
+          pregunta: { servicio: 'Medicina General', dias: 3 },
+        });
+        expect(
+          typeof prisma.waitlistEntry.update.mock.calls[0][0].data.metadata
+            .preguntaSigueDesde,
+        ).toBe('string');
+      });
+
+      it('con la pregunta pendiente no se le ofrecen cupos: pasa al siguiente', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(
+            entrada({
+              metadata: { preguntaSigueDesde: new Date().toISOString() },
+            }),
+          )
+          .mockResolvedValueOnce(
+            entrada({ id: 'w2', whatsappId: '573009998877' }),
+          );
+
+        const ofrecido = await service.notifyWaitlist({
+          slotId: 'slot-9',
+          serviceId: 'svc-1',
+          epsId: null,
+          organizationId: ORG,
+          doctorName: 'Dr. Paz',
+          slotDate: new Date('2030-06-02T14:00:00Z'),
+        });
+
+        expect(ofrecido).toBe(true);
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledTimes(1);
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({ whatsappId: '573009998877' }),
+        );
+      });
+
+      it('lo de la pregunta viaja con la oferta (no se pierde al ofrecerle un cupo)', async () => {
+        prisma.waitlistEntry.findFirst.mockResolvedValueOnce(
+          entrada({
+            metadata: { preguntarConDias: 6, citasPreguntadas: ['c1'] },
+          }),
+        );
+
+        await service.notifyWaitlist({
+          slotId: 'slot-9',
+          serviceId: 'svc-1',
+          epsId: null,
+          organizationId: ORG,
+          doctorName: 'Dr. Paz',
+          slotDate: new Date('2030-06-02T14:00:00Z'),
+        });
+
+        expect(
+          prisma.waitlistEntry.update.mock.calls[0][0].data.metadata,
+        ).toMatchObject({ preguntarConDias: 6, citasPreguntadas: ['c1'] });
+      });
+    });
+
+    describe('responderSiSigue', () => {
+      const pendiente = (over: Record<string, any> = {}) =>
+        entrada({
+          metadata: {
+            diasRechazados: ['2030-05-28', '2030-05-30', '2030-06-01'],
+            preguntaSigueDesde: new Date().toISOString(),
+          },
+          ...over,
+        });
+
+      it('SÍ: sigue en su puesto, sin la pregunta, y se le vuelve a preguntar con 3 días más', async () => {
+        prisma.waitlistEntry.findMany.mockResolvedValue([pendiente()]);
+
+        const r = await service.responderSiSigue({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          sigue: true,
+        });
+
+        expect(r).toEqual({ servicios: ['Medicina General'] });
+        expect(prisma.waitlistEntry.update).toHaveBeenCalledWith({
+          where: { id: 'w1' },
+          data: {
+            metadata: {
+              diasRechazados: ['2030-05-28', '2030-05-30', '2030-06-01'],
+              preguntarConDias: 6,
+            },
+          },
+        });
+        expect(prisma.waitlistEntry.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('NO: sale de la lista como si lo hubiera pedido', async () => {
+        prisma.waitlistEntry.findMany
+          .mockResolvedValueOnce([pendiente()])
+          .mockResolvedValueOnce([pendiente()]);
+
+        const r = await service.responderSiSigue({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          sigue: false,
+          texto: 'No',
+        });
+
+        expect(r).toEqual({ servicios: ['Medicina General'] });
+        const llamada = prisma.waitlistEntry.updateMany.mock.calls[0][0];
+        expect(llamada.where).toEqual({ id: 'w1', status: 'WAITING' });
+        expect(llamada.data.status).toBe('CANCELLED');
+        expect(llamada.data.metadata).toMatchObject({
+          motivo: 'PIDIO_SALIR',
+          textoDeSalida: 'No',
+        });
+        expect(llamada.data.metadata).not.toHaveProperty('preguntaSigueDesde');
+      });
+
+      it('sin la pregunta pendiente: null (ya venció o ya contestó)', async () => {
+        prisma.waitlistEntry.findMany.mockResolvedValue([entrada()]);
+        await expect(
+          service.responderSiSigue({
+            whatsappId: '573001112233',
+            organizationId: ORG,
+            sigue: true,
+          }),
+        ).resolves.toBeNull();
+        expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('salirDeLaLista', () => {
+      it('quien espera queda CANCELLED con el motivo, lo que escribió y cuándo', async () => {
+        prisma.waitlistEntry.findMany.mockResolvedValue([
+          entrada({ metadata: { diasRechazados: ['2030-06-01'] } }),
+        ]);
+
+        const servicios = await service.salirDeLaLista({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          texto: 'Quiero salir de la lista de espera',
+          motivo: 'PIDIO_SALIR',
+        });
+
+        expect(servicios).toEqual(['Medicina General']);
+        expect(prisma.waitlistEntry.findMany.mock.calls[0][0].where).toEqual({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          status: { in: ['WAITING', 'NOTIFIED'] },
+        });
+        const { where, data } =
+          prisma.waitlistEntry.updateMany.mock.calls[0][0];
+        expect(where).toEqual({ id: 'w1', status: 'WAITING' });
+        expect(data).toMatchObject({
+          status: 'CANCELLED',
+          notifiedAt: null,
+          expiresAt: null,
+          metadata: {
+            diasRechazados: ['2030-06-01'],
+            motivo: 'PIDIO_SALIR',
+            textoDeSalida: 'Quiero salir de la lista de espera',
+          },
+        });
+        expect(typeof data.metadata.salioEn).toBe('string');
+        expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+      });
+
+      it('con un cupo ofrecido: lo suelta y se lo ofrece al siguiente', async () => {
+        redis.store.set(`cupo_apartado:${ORG}:slot-7`, '573001112233');
+        prisma.waitlistEntry.findMany.mockResolvedValue([ofertaPendiente()]);
+        prisma.waitlistEntry.findFirst.mockResolvedValueOnce(
+          entrada({ id: 'w2', whatsappId: '573009998877' }),
+        );
+
+        await service.salirDeLaLista({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          motivo: 'PIDIO_SALIR',
+        });
+
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            whatsappId: '573009998877',
+            slotId: 'slot-7',
+          }),
+        );
+        expect(redis.store.get(`cupo_apartado:${ORG}:slot-7`)).toBe(
+          '573009998877',
+        );
+      });
+
+      it('solo las entradas pedidas; si una cambió en medio (tomó el cupo), no cuenta', async () => {
+        prisma.waitlistEntry.findMany.mockResolvedValue([entrada()]);
+        prisma.waitlistEntry.updateMany.mockResolvedValueOnce({ count: 0 });
+
+        const servicios = await service.salirDeLaLista({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          ids: ['w1'],
+          motivo: 'PIDIO_SALIR',
+        });
+
+        expect(servicios).toEqual([]);
+        expect(prisma.waitlistEntry.findMany.mock.calls[0][0].where.id).toEqual(
+          {
+            in: ['w1'],
+          },
+        );
+      });
+    });
+
+    describe('entradasActivas', () => {
+      it('dice de cada entrada si tiene una oferta reciente o la pregunta pendiente', async () => {
+        prisma.waitlistEntry.findMany.mockResolvedValue([
+          entrada({ status: 'NOTIFIED' }),
+          entrada({
+            id: 'w2',
+            patient: { fullName: 'Luis Gómez' },
+            metadata: { preguntaSigueDesde: new Date().toISOString() },
+          }),
+          entrada({
+            id: 'w3',
+            metadata: {
+              ultimaOferta: {
+                slotId: 's',
+                slotDate: '2030-06-01T14:00:00.000Z',
+                doctorName: '',
+                epsDelCupo: null,
+                vencioIso: new Date(Date.now() - 25 * 3_600_000).toISOString(),
+              },
+            },
+          }),
+        ]);
+
+        await expect(
+          service.entradasActivas({
+            whatsappId: '573001112233',
+            organizationId: ORG,
+          }),
+        ).resolves.toEqual([
+          {
+            id: 'w1',
+            status: 'NOTIFIED',
+            nombre: 'Ana Gómez',
+            servicio: 'Medicina General',
+            ofertaReciente: true,
+            preguntaPendiente: false,
+          },
+          {
+            id: 'w2',
+            status: 'WAITING',
+            nombre: 'Luis Gómez',
+            servicio: 'Medicina General',
+            ofertaReciente: false,
+            preguntaPendiente: true,
+          },
+          {
+            id: 'w3',
+            status: 'WAITING',
+            nombre: 'Ana Gómez',
+            servicio: 'Medicina General',
+            // Venció hace más de 24 h.
+            ofertaReciente: false,
+            preguntaPendiente: false,
+          },
+        ]);
+      });
+    });
+
+    describe('vencerPreguntasSinRespuesta', () => {
+      const ahora = new Date('2030-06-02T15:00:00Z');
+
+      it('quien no contestó en 24 h sale de la lista (NO_CONFIRMO); quien lleva menos, sigue', async () => {
+        prisma.waitlistEntry.findMany
+          .mockResolvedValueOnce([
+            entrada({
+              metadata: { preguntaSigueDesde: '2030-06-01T14:00:00.000Z' },
+            }),
+            entrada({
+              id: 'w2',
+              metadata: { preguntaSigueDesde: '2030-06-01T16:00:00.000Z' },
+            }),
+            entrada({ id: 'w3', metadata: null }),
+          ])
+          .mockResolvedValueOnce([
+            entrada({
+              metadata: { preguntaSigueDesde: '2030-06-01T14:00:00.000Z' },
+            }),
+          ]);
+
+        await expect(service.vencerPreguntasSinRespuesta(ahora)).resolves.toBe(
+          1,
+        );
+
+        expect(prisma.waitlistEntry.findMany.mock.calls[0][0].where).toEqual({
+          status: 'WAITING',
+          updatedAt: { lte: new Date('2030-06-01T15:00:00Z') },
+        });
+        expect(prisma.waitlistEntry.findMany.mock.calls[1][0].where.id).toEqual(
+          {
+            in: ['w1'],
+          },
+        );
+        // Solo la que cumplió las 24 h: la de hace 23 h no se toca.
+        expect(prisma.waitlistEntry.findMany).toHaveBeenCalledTimes(2);
+        expect(
+          prisma.waitlistEntry.updateMany.mock.calls[0][0].data.metadata,
+        ).toMatchObject({ motivo: 'NO_CONFIRMO' });
+      });
+
+      it('si la base falla, no lanza', async () => {
+        prisma.waitlistEntry.findMany.mockRejectedValueOnce(new Error('bd'));
+        jest
+          .spyOn(service['logger'], 'error')
+          .mockImplementation(() => undefined);
+        await expect(service.vencerPreguntasSinRespuesta(ahora)).resolves.toBe(
+          0,
+        );
+      });
     });
   });
 });

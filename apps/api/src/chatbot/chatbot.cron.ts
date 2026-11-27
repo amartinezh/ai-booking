@@ -79,6 +79,10 @@ export class ChatbotCron {
       // del 29 al 31 de octubre, a los 10, 19 y 20 minutos).
       if ((state as ChatState) === ChatState.AWAITING_WAITLIST_CONFIRM)
         continue;
+      // 🙋 Tampoco «¿todavía necesita la cita?» (2026-11-26): tiene 24 h para
+      // contestar y la vence la lista (WaitlistService.vencerPreguntasSinRespuesta);
+      // un «se cerró por inactividad» a los 5 minutos lo confundiría.
+      if ((state as ChatState) === ChatState.AWAITING_WAITLIST_SIGUE) continue;
 
       const rest = key.slice('chat_state:'.length);
       const [organizationId, ...phoneParts] = rest.split(':');

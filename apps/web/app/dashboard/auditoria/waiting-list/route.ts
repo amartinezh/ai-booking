@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '../../../../lib/session';
 import { prisma } from '../../../../lib/prisma';
 import { isWhatsappPhoneId } from '@agenia/shared';
+import { resumenDeLaEntrada } from '../../../../lib/lista-espera/resumen';
 
 // ════════════════════════════════════════════════════════════════
 // GET /dashboard/auditoria/waiting-list
@@ -100,8 +101,21 @@ export async function GET(req: NextRequest) {
 
         const now = Date.now();
 
+        // 📊 Ofertas recibidas, días rechazados y último rechazo de cada persona
+        // (2026-11-26, PLAN_PERMANENCIA_LISTA_ESPERA L7): para ver a los atascados.
+        const resumenes = await Promise.all(
+            entries.map((e) =>
+                resumenDeLaEntrada(prisma, {
+                    organizationId,
+                    whatsappId: e.whatsappId,
+                    createdAt: e.createdAt,
+                    metadata: e.metadata,
+                }),
+            ),
+        );
+
         // ── 5. "LUJO DE DETALLE": joins + cálculos del backend ───
-        const items = entries.map((e) => {
+        const items = entries.map((e, i) => {
             // El identificador puede ser un teléfono o un BSUID (paciente que
             // ocultó su número). Filtrar dígitos de un BSUID producía un
             // teléfono INVENTADO y un enlace wa.me hacia un desconocido.
@@ -127,6 +141,7 @@ export async function GET(req: NextRequest) {
                 waitMs,
                 waitLabel: formatWaitTime(waitMs),
                 isOverdue: waitMs >= OVERDUE_THRESHOLD_MS,
+                ...resumenes[i],
             };
         });
 

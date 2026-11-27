@@ -238,6 +238,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
             // Sin ofertas de la lista por contestar ni vencidas.
             ofertaPendiente: jest.fn(async () => null),
             respuestaTardia: jest.fn(async () => null),
+            // 🚪 Salir de la lista / «¿todavía necesita la cita?» (2026-11-26): nadie
+            // está en la lista, salvo que la prueba lo ponga.
+            entradasActivas: jest.fn(async () => []),
+            tienePreguntaPendiente: jest.fn(async () => false),
+            responderSiSigue: jest.fn(async () => null),
+            salirDeLaLista: jest.fn(async () => []),
             ofrecerOtroCupo: jest.fn(async () => false),
           },
         },

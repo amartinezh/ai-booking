@@ -96,6 +96,8 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     APPOINTMENT_BOOKED_PANEL: { categoria: 'CITAS', titulo: 'Agendó una cita desde el panel' },
     APPOINTMENT_MOVED_PANEL: { categoria: 'CITAS', titulo: 'Cambió la fecha o el médico de una cita', aviso: true },
     APPOINTMENT_EDITED_PANEL: { categoria: 'CITAS', titulo: 'Corrigió la EPS o el nombre del paciente de una cita' },
+    // 🚪 Lista de espera (2026-11-26, docs/PLAN_PERMANENCIA_LISTA_ESPERA.md L7).
+    WAITLIST_ENTRY_REMOVED: { categoria: 'CITAS', titulo: 'Quitó a una persona de la lista de espera', aviso: true },
     PATIENT_MESSAGE_SENT: { categoria: 'AVISOS', titulo: 'Le escribió a un paciente desde el panel' },
 
     // ── Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md, 2026-11-05) ──

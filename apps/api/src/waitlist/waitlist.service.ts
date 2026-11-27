@@ -28,7 +28,10 @@ import {
 } from '../appointments/sabado-rural';
 import { ConfigService } from '@nestjs/config';
 import { ChatbotService } from '../chatbot/chatbot.service';
-import { cupoApartadoKey } from '../chatbot/chatbot.constants';
+import {
+  COMO_SALIR_DE_LA_LISTA,
+  cupoApartadoKey,
+} from '../chatbot/chatbot.constants';
 import { RedisService } from '../redis/redis.service';
 import { getErrorMessage } from '../common/error-message.util';
 import { AppointmentsService } from '../appointments/appointments.service';
@@ -76,6 +79,22 @@ interface WaitlistNotificationMetadata {
   datosPendientesDesde?: string;
   /** La cita que consiguió por otro camino. */
   appointmentId?: string;
+  /**
+   * 🙋 ISO 8601: desde cuándo se le preguntó si todavía necesita la cita (2026-11-26,
+   * docs/PLAN_PERMANENCIA_LISTA_ESPERA.md L5-L6). Mientras, no se le ofrecen cupos;
+   * sin respuesta en `HORAS_PARA_DECIR_SI_SIGUE`, sale de la lista.
+   */
+  preguntaSigueDesde?: string;
+  /**
+   * Con cuántos días rechazados se le vuelve a preguntar. Sin el campo,
+   * `DIAS_RECHAZADOS_PARA_PREGUNTAR`; al contestar que sigue, 3 días más.
+   */
+  preguntarConDias?: number;
+  /** Las citas de otro servicio por las que ya se le preguntó (L6): no se repite. */
+  citasPreguntadas?: string[];
+  /** Al salir porque lo pidió: lo que escribió (recortado) y cuándo. */
+  textoDeSalida?: string;
+  salioEn?: string;
 }
 
 /** La oferta que venció sin respuesta (`WaitlistEntry.metadata.ultimaOferta`). */
@@ -112,8 +131,8 @@ function quienesPuedenTomarElCupo(
 
 /**
  * Lo que la entrada conserva mientras sigue esperando: los cupos y los días que ya
- * rechazó, y cuántas ofertas seguidas dejó vencer. Sin nada, la columna queda vacía
- * (como antes).
+ * rechazó, cuántas ofertas seguidas dejó vencer y lo de la pregunta de si todavía
+ * necesita la cita (2026-11-26). Sin nada, la columna queda vacía (como antes).
  */
 function loQueConserva(
   m: WaitlistNotificationMetadata,
@@ -121,10 +140,14 @@ function loQueConserva(
   const rechazados = m.rechazados ?? [];
   const diasRechazados = m.diasRechazados ?? [];
   const sinRespuesta = m.sinRespuesta ?? 0;
+  const citasPreguntadas = m.citasPreguntadas ?? [];
   if (
     rechazados.length === 0 &&
     diasRechazados.length === 0 &&
-    sinRespuesta === 0
+    sinRespuesta === 0 &&
+    citasPreguntadas.length === 0 &&
+    m.preguntarConDias === undefined &&
+    m.preguntaSigueDesde === undefined
   ) {
     return Prisma.DbNull;
   }
@@ -132,6 +155,13 @@ function loQueConserva(
     ...(rechazados.length > 0 ? { rechazados } : {}),
     ...(diasRechazados.length > 0 ? { diasRechazados } : {}),
     ...(sinRespuesta > 0 ? { sinRespuesta } : {}),
+    ...(citasPreguntadas.length > 0 ? { citasPreguntadas } : {}),
+    ...(m.preguntarConDias !== undefined
+      ? { preguntarConDias: m.preguntarConDias }
+      : {}),
+    ...(m.preguntaSigueDesde !== undefined
+      ? { preguntaSigueDesde: m.preguntaSigueDesde }
+      : {}),
   };
 }
 
@@ -234,17 +264,58 @@ export const ESPERA_DATOS_DEL_PACIENTE_MS = 70 * 60_000;
 export const HORAS_RESPUESTA_TARDIA = 24;
 
 /**
+ * 🙋 Con cuántos días rechazados se le pregunta si todavía necesita la cita en vez de
+ * seguirle ofreciendo cupos (2026-11-26, docs/PLAN_PERMANENCIA_LISTA_ESPERA.md L5).
+ * Del 23-oct al 26-nov, de 111 ofertas a quien ya había dicho NO tres veces solo 4
+ * terminaron en cita (3,6 %), contra 37,6 % sin ningún NO y ~24 % con uno o dos; y
+ * cada una dejó el cupo apartado media hora. Ese día la mitad de la cola (9 de 18)
+ * llevaba tres NO o más.
+ */
+export const DIAS_RECHAZADOS_PARA_PREGUNTAR = 3;
+
+/** Cuánto tiene para contestar si sigue; sin respuesta, sale de la lista. */
+export const HORAS_PARA_DECIR_SI_SIGUE = 24;
+
+/**
+ * La pregunta «¿todavía necesita la cita?» que el chat le hace tras un NO: por los
+ * días rechazados (L5) o porque tuvo cita de otro servicio después de anotarse (L6:
+ * 15 personas atendidas así siguieron recibiendo 46 ofertas, la mayoría con una
+ * lectura de exámenes ya hecha).
+ */
+export interface PreguntaSiSigue {
+  servicio: string;
+  dias: number;
+  otraCita?: { servicio: string; fecha: Date };
+}
+
+/** Por qué una entrada salió de la lista sin tomar un cupo de ella. */
+export type MotivoDeSalida = 'PIDIO_SALIR' | 'NO_CONFIRMO';
+
+/** Una entrada que espera (o tiene una oferta por contestar) de un número. */
+export interface EntradaActiva {
+  id: string;
+  status: 'WAITING' | 'NOTIFIED';
+  nombre: string;
+  servicio: string;
+  /** Tiene una oferta por contestar o le venció una en las últimas 24 h. */
+  ofertaReciente: boolean;
+  /** Se le preguntó si todavía necesita la cita y no ha contestado. */
+  preguntaPendiente: boolean;
+}
+
+/**
  * Lo que pasó con una respuesta tardía (contestó después de vencer su oferta):
  *  - TOMAR: el cupo sigue libre y es suyo (el chat lo reserva como un SÍ a tiempo).
  *  - OFRECIDO: ese ya no, pero se le ofreció otro cupo libre (el mensaje ya salió).
  *  - SIN_CUPO: ni ese ni otro; sigue en la lista en su puesto.
- *  - RECHAZADO: contestó NO; sigue en la lista sin ese cupo ni ese día.
+ *  - RECHAZADO: contestó NO; sigue en la lista sin ese cupo ni ese día (y, si toca,
+ *    se le pregunta si todavía necesita la cita).
  */
 export type RespuestaTardia =
   | { tipo: 'TOMAR'; slotId: string; patientId: string; epsId: string | null }
   | { tipo: 'OFRECIDO' }
   | { tipo: 'SIN_CUPO'; slotDate: Date }
-  | { tipo: 'RECHAZADO' };
+  | { tipo: 'RECHAZADO'; pregunta?: PreguntaSiSigue };
 
 /** `lista` con `valor` al final, sin repetir. */
 const conUnoMas = (lista: string[] | undefined, valor: string): string[] =>
@@ -428,6 +499,13 @@ export class WaitlistService {
         orderBy: { createdAt: 'asc' },
       });
       if (!candidate) break;
+
+      // 🙋 Se le preguntó si todavía necesita la cita y no ha contestado: no se le
+      // ofrecen cupos mientras tanto (2026-11-26).
+      if (readWaitlistMetadata(candidate.metadata).preguntaSigueDesde) {
+        saltados.push(candidate.id);
+        continue;
+      }
 
       // 🙅 Ya dijo que no a este cupo o a otro de ese día: se sigue con el que va
       // detrás, y ella conserva su puesto para otro día.
@@ -707,12 +785,14 @@ export class WaitlistService {
     epsId: string | null;
     /** No tenía una oferta por contestar (2026-11-03: puede ser una respuesta tardía). */
     sinOferta?: true;
+    /** Dijo NO y toca preguntarle si todavía necesita la cita (2026-11-26, L5-L6). */
+    preguntarSiSigue?: PreguntaSiSigue;
   }> {
     const { whatsappId, organizationId, confirmed } = params;
 
     const entry = await this.prisma.waitlistEntry.findFirst({
       where: { whatsappId, organizationId, status: 'NOTIFIED' },
-      include: { patient: true },
+      include: { patient: true, service: true },
     });
 
     if (!entry) {
@@ -737,26 +817,32 @@ export class WaitlistService {
     // como le dice el mensaje («usted sigue en la lista»). Antes salía de ella
     // (CANCELLED) aunque el mensaje dijera lo contrario (2026-10-31). Ese cupo y los
     // de ese día no se le vuelven a ofrecer; el cupo pasa al siguiente.
+    const despues: WaitlistNotificationMetadata = slotId
+      ? {
+          rechazados: conUnoMas(metadata.rechazados, slotId),
+          diasRechazados: metadata.slotDate
+            ? conUnoMas(
+                metadata.diasRechazados,
+                diaLocal(
+                  new Date(metadata.slotDate),
+                  await this.zonaDeLaClinica(organizationId),
+                ),
+              )
+            : metadata.diasRechazados,
+          preguntarConDias: metadata.preguntarConDias,
+          citasPreguntadas: metadata.citasPreguntadas,
+        }
+      : metadata;
+    // 🙋 Al tercer día rechazado, o si tuvo cita de otro servicio, se le pregunta si
+    // todavía necesita la cita (2026-11-26) y mientras no se le ofrecen cupos.
+    const pregunta = await this.preguntaAlRechazar(entry, despues);
     await this.prisma.waitlistEntry.update({
       where: { id: entry.id },
       data: {
         status: 'WAITING',
         notifiedAt: null,
         expiresAt: null,
-        metadata: slotId
-          ? loQueConserva({
-              rechazados: conUnoMas(metadata.rechazados, slotId),
-              diasRechazados: metadata.slotDate
-                ? conUnoMas(
-                    metadata.diasRechazados,
-                    diaLocal(
-                      new Date(metadata.slotDate),
-                      await this.zonaDeLaClinica(organizationId),
-                    ),
-                  )
-                : metadata.diasRechazados,
-            })
-          : loQueConserva(metadata),
+        metadata: pregunta ? pregunta.metadata : loQueConserva(despues),
       },
     });
 
@@ -772,7 +858,12 @@ export class WaitlistService {
       });
     }
 
-    return { slotId: null, patientId: null, epsId: null };
+    return {
+      slotId: null,
+      patientId: null,
+      epsId: null,
+      ...(pregunta ? { preguntarSiSigue: pregunta.pregunta } : {}),
+    };
   }
 
   /**
@@ -1055,7 +1146,7 @@ export class WaitlistService {
             entry.whatsappId,
             sale
               ? `No alcanzamos a recibir su respuesta a dos ofertas seguidas, así que salió de la *lista de espera*. ⏰\n\nSi todavía necesita la cita, escríbame *"Hola"* y le anoto de nuevo.`
-              : `No alcanzamos a recibir su respuesta, así que el cupo${fecha ? ` del *${fecha}*` : ''} pasó a la siguiente persona. ⏰\n\nUsted sigue en la *lista de espera*, en su mismo puesto, y le aviso por aquí apenas haya otro cupo.`,
+              : `No alcanzamos a recibir su respuesta, así que el cupo${fecha ? ` del *${fecha}*` : ''} pasó a la siguiente persona. ⏰\n\nUsted sigue en la *lista de espera*, en su mismo puesto, y le aviso por aquí apenas haya otro cupo.\n\n${COMO_SALIR_DE_LA_LISTA}`,
             entry.organizationId,
           );
         } catch {
@@ -1137,24 +1228,31 @@ export class WaitlistService {
       rechazados: m.rechazados,
       diasRechazados: m.diasRechazados,
       sinRespuesta: 0,
+      preguntarConDias: m.preguntarConDias,
+      citasPreguntadas: m.citasPreguntadas,
     };
 
     if (!acepta) {
+      const despues: WaitlistNotificationMetadata = {
+        ...base,
+        rechazados: conUnoMas(m.rechazados, u.slotId),
+        diasRechazados: conUnoMas(
+          m.diasRechazados,
+          diaLocal(slotDate, await this.zonaDeLaClinica(organizationId)),
+        ),
+      };
+      const pregunta = await this.preguntaAlRechazar(entry, despues);
       await this.prisma.waitlistEntry.update({
         where: { id: entry.id },
         data: {
           status: 'WAITING',
-          metadata: loQueConserva({
-            ...base,
-            rechazados: conUnoMas(m.rechazados, u.slotId),
-            diasRechazados: conUnoMas(
-              m.diasRechazados,
-              diaLocal(slotDate, await this.zonaDeLaClinica(organizationId)),
-            ),
-          }),
+          metadata: pregunta ? pregunta.metadata : loQueConserva(despues),
         },
       });
-      return { tipo: 'RECHAZADO' };
+      return {
+        tipo: 'RECHAZADO',
+        ...(pregunta ? { pregunta: pregunta.pregunta } : {}),
+      };
     }
 
     // ¿El mismo cupo sigue libre? Las mismas reglas de una oferta.
@@ -1378,6 +1476,292 @@ export class WaitlistService {
         `No se pudo ofrecer a la lista de espera el cupo ${slotId} que liberó el hospital: ${getErrorMessage(error)}`,
       );
       return false;
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // 6. SALIR DE LA LISTA Y «¿TODAVÍA NECESITA LA CITA?»
+  //    (2026-11-26, docs/PLAN_PERMANENCIA_LISTA_ESPERA.md)
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Las entradas de este número que esperan o tienen una oferta por contestar, en
+   * orden de llegada. Vacío si no está en la lista.
+   */
+  async entradasActivas(params: {
+    whatsappId: string;
+    organizationId: string;
+  }): Promise<EntradaActiva[]> {
+    const entradas = await this.prisma.waitlistEntry.findMany({
+      where: {
+        whatsappId: params.whatsappId,
+        organizationId: params.organizationId,
+        status: { in: ['WAITING', 'NOTIFIED'] },
+      },
+      include: { patient: true, service: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const desde = Date.now() - HORAS_RESPUESTA_TARDIA * 3_600_000;
+    return entradas.map((e) => {
+      const m = readWaitlistMetadata(e.metadata);
+      const vencida = m.ultimaOferta
+        ? new Date(m.ultimaOferta.vencioIso).getTime() >= desde
+        : false;
+      return {
+        id: e.id,
+        status: e.status as 'WAITING' | 'NOTIFIED',
+        nombre: e.patient.fullName,
+        servicio: e.service.name,
+        ofertaReciente: e.status === 'NOTIFIED' || vencida,
+        preguntaPendiente: !!m.preguntaSigueDesde,
+      };
+    });
+  }
+
+  /**
+   * 🚪 Saca de la lista las entradas de este número (las de `ids`, o todas): quedan
+   * `CANCELLED` con el motivo, lo que escribió y cuándo. Si alguna tenía un cupo
+   * ofrecido, se suelta y pasa al siguiente, como tras un NO. Devuelve los servicios
+   * de las que salieron (vacío si ya no estaban).
+   */
+  async salirDeLaLista(params: {
+    whatsappId: string;
+    organizationId: string;
+    ids?: string[];
+    texto?: string | null;
+    motivo: MotivoDeSalida;
+  }): Promise<string[]> {
+    const { whatsappId, organizationId, ids, texto, motivo } = params;
+    const entradas = await this.prisma.waitlistEntry.findMany({
+      where: {
+        whatsappId,
+        organizationId,
+        status: { in: ['WAITING', 'NOTIFIED'] },
+        ...(ids ? { id: { in: ids } } : {}),
+      },
+      include: { service: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const servicios: string[] = [];
+    for (const e of entradas) {
+      const m = readWaitlistMetadata(e.metadata);
+      const { preguntaSigueDesde: _pregunta, ...sinPregunta } = m;
+      // Con el estado que se leyó: si en medio cambió (tomó el cupo), no se toca.
+      const { count } = await this.prisma.waitlistEntry.updateMany({
+        where: { id: e.id, status: e.status },
+        data: {
+          status: 'CANCELLED',
+          notifiedAt: null,
+          expiresAt: null,
+          metadata: {
+            ...conservadoComoObjeto(sinPregunta),
+            motivo,
+            salioEn: new Date().toISOString(),
+            ...(texto ? { textoDeSalida: texto.slice(0, 300) } : {}),
+          },
+        },
+      });
+      if (count === 0) continue;
+      servicios.push(e.service.name);
+      this.logger.log(
+        `La entrada ${e.id} sale de la lista de espera (${motivo})`,
+      );
+      if (e.status === 'NOTIFIED' && m.pendingSlotId) {
+        await this.soltarCupo(organizationId, m.pendingSlotId, whatsappId);
+        await this.notifyWaitlist({
+          slotId: m.pendingSlotId,
+          serviceId: e.serviceId,
+          epsId: epsDelCupoGuardada(m, e.epsId),
+          organizationId,
+          doctorName: m.doctorName ?? '',
+          slotDate: m.slotDate ? new Date(m.slotDate) : new Date(),
+        });
+      }
+    }
+    return servicios;
+  }
+
+  /** ¿Este número tiene la pregunta «¿todavía necesita la cita?» sin contestar? */
+  async tienePreguntaPendiente(params: {
+    whatsappId: string;
+    organizationId: string;
+  }): Promise<boolean> {
+    const entradas = await this.entradasActivas(params);
+    return entradas.some((e) => e.preguntaPendiente);
+  }
+
+  /**
+   * 🙋 Contestó la pregunta «¿todavía necesita la cita?». SÍ: sigue en su puesto y
+   * se le vuelve a preguntar con 3 días rechazados más. NO: sale de la lista. null
+   * si no tenía la pregunta pendiente (ya venció o ya contestó).
+   */
+  async responderSiSigue(params: {
+    whatsappId: string;
+    organizationId: string;
+    sigue: boolean;
+    texto?: string | null;
+  }): Promise<{ servicios: string[] } | null> {
+    const { whatsappId, organizationId, sigue, texto } = params;
+    const pendientes = (
+      await this.prisma.waitlistEntry.findMany({
+        where: { whatsappId, organizationId, status: 'WAITING' },
+        include: { service: true },
+      })
+    ).filter((e) => !!readWaitlistMetadata(e.metadata).preguntaSigueDesde);
+    if (pendientes.length === 0) return null;
+    if (!sigue) {
+      return {
+        servicios: await this.salirDeLaLista({
+          whatsappId,
+          organizationId,
+          ids: pendientes.map((e) => e.id),
+          texto,
+          motivo: 'PIDIO_SALIR',
+        }),
+      };
+    }
+    for (const e of pendientes) {
+      const { preguntaSigueDesde: _pregunta, ...m } = readWaitlistMetadata(
+        e.metadata,
+      );
+      await this.prisma.waitlistEntry.update({
+        where: { id: e.id },
+        data: {
+          metadata: loQueConserva({
+            ...m,
+            sinRespuesta: 0,
+            preguntarConDias:
+              (m.diasRechazados?.length ?? 0) + DIAS_RECHAZADOS_PARA_PREGUNTAR,
+          }),
+        },
+      });
+    }
+    this.logger.log(
+      `${whatsappId} todavía necesita la cita: sigue en la lista de espera con su turno`,
+    );
+    return { servicios: pendientes.map((e) => e.service.name) };
+  }
+
+  /**
+   * ⏳ Quien no contestó en `HORAS_PARA_DECIR_SI_SIGUE` si todavía necesita la cita
+   * sale de la lista (`NO_CONFIRMO`): el mensaje de la pregunta se lo advirtió. Sin
+   * aviso: WhatsApp ya no deja escribirle texto. Devuelve cuántas salieron. Nunca lanza.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async vencerPreguntasSinRespuesta(ahora = new Date()): Promise<number> {
+    try {
+      const limite = ahora.getTime() - HORAS_PARA_DECIR_SI_SIGUE * 3_600_000;
+      const candidatas = await this.prisma.waitlistEntry.findMany({
+        where: { status: 'WAITING', updatedAt: { lte: new Date(limite) } },
+        select: {
+          id: true,
+          whatsappId: true,
+          organizationId: true,
+          metadata: true,
+        },
+      });
+      let salieron = 0;
+      for (const e of candidatas) {
+        const desde = readWaitlistMetadata(e.metadata).preguntaSigueDesde;
+        if (!desde || new Date(desde).getTime() > limite) continue;
+        salieron += (
+          await this.salirDeLaLista({
+            whatsappId: e.whatsappId,
+            organizationId: e.organizationId,
+            ids: [e.id],
+            motivo: 'NO_CONFIRMO',
+          })
+        ).length;
+      }
+      return salieron;
+    } catch (error: unknown) {
+      this.logger.error(
+        `Lista de espera: no se pudo revisar a quienes no contestaron si todavía necesitan la cita: ${getErrorMessage(error)}`,
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * Tras un NO: si ya van `preguntarConDias` días rechazados (3 de entrada), o si
+   * tuvo una cita de otro servicio después de anotarse por la que no se le ha
+   * preguntado, la pregunta y la metadata que la deja pendiente. null si no toca.
+   * Si la consulta de la otra cita falla, solo cuentan los días.
+   */
+  private async preguntaAlRechazar(
+    entry: {
+      patientId: string;
+      serviceId: string;
+      organizationId: string;
+      createdAt: Date;
+      service?: { name: string } | null;
+    },
+    m: WaitlistNotificationMetadata,
+  ): Promise<{
+    pregunta: PreguntaSiSigue;
+    metadata: Prisma.InputJsonObject;
+  } | null> {
+    const dias = m.diasRechazados?.length ?? 0;
+    const umbral = m.preguntarConDias ?? DIAS_RECHAZADOS_PARA_PREGUNTAR;
+    const otra = await this.citaDeOtroServicio(entry, m.citasPreguntadas ?? []);
+    if (dias < umbral && !otra) return null;
+    return {
+      pregunta: {
+        servicio: entry.service?.name ?? '',
+        dias,
+        ...(otra
+          ? { otraCita: { servicio: otra.servicio, fecha: otra.fecha } }
+          : {}),
+      },
+      metadata: {
+        ...conservadoComoObjeto({
+          ...m,
+          ...(otra
+            ? { citasPreguntadas: conUnoMas(m.citasPreguntadas, otra.id) }
+            : {}),
+        }),
+        preguntaSigueDesde: new Date().toISOString(),
+      },
+    };
+  }
+
+  /**
+   * La cita más reciente (no cancelada) de otro servicio que se le dio después de
+   * anotarse, por la que no se le ha preguntado. null si no hay o si falla.
+   */
+  private async citaDeOtroServicio(
+    entry: {
+      patientId: string;
+      serviceId: string;
+      organizationId: string;
+      createdAt: Date;
+    },
+    yaPreguntadas: string[],
+  ): Promise<{ id: string; servicio: string; fecha: Date } | null> {
+    try {
+      const cita = await this.prisma.appointment.findFirst({
+        where: {
+          organizationId: entry.organizationId,
+          patientId: entry.patientId,
+          status: { not: 'CANCELLED' },
+          createdAt: { gt: entry.createdAt },
+          ...(yaPreguntadas.length > 0 ? { id: { notIn: yaPreguntadas } } : {}),
+          scheduleSlot: { serviceId: { not: entry.serviceId } },
+        },
+        include: { scheduleSlot: { include: { service: true } } },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!cita?.scheduleSlot?.service) return null;
+      return {
+        id: cita.id,
+        servicio: cita.scheduleSlot.service.name,
+        fecha: cita.scheduleSlot.startTime,
+      };
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo revisar si ${entry.patientId} tuvo cita de otro servicio: ${getErrorMessage(error)}`,
+      );
+      return null;
     }
   }
 

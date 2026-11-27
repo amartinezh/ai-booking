@@ -407,6 +407,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     ofertaPendiente: jest.Mock;
     respuestaTardia: jest.Mock;
     ofrecerOtroCupo: jest.Mock;
+    entradasActivas: jest.Mock;
+    tienePreguntaPendiente: jest.Mock;
+    responderSiSigue: jest.Mock;
+    salirDeLaLista: jest.Mock;
   };
   // 📨 Plantillas de WhatsApp: por defecto la clínica no tiene ninguna.
   let plantillas: { findTemplate: jest.Mock; sendTemplate: jest.Mock };
@@ -532,6 +536,12 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       ofertaPendiente: jest.fn(async () => null),
       // Sin oferta vencida reciente, salvo que la prueba la ponga.
       respuestaTardia: jest.fn(async () => null),
+      // 🚪 Salir de la lista / «¿todavía necesita la cita?» (2026-11-26): nadie
+      // está en la lista, salvo que la prueba lo ponga.
+      entradasActivas: jest.fn(async () => []),
+      tienePreguntaPendiente: jest.fn(async () => false),
+      responderSiSigue: jest.fn(async () => null),
+      salirDeLaLista: jest.fn(async () => []),
       // Sin otro cupo libre que ofrecer, salvo que la prueba lo ponga.
       ofrecerOtroCupo: jest.fn(async () => false),
     };
@@ -4382,6 +4392,262 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   // ──────────────────────────────────────────────────────────────────
   // 5. AISLAMIENTO MULTI-TENANT
   // ──────────────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────
+  // 4S. Salir de la lista y «¿todavía necesita la cita?» (2026-11-26,
+  // docs/PLAN_PERMANENCIA_LISTA_ESPERA.md). El médico director del hospital
+  // escribió «Quiero salir de la lista de espera» y recibió el menú de servicios;
+  // otro paciente escribió «Ya no lo necesito» y recibió «usted permanece en la
+  // lista». Los dos siguieron recibiendo ofertas.
+  // ──────────────────────────────────────────────────────────────────
+  describe('4S. Salir de la lista de espera', () => {
+    const entradaActiva = (over: Record<string, unknown> = {}) => ({
+      id: 'wl-1',
+      status: 'WAITING',
+      nombre: 'Jorge Iván',
+      servicio: 'Medicina General',
+      ofertaReciente: false,
+      preguntaPendiente: false,
+      ...over,
+    });
+
+    it('«Quiero salir de la lista de espera» desde el menú de servicios: sale y se le confirma', async () => {
+      waitlist.entradasActivas.mockResolvedValue([entradaActiva()]);
+      waitlist.salirDeLaLista.mockResolvedValue(['Medicina General']);
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_SPECIALTY,
+      );
+
+      await say('Quiero salir de la lista de espera');
+
+      expect(waitlist.salirDeLaLista).toHaveBeenCalledWith({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        ids: ['wl-1'],
+        texto: 'Quiero salir de la lista de espera',
+        motivo: 'PIDIO_SALIR',
+      });
+      expect(lastSent()).toContain(
+        'le saqué de la lista de espera de *Medicina General*',
+      );
+      expect(lastSent()).toContain('No le enviaré más ofertas');
+      expect(lastSent()).not.toMatch(/¿Qué servicio|no logré entender/i);
+      expect([null, ChatState.IDLE]).toContain(await state());
+      // Nunca llega a la IA.
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+    });
+
+    it('«Ya no lo necesito muchas gracias» a una oferta: sale de la lista (no es un NO a ese cupo)', async () => {
+      waitlist.entradasActivas.mockResolvedValue([
+        entradaActiva({ status: 'NOTIFIED', ofertaReciente: true }),
+      ]);
+      waitlist.salirDeLaLista.mockResolvedValue(['Medicina General']);
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_WAITLIST_CONFIRM,
+      );
+
+      await say('Ya no lo necesito muchas gracias');
+
+      expect(waitlist.confirmFromWaitlist).not.toHaveBeenCalled();
+      expect(waitlist.salirDeLaLista).toHaveBeenCalled();
+      expect(lastSent()).toContain('le saqué de la lista de espera');
+      expect(lastSent()).not.toMatch(/sigue en (nuestra|la) lista/);
+    });
+
+    it('«Ya no la necesito» sin oferta y con una cita próxima: sigue el camino de siempre (puede ser esa cita)', async () => {
+      waitlist.entradasActivas.mockResolvedValue([entradaActiva()]);
+      jest.spyOn(service as any, 'tieneCitaProxima').mockResolvedValue(true);
+
+      await say('Ya no la necesito');
+
+      expect(waitlist.salirDeLaLista).not.toHaveBeenCalled();
+    });
+
+    it('«Salir de la lista» de quien no está en la lista: el camino de siempre', async () => {
+      await say('Salir de la lista');
+      expect(waitlist.entradasActivas).toHaveBeenCalled();
+      expect(waitlist.salirDeLaLista).not.toHaveBeenCalled();
+    });
+
+    it('dos personas del mismo número en la lista: pregunta a quién y saca a la elegida', async () => {
+      waitlist.entradasActivas.mockResolvedValue([
+        entradaActiva({ id: 'wl-1', nombre: 'Agustín' }),
+        entradaActiva({ id: 'wl-2', nombre: 'Angela' }),
+      ]);
+      waitlist.salirDeLaLista.mockResolvedValue(['Medicina General']);
+
+      await say('sáquenme de la lista por favor');
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_SALIDA);
+      expect(lastSent()).toContain('*A)* Agustín');
+      expect(lastSent()).toContain('*B)* Angela');
+      expect(lastSent()).toContain('*C)* Todas');
+      expect(waitlist.salirDeLaLista).not.toHaveBeenCalled();
+
+      await say('Z');
+      expect(lastSent()).toContain('No logré ubicar esa opción');
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_SALIDA);
+
+      await say('B');
+      expect(waitlist.salirDeLaLista).toHaveBeenCalledWith(
+        expect.objectContaining({ ids: ['wl-2'], motivo: 'PIDIO_SALIR' }),
+      );
+      expect(lastSent()).toContain('le saqué de la lista de espera');
+      expect([null, ChatState.IDLE]).toContain(await state());
+    });
+
+    it('con una oferta por contestar, sale esa entrada sin preguntar a quién (aunque haya otra persona en la lista)', async () => {
+      waitlist.entradasActivas.mockResolvedValue([
+        entradaActiva({
+          id: 'wl-1',
+          nombre: 'Agustín',
+          status: 'NOTIFIED',
+          ofertaReciente: true,
+        }),
+        entradaActiva({ id: 'wl-2', nombre: 'Angela' }),
+      ]);
+      await say('Ya no lo necesito muchas gracias');
+      expect(waitlist.salirDeLaLista).toHaveBeenCalledWith(
+        expect.objectContaining({ ids: ['wl-1'] }),
+      );
+      expect(await state()).not.toBe(ChatState.AWAITING_WAITLIST_SALIDA);
+    });
+
+    it('«las dos»: saca a todas', async () => {
+      waitlist.entradasActivas.mockResolvedValue([
+        entradaActiva({ id: 'wl-1', nombre: 'Agustín' }),
+        entradaActiva({ id: 'wl-2', nombre: 'Angela' }),
+      ]);
+      await say('Salir de la lista');
+      await say('las dos');
+      expect(waitlist.salirDeLaLista).toHaveBeenCalledWith(
+        expect.objectContaining({ ids: ['wl-1', 'wl-2'] }),
+      );
+    });
+
+    describe('«¿todavía necesita la cita?» tras el tercer día rechazado', () => {
+      const conPregunta = () => {
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_WAITLIST_CONFIRM,
+        );
+        waitlist.confirmFromWaitlist.mockResolvedValue({
+          slotId: null,
+          patientId: null,
+          epsId: null,
+          preguntarSiSigue: { servicio: 'Medicina General', dias: 3 },
+        });
+      };
+
+      it('el NO del tercer día recibe la pregunta en vez de «usted sigue en la lista»', async () => {
+        conPregunta();
+        await say('No');
+        expect(lastSent()).toContain('cupos de 3 días distintos');
+        expect(lastSent()).toContain(
+          '¿Todavía necesita la cita de *Medicina General*?',
+        );
+        expect(lastSent()).toContain('antes de mañana a esta hora');
+        expect(lastSent()).not.toMatch(/sigue en nuestra lista/);
+        expect(await state()).toBe(ChatState.AWAITING_WAITLIST_SIGUE);
+      });
+
+      it('SÍ: sigue en la lista, en su puesto', async () => {
+        conPregunta();
+        await say('No');
+        waitlist.responderSiSigue.mockResolvedValue({
+          servicios: ['Medicina General'],
+        });
+        await say('Sí');
+        expect(waitlist.responderSiSigue).toHaveBeenCalledWith({
+          whatsappId: SENDER,
+          organizationId: ORG_ID,
+          sigue: true,
+          texto: 'Sí',
+        });
+        expect(lastSent()).toContain('sigue en la *lista de espera*');
+        expect([null, ChatState.IDLE]).toContain(await state());
+      });
+
+      it('NO: sale de la lista', async () => {
+        conPregunta();
+        await say('No');
+        waitlist.responderSiSigue.mockResolvedValue({
+          servicios: ['Medicina General'],
+        });
+        await say('No');
+        expect(waitlist.responderSiSigue).toHaveBeenCalledWith(
+          expect.objectContaining({ sigue: false }),
+        );
+        expect(lastSent()).toContain('le saqué de la lista de espera');
+      });
+
+      it('otra cosa: se le repite qué contestar y sigue esperando', async () => {
+        conPregunta();
+        await say('No');
+        await say('mmm');
+        expect(lastSent()).toContain('necesito un *SÍ* o un *NO*');
+        expect(waitlist.responderSiSigue).not.toHaveBeenCalled();
+        expect(await state()).toBe(ChatState.AWAITING_WAITLIST_SIGUE);
+      });
+
+      it('L6: con una cita de otro servicio, la pregunta la nombra', async () => {
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_WAITLIST_CONFIRM,
+        );
+        waitlist.confirmFromWaitlist.mockResolvedValue({
+          slotId: null,
+          patientId: null,
+          epsId: null,
+          preguntarSiSigue: {
+            servicio: 'Medicina General',
+            dias: 1,
+            otraCita: {
+              servicio: 'Lectura de exámenes',
+              fecha: new Date(Date.now() - 2 * 86_400_000),
+            },
+          },
+        });
+        await say('No');
+        expect(lastSent()).toMatch(
+          /Vi que tuvo cita de \*Lectura de exámenes\* el \*/,
+        );
+      });
+
+      it('un «Sí» horas después, con la conversación cerrada, también la contesta', async () => {
+        waitlist.tienePreguntaPendiente.mockResolvedValue(true);
+        waitlist.responderSiSigue.mockResolvedValue({
+          servicios: ['Medicina General'],
+        });
+        await say('Sí');
+        expect(waitlist.responderSiSigue).toHaveBeenCalledWith(
+          expect.objectContaining({ sigue: true }),
+        );
+        expect(waitlist.respuestaTardia).not.toHaveBeenCalled();
+        expect(lastSent()).toContain('sigue en la *lista de espera*');
+      });
+
+      it('un NO tardío del tercer día también pregunta', async () => {
+        waitlist.respuestaTardia.mockResolvedValue({
+          tipo: 'RECHAZADO',
+          pregunta: { servicio: 'Medicina General', dias: 3 },
+        });
+        await say('No');
+        expect(lastSent()).toContain('¿Todavía necesita la cita');
+        expect(await state()).toBe(ChatState.AWAITING_WAITLIST_SIGUE);
+      });
+    });
+
+    it('la oferta, la respuesta al NO y la anotación dicen cómo salir', async () => {
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_WAITLIST_CONFIRM,
+      );
+      await say('No');
+      expect(lastSent()).toContain('escriba *Salir de la lista*');
+    });
+  });
+
   // ──────────────────────────────────────────────────────────────────
   // 4D. Al aceptar un cupo de la lista, el hospital no tiene al paciente y le
   // faltan su nacimiento o su sexo para crearlo (2026-11-25). Antes se

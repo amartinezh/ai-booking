@@ -44,6 +44,8 @@ const arg = (i: number) =>
     fechaAntes: 'lunes 10 de junio, 10:00 a. m.',
     fechaNueva: 'martes 11 de junio, 9:00 a. m.',
     medicoNuevo: 'Dr(a). Gómez',
+    // 🙋 «¿Todavía necesita la cita?» (2026-11-26): los días rechazados.
+    dias: 3,
   });
 
 /**

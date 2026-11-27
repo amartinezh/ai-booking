@@ -27,6 +27,7 @@ import {
   letrasOpcionesConsulta,
   accionesNoDisponibles,
   unaOVariasCitas,
+  unirConY,
   type CanalDelBot,
   type OpcionConsulta,
 } from './chatbot.constants';
@@ -55,6 +56,7 @@ import { esPreguntaEnVezDeRespuesta } from './pregunta-al-confirmar';
 import { servicioQueNoSeAgenda } from './servicio-no-agendable';
 import { dudaSobreLaCita } from './duda-cita-agendada';
 import { pideListaDeEspera } from './pide-lista-de-espera';
+import { pideSalirDeLaLista } from './salir-de-la-lista';
 import {
   esCancelarASecas,
   nombraCambioDeCita,
@@ -88,7 +90,10 @@ import {
   LimiteCitasService,
   type LimiteDelPaciente,
 } from 'src/appointments/limite-citas.service';
-import { WaitlistService } from 'src/waitlist/waitlist.service';
+import {
+  WaitlistService,
+  type PreguntaSiSigue,
+} from 'src/waitlist/waitlist.service';
 import {
   InteractionLogService,
   InteractionStatus,
@@ -277,6 +282,10 @@ const ESTADOS_SOLO_CONSULTA: ChatState[] = [
   ChatState.IDLE,
   ChatState.AWAITING_LOOKUP_CEDULA,
   ChatState.AWAITING_LOOKUP_CHOICE,
+  // Seguir en la lista de espera o salir de ella no agenda nada (2026-11-26): se
+  // puede con las operaciones apagadas.
+  ChatState.AWAITING_WAITLIST_SIGUE,
+  ChatState.AWAITING_WAITLIST_SALIDA,
 ];
 
 const ESTADOS_DE_CANCELAR: ChatState[] = [
@@ -2928,6 +2937,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
       `temp_waitlist_pending:${organizationId}:${senderId}`,
       `temp_waitlist_regimen:${organizationId}:${senderId}`,
+      this.salidaDeLaListaKey(organizationId, senderId),
       this.datosParaElHospitalKey(organizationId, senderId),
       `temp_eps_oferta_particular:${organizationId}:${senderId}`,
       this.padronRechazoKey(organizationId, senderId),
@@ -6392,6 +6402,17 @@ export class ChatbotService implements OnModuleInit {
       });
       return true;
     }
+    if (r.tipo === 'RECHAZADO' && r.pregunta) {
+      await this.enviarPreguntaSiSigue({
+        organizationId: p.organizationId,
+        senderId: p.senderId,
+        text: p.text,
+        MSGS: p.MSGS,
+        pregunta: r.pregunta,
+        metadata: { step: 'WAITLIST_TARDIA_NO' },
+      });
+      return true;
+    }
     const tz =
       (await this.organizacionDe(p.organizationId))?.timezone || undefined;
     const reply =
@@ -6436,6 +6457,26 @@ export class ChatbotService implements OnModuleInit {
     const decision = this.decisionSiNoSinPreguntas(p.text);
     const saludo = esSoloSaludo(p.text);
     if (!decisionOferta && !saludo) return false;
+    // 🙋 Un SÍ o un NO a «¿todavía necesita la cita?» que llega cuando la
+    // conversación ya se cerró (la pregunta vive 24 h en su entrada, 2026-11-26).
+    if (decision) {
+      try {
+        if (
+          await this.waitlistService.tienePreguntaPendiente({
+            whatsappId: p.senderId,
+            organizationId: p.organizationId,
+          })
+        ) {
+          await this.atenderPreguntaSiSigue(p);
+          return true;
+        }
+      } catch (error: unknown) {
+        // Sigue el camino de siempre (la oferta o la respuesta tardía).
+        this.logger.error(
+          `No se pudo revisar la pregunta de la lista de espera (org ${p.organizationId}): ${getErrorMessage(error)}`,
+        );
+      }
+    }
     try {
       const vigente = await this.waitlistService.ofertaPendiente({
         whatsappId: p.senderId,
@@ -6463,6 +6504,288 @@ export class ChatbotService implements OnModuleInit {
     }
     if (!decision) return false;
     return this.atenderRespuestaTardia({ ...p, acepta: decision === 'SI' });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 🚪 SALIR DE LA LISTA DE ESPERA Y «¿TODAVÍA NECESITA LA CITA?»
+  // (2026-11-26, docs/PLAN_PERMANENCIA_LISTA_ESPERA.md)
+  // ══════════════════════════════════════════════════════════════
+
+  private salidaDeLaListaKey(organizationId: string, senderId: string) {
+    return `temp_salida_lista:${organizationId}:${senderId}`;
+  }
+
+  /**
+   * 🚪 Pidió salir de la lista de espera (`pideSalirDeLaLista`, L1): la saca y se lo
+   * confirma, en cualquier paso. Si en el número esperan varias personas, pregunta a
+   * quién (L2). false si no es un pedido de salir, si el número no está en la lista
+   * o si dice «ya no la necesito» sin una oferta y con una cita próxima (puede
+   * hablar de esa cita: sigue el camino de siempre). Si algo falla, false.
+   */
+  private async atenderSalidaDeLaLista(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    currentState: ChatState;
+  }): Promise<boolean> {
+    const pedido = pideSalirDeLaLista(p.text);
+    if (!pedido) return false;
+    try {
+      const entradas = await this.waitlistService.entradasActivas({
+        whatsappId: p.senderId,
+        organizationId: p.organizationId,
+      });
+      if (entradas.length === 0) return false;
+      const conContexto = entradas.filter(
+        (e) => e.ofertaReciente || e.preguntaPendiente,
+      );
+      if (
+        pedido === 'NO_LA_NECESITA' &&
+        conContexto.length === 0 &&
+        (await this.tieneCitaProxima(p.organizationId, p.identity))
+      ) {
+        return false;
+      }
+      // Con una oferta (o la pregunta) por contestar, habla de esa entrada.
+      const elegibles = conContexto.length > 0 ? conContexto : entradas;
+      const personas = [...new Set(elegibles.map((e) => e.nombre))];
+      if (personas.length > 1) {
+        const opciones = personas.map((nombre) => ({
+          nombre,
+          ids: elegibles.filter((e) => e.nombre === nombre).map((e) => e.id),
+        }));
+        await this.redis.set(
+          this.salidaDeLaListaKey(p.organizationId, p.senderId),
+          JSON.stringify({ opciones, texto: p.text }),
+          'EX',
+          SESSION_TTL,
+        );
+        const reply = p.MSGS.salidaDeLaListaCual(
+          this.lineasDeSalida(opciones.map((o) => o.nombre)),
+        );
+        await this.smartReply(p.organizationId, p.senderId, reply);
+        await this.setUserState(
+          p.organizationId,
+          p.senderId,
+          ChatState.AWAITING_WAITLIST_SALIDA,
+        );
+        await this.auditSuccess(p.senderId, p.organizationId, {
+          userMessage: p.text,
+          botReply: reply,
+          metadata: { step: 'WAITLIST_SALIDA_CUAL', pedido },
+        });
+        return true;
+      }
+      await this.sacarDeLaLista({
+        ...p,
+        ids: elegibles.map((e) => e.id),
+        metadata: { pedido, estado: p.currentState },
+      });
+      return true;
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo atender el pedido de salir de la lista de espera (org ${p.organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
+  /** «*A)* Ana Gómez», …, y la última «Todas». */
+  private lineasDeSalida(nombres: string[]): string {
+    const lineas = nombres.map(
+      (n, i) => `*${String.fromCharCode(65 + i)})* ${n}`,
+    );
+    lineas.push(`*${String.fromCharCode(65 + nombres.length)})* Todas`);
+    return lineas.join('\n');
+  }
+
+  /** Saca esas entradas, se lo confirma, cierra la conversación y deja la constancia. */
+  private async sacarDeLaLista(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+    ids: string[];
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    const servicios = await this.waitlistService.salirDeLaLista({
+      whatsappId: p.senderId,
+      organizationId: p.organizationId,
+      ids: p.ids,
+      texto: p.text ?? null,
+      motivo: 'PIDIO_SALIR',
+    });
+    const reply = p.MSGS.salidaDeLaLista(unirConY([...new Set(servicios)]));
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.cleanUpSession(p.organizationId, p.senderId);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: {
+        step: 'WAITLIST_SALIDA',
+        entradas: p.ids,
+        salieron: servicios.length,
+        ...p.metadata,
+      },
+    });
+  }
+
+  /** 🚪 Contesta a quién saca de la lista (por letra; la última es «Todas»). */
+  private async atenderEleccionDeSalida(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<void> {
+    const raw = await this.redis.get(
+      this.salidaDeLaListaKey(p.organizationId, p.senderId),
+    );
+    type Guardado = { opciones: { nombre: string; ids: string[] }[] };
+    let guardado: Guardado | null = null;
+    try {
+      guardado = raw ? (JSON.parse(raw) as Guardado) : null;
+    } catch {
+      guardado = null;
+    }
+    if (!guardado?.opciones?.length) {
+      const reply = p.MSGS.sesionExpirada();
+      await this.smartReply(p.organizationId, p.senderId, reply);
+      await this.cleanUpSession(p.organizationId, p.senderId);
+      return;
+    }
+    const { opciones } = guardado;
+    const t = (p.text ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const letra = this.extractOptionLetter(p.text);
+    const indice = /\b(todas|todos|las dos|los dos|ambas|ambos)\b/.test(t)
+      ? opciones.length
+      : letra
+        ? letra.charCodeAt(0) - 65
+        : -1;
+    if (indice < 0 || indice > opciones.length) {
+      const reply = p.MSGS.salidaDeLaListaCual(
+        this.lineasDeSalida(opciones.map((o) => o.nombre)),
+        true,
+      );
+      await this.smartReply(p.organizationId, p.senderId, reply);
+      await this.auditSuccess(p.senderId, p.organizationId, {
+        userMessage: p.text || '[audio]',
+        botReply: reply,
+        metadata: { step: 'WAITLIST_SALIDA_CUAL_INVALIDA' },
+      });
+      return;
+    }
+    const ids =
+      indice === opciones.length
+        ? opciones.flatMap((o) => o.ids)
+        : opciones[indice].ids;
+    await this.sacarDeLaLista({
+      ...p,
+      ids,
+      metadata: { pedido: 'LISTA', eleccion: letra || 'TODAS' },
+    });
+  }
+
+  /**
+   * 🙋 Le pregunta si todavía necesita la cita (L5-L6), tras su NO. La conversación
+   * queda esperando el SÍ o el NO; la pregunta vive además en su entrada de la lista
+   * por 24 h, así que un «sí» más tarde, en reposo, también la contesta.
+   */
+  private async enviarPreguntaSiSigue(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+    pregunta: PreguntaSiSigue;
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    const timeZone =
+      (await this.organizacionDe(p.organizationId))?.timezone || undefined;
+    const { otraCita } = p.pregunta;
+    const reply = p.MSGS.waitlistPreguntaSigue({
+      servicio: p.pregunta.servicio,
+      dias: p.pregunta.dias,
+      ...(otraCita
+        ? {
+            otraCita: {
+              servicio: otraCita.servicio,
+              fecha: formatAppointmentLong(new Date(otraCita.fecha), {
+                timeZone,
+              }),
+              pasada: new Date(otraCita.fecha).getTime() < Date.now(),
+            },
+          }
+        : {}),
+    });
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.cleanUpSession(p.organizationId, p.senderId);
+    await this.setUserState(
+      p.organizationId,
+      p.senderId,
+      ChatState.AWAITING_WAITLIST_SIGUE,
+    );
+    await this.auditLog(p.senderId, p.organizationId, {
+      status: InteractionStatus.ESCAPED,
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: {
+        ...p.metadata,
+        pregunta: 'WAITLIST_PREGUNTA_SIGUE',
+        dias: p.pregunta.dias,
+        ...(otraCita ? { otraCita: otraCita.servicio } : {}),
+      },
+    });
+  }
+
+  /**
+   * 🙋 Contesta «¿todavía necesita la cita?»: SÍ sigue en su puesto, NO (o «salir de
+   * la lista», que se atiende antes) sale. Otra cosa: se le repite qué contestar.
+   * Si la pregunta ya no está pendiente (contestó o venció), se le dice que la
+   * conversación terminó.
+   */
+  private async atenderPreguntaSiSigue(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<void> {
+    const decision = this.decisionSiNoSinPreguntas(p.text);
+    if (!decision) {
+      const reply = p.MSGS.waitlistPreguntaSigueInvalida();
+      await this.smartReply(p.organizationId, p.senderId, reply);
+      await this.auditSuccess(p.senderId, p.organizationId, {
+        userMessage: p.text || '[audio]',
+        botReply: reply,
+        metadata: { step: 'WAITLIST_PREGUNTA_SIGUE_INVALIDA' },
+      });
+      return;
+    }
+    const r = await this.waitlistService.responderSiSigue({
+      whatsappId: p.senderId,
+      organizationId: p.organizationId,
+      sigue: decision === 'SI',
+      texto: p.text ?? null,
+    });
+    const reply = !r
+      ? p.MSGS.sesionExpirada()
+      : decision === 'SI'
+        ? p.MSGS.waitlistSigueEnLista()
+        : p.MSGS.salidaDeLaLista(unirConY([...new Set(r.servicios)]));
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.cleanUpSession(p.organizationId, p.senderId);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: {
+        step: !r
+          ? 'WAITLIST_PREGUNTA_SIGUE_VENCIDA'
+          : decision === 'SI'
+            ? 'WAITLIST_SIGUE'
+            : 'WAITLIST_SALIDA',
+        ...(r && decision === 'NO' ? { desde: 'PREGUNTA_SIGUE' } : {}),
+      },
+    });
   }
 
   /**
@@ -7524,6 +7847,26 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // 🚪 Salir de la lista de espera (2026-11-26, PLAN_PERMANENCIA_LISTA_ESPERA L1):
+    // «salir de la lista», «no quiero recibir más ofertas», «ya no lo necesito».
+    // Frases fijas, sin IA, en cualquier paso. Antes de la baja de comunicados: a
+    // quien está en la lista, «no quiero recibir más mensajes» le habla de las
+    // ofertas. Sin entrada activa no hace nada y el turno sigue igual.
+    if (
+      messageType === 'text' &&
+      !!text &&
+      (await this.atenderSalidaDeLaLista({
+        organizationId,
+        senderId,
+        identity,
+        text,
+        MSGS,
+        currentState,
+      }))
+    ) {
+      return;
+    }
+
     // 📢 Baja (o alta) de los mensajes masivos: «no más comunicados», «stop»,
     // «activar comunicados». Frases fijas, sin IA: es una decisión sobre sus datos.
     // No toca los recordatorios ni la conversación en curso.
@@ -7724,6 +8067,8 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_CANCEL_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
+      currentState === ChatState.AWAITING_WAITLIST_SIGUE ||
+      currentState === ChatState.AWAITING_WAITLIST_SALIDA ||
       currentState === ChatState.AWAITING_POST_CANCEL_CHOICE ||
       // Pasos deterministas de reprogramación (letra / SÍ-NO; no llaman al LLM).
       currentState === ChatState.AWAITING_MODIFY_RETRY_CEDULA ||
@@ -7751,6 +8096,7 @@ export class ChatbotService implements OnModuleInit {
     const isYesNoStep =
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
+      currentState === ChatState.AWAITING_WAITLIST_SIGUE ||
       currentState === ChatState.AWAITING_CONFIRMATION ||
       currentState === ChatState.AWAITING_CANCEL_CONFIRM ||
       currentState === ChatState.AWAITING_CANCEL_RETRY_CEDULA ||
@@ -7769,7 +8115,8 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_CANCEL_SELECTION ||
       currentState === ChatState.AWAITING_MODIFY_SELECTION ||
       currentState === ChatState.AWAITING_MODIFY_NEW_SLOT ||
-      currentState === ChatState.AWAITING_LOOKUP_CHOICE;
+      currentState === ChatState.AWAITING_LOOKUP_CHOICE ||
+      currentState === ChatState.AWAITING_WAITLIST_SALIDA;
 
     // Pasos de SELECCIÓN DE MENÚ (servicio / EPS). El texto en estos pasos
     // NO llama al LLM (ver más abajo), así que su `intent` queda en 'otro' y
@@ -8270,6 +8617,23 @@ export class ChatbotService implements OnModuleInit {
     // cancelación de cita, y confundirlas le cancelaría la cita a quien solo pidió
     // que dejáramos de escribirle. Se decide con frases fijas, sin LLM: es una
     // decisión sobre sus datos y no puede quedar a interpretación.
+    // 🚪 …y salir de la lista de espera por VOZ (por texto se atendió arriba), con la
+    // transcripción ya adoptada.
+    if (
+      isAudio &&
+      !!text &&
+      (await this.atenderSalidaDeLaLista({
+        organizationId,
+        senderId,
+        identity,
+        text,
+        MSGS,
+        currentState,
+      }))
+    ) {
+      return;
+    }
+
     const recordatorios = this.intencionDeRecordatorios(text ?? null);
     if (recordatorios) {
       await this.handleRecordatorios({
@@ -8681,6 +9045,27 @@ export class ChatbotService implements OnModuleInit {
 
     if (currentState === ChatState.AWAITING_WAITLIST_CONFIRM) {
       await this.handleWaitlistConfirmStep(organizationId, senderId, text);
+      return;
+    }
+
+    // 🙋 «¿Todavía necesita la cita?» y 🚪 «¿a quién saco de la lista?»
+    // (2026-11-26, docs/PLAN_PERMANENCIA_LISTA_ESPERA.md).
+    if (currentState === ChatState.AWAITING_WAITLIST_SIGUE) {
+      await this.atenderPreguntaSiSigue({
+        organizationId,
+        senderId,
+        text,
+        MSGS,
+      });
+      return;
+    }
+    if (currentState === ChatState.AWAITING_WAITLIST_SALIDA) {
+      await this.atenderEleccionDeSalida({
+        organizationId,
+        senderId,
+        text,
+        MSGS,
+      });
       return;
     }
 
@@ -15519,11 +15904,25 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
     } else if (decision === 'NO') {
-      const { sinOferta } = await this.waitlistService.confirmFromWaitlist({
-        whatsappId: senderId,
-        organizationId,
-        confirmed: false,
-      });
+      const { sinOferta, preguntarSiSigue } =
+        await this.waitlistService.confirmFromWaitlist({
+          whatsappId: senderId,
+          organizationId,
+          confirmed: false,
+        });
+      // 🙋 Tercer día rechazado o cita de otro servicio (2026-11-26): en vez de
+      // «usted sigue en la lista», se le pregunta si todavía necesita la cita.
+      if (preguntarSiSigue) {
+        await this.enviarPreguntaSiSigue({
+          organizationId,
+          senderId,
+          text,
+          MSGS,
+          pregunta: preguntarSiSigue,
+          metadata: { event: 'WAITLIST_OFFER_REJECTED' },
+        });
+        return;
+      }
       if (
         sinOferta &&
         (await this.atenderRespuestaTardia({

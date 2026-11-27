@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatAppointmentCompact } from '@/lib/date';
+import { quitarDeLaListaDeEsperaAction } from './actions';
 
 // ══════════════════════════════════════════════════════════════
 // TIPOS (espejo del payload del route handler)
@@ -21,6 +22,14 @@ type WaitlistItem = {
     waitMs: number;
     waitLabel: string;
     isOverdue: boolean;
+    /** 📊 Para ver a los atascados (2026-11-26): ofertas recibidas desde que se anotó. */
+    ofertas: number;
+    /** Días con cupos que rechazó (a partir de 3 el asistente le pregunta si sigue). */
+    diasRechazados: number;
+    /** Con qué palabras rechazó la última oferta. */
+    ultimoRechazo: string | null;
+    /** Se le preguntó «¿todavía necesita la cita?» y no ha contestado. */
+    preguntaPendiente: boolean;
 };
 
 type ApiResponse = {
@@ -30,6 +39,9 @@ type ApiResponse = {
     pageSize: number;
     totalPages: number;
 };
+
+/** A partir de cuántos días rechazados la fila se marca: casi nunca terminan en cita. */
+const DIAS_RECHAZADOS_ATASCADO = 3;
 
 const buildGreeting = (clinic: string) =>
     `Hola, le escribimos de ${clinic}. Vimos que quedó en nuestra lista de espera para una cita y queremos ayudarle a conseguir un cupo. ¿Le gustaría que le asistamos?`;
@@ -52,6 +64,13 @@ export default function WaitlistModal({
     const [data, setData] = useState<ApiResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    // 🚪 Quitar de la lista (2026-11-26): la fila que se está confirmando, su nota
+    // opcional y el resultado.
+    const [quitando, setQuitando] = useState<string | null>(null);
+    const [nota, setNota] = useState('');
+    const [enviando, setEnviando] = useState(false);
+    const [aviso, setAviso] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
 
     // Cerrar con Escape
     useEffect(() => {
@@ -108,6 +127,26 @@ export default function WaitlistModal({
 
     const items = data?.items ?? [];
 
+    const confirmarQuitar = async (item: WaitlistItem) => {
+        setEnviando(true);
+        setAviso(null);
+        try {
+            const r = await quitarDeLaListaDeEsperaAction(item.id, nota);
+            if (r.ok) {
+                setAviso({ tipo: 'ok', texto: `${item.patientName} salió de la lista de espera. El asistente no le enviará más ofertas.` });
+                setQuitando(null);
+                setNota('');
+                await fetchData();
+            } else {
+                setAviso({ tipo: 'error', texto: r.error });
+            }
+        } catch {
+            setAviso({ tipo: 'error', texto: 'No se pudo quitar de la lista. Inténtelo de nuevo.' });
+        } finally {
+            setEnviando(false);
+        }
+    };
+
     return (
         <div
             className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
@@ -124,7 +163,7 @@ export default function WaitlistModal({
                             <span>📜</span> Lista de espera — pendientes de contacto
                         </h2>
                         <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
-                            Pacientes que eligieron quedar en cola por un cupo. Contáctelos para asignarles cita.
+                            Pacientes que eligieron quedar en cola por un cupo. Contáctelos para asignarles cita, o quítelos de la lista si ya no la necesitan.
                             {data ? (
                                 <span className="ml-1 font-medium text-zinc-700 dark:text-zinc-300">
                                     {data.total} en total.
@@ -140,6 +179,19 @@ export default function WaitlistModal({
                         ×
                     </button>
                 </div>
+
+                {aviso && (
+                    <div
+                        role="status"
+                        className={`shrink-0 mx-4 mt-4 px-4 py-2.5 rounded-lg text-sm ${
+                            aviso.tipo === 'ok'
+                                ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200'
+                                : 'bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-200'
+                        }`}
+                    >
+                        {aviso.texto}
+                    </div>
+                )}
 
                 {/* BARRA DE BÚSQUEDA */}
                 <div className="shrink-0 p-4 border-b border-zinc-200 dark:border-zinc-800">
@@ -195,6 +247,10 @@ export default function WaitlistModal({
                                     <th className="px-4 py-3 font-semibold">WhatsApp</th>
                                     <th className="px-4 py-3 font-semibold">Solicitud</th>
                                     <th className="px-4 py-3 font-semibold">Registro</th>
+                                    <th className="px-4 py-3 font-semibold">Ofertas</th>
+                                    <th className="px-4 py-3 font-semibold">
+                                        <span className="sr-only">Acciones</span>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -263,6 +319,88 @@ export default function WaitlistModal({
                                                 ⏳ {item.waitLabel}
                                                 {item.isOverdue && ' esperando'}
                                             </span>
+                                        </td>
+
+                                        {/* OFERTAS: recibidas, días rechazados y el último rechazo */}
+                                        <td className="px-4 py-3 align-top max-w-[14rem]">
+                                            <p className="text-zinc-700 dark:text-zinc-300">
+                                                📨 {item.ofertas} {item.ofertas === 1 ? 'oferta' : 'ofertas'}
+                                            </p>
+                                            {item.diasRechazados > 0 && (
+                                                <span
+                                                    title={
+                                                        item.diasRechazados >= DIAS_RECHAZADOS_ATASCADO
+                                                            ? 'Quien rechaza cupos de 3 días o más casi nunca termina tomando uno: el asistente le pregunta si todavía necesita la cita.'
+                                                            : undefined
+                                                    }
+                                                    className={`inline-block mt-1 px-2 py-0.5 rounded-md text-xs font-semibold ${
+                                                        item.diasRechazados >= DIAS_RECHAZADOS_ATASCADO
+                                                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
+                                                            : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300'
+                                                    }`}
+                                                >
+                                                    ✋ {item.diasRechazados} {item.diasRechazados === 1 ? 'día rechazado' : 'días rechazados'}
+                                                </span>
+                                            )}
+                                            {item.ultimoRechazo && (
+                                                <p className="text-xs text-zinc-500 dark:text-zinc-400 italic mt-1 break-words">
+                                                    «{item.ultimoRechazo}»
+                                                </p>
+                                            )}
+                                            {item.preguntaPendiente && (
+                                                <p className="text-xs text-cyan-700 dark:text-cyan-300 mt-1">
+                                                    🙋 Se le preguntó si todavía necesita la cita
+                                                </p>
+                                            )}
+                                        </td>
+
+                                        {/* QUITAR DE LA LISTA (con confirmación y nota opcional) */}
+                                        <td className="px-4 py-3 align-top text-right">
+                                            {quitando === item.id ? (
+                                                <div className="flex flex-col items-end gap-2 min-w-[13rem]">
+                                                    <p className="text-xs text-zinc-700 dark:text-zinc-300 text-left">
+                                                        ¿Quitar a <strong>{item.patientName}</strong> de la lista? El asistente no le enviará más ofertas.
+                                                    </p>
+                                                    <input
+                                                        type="text"
+                                                        maxLength={300}
+                                                        placeholder="Motivo (opcional)"
+                                                        className="w-full px-2 py-1.5 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs"
+                                                        value={nota}
+                                                        onChange={(e) => setNota(e.target.value)}
+                                                    />
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={() => {
+                                                                setQuitando(null);
+                                                                setNota('');
+                                                            }}
+                                                            disabled={enviando}
+                                                            className="px-2.5 py-1 text-xs font-medium rounded-md border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-40"
+                                                        >
+                                                            Cancelar
+                                                        </button>
+                                                        <button
+                                                            onClick={() => confirmarQuitar(item)}
+                                                            disabled={enviando}
+                                                            className="px-2.5 py-1 text-xs font-semibold rounded-md bg-red-600 hover:bg-red-700 text-white disabled:opacity-40"
+                                                        >
+                                                            {enviando ? 'Quitando…' : 'Sí, quitar'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    onClick={() => {
+                                                        setQuitando(item.id);
+                                                        setNota('');
+                                                        setAviso(null);
+                                                    }}
+                                                    className="px-2.5 py-1 text-xs font-medium rounded-md border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-red-400 hover:text-red-700 dark:hover:text-red-300 transition-all whitespace-nowrap"
+                                                >
+                                                    Quitar de la lista
+                                                </button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}

@@ -29,6 +29,13 @@ export enum ChatState {
   AWAITING_CANCEL_CONFIRM = 'AWAITING_CANCEL_CONFIRM',
   AWAITING_WAITLIST_CONFIRM = 'AWAITING_WAITLIST_CONFIRM',
   AWAITING_WAITLIST_OPTIN = 'AWAITING_WAITLIST_OPTIN',
+  // 🙋 «¿Todavía necesita la cita?» tras el tercer día rechazado o una cita de otro
+  // servicio (2026-11-26, docs/PLAN_PERMANENCIA_LISTA_ESPERA.md L5-L6). SÍ/NO, sin
+  // LLM; no se cierra por inactividad: tiene 24 h y la pregunta vive en la entrada.
+  AWAITING_WAITLIST_SIGUE = 'AWAITING_WAITLIST_SIGUE',
+  // 🚪 Pidió salir de la lista y en este número esperan varias personas: ¿a quién?
+  // (por letra, sin LLM).
+  AWAITING_WAITLIST_SALIDA = 'AWAITING_WAITLIST_SALIDA',
   AWAITING_POST_CANCEL_CHOICE = 'AWAITING_POST_CANCEL_CHOICE',
   // Estado de transición: el paciente pidió cancelar mientras agendaba.
   // Guardamos el estado previo y esperamos un SÍ/NO antes de abortar.
@@ -228,6 +235,21 @@ export const unirConO = (partes: string[]): string =>
     ? (partes[0] ?? '')
     : `${partes.slice(0, -1).join(', ')} o ${partes[partes.length - 1]}`;
 
+/**
+ * 🚪 Cómo salir de la lista de espera (2026-11-26, docs/PLAN_PERMANENCIA_LISTA_ESPERA.md
+ * L4): va en la oferta, en la respuesta al NO y al anotarse. Antes nadie sabía cómo
+ * salir y quien lo intentaba recibía «usted sigue en la lista».
+ */
+export const COMO_SALIR_DE_LA_LISTA =
+  'Si ya no necesita la cita, escriba *Salir de la lista*.';
+export const COMO_SALIR_DE_LA_LISTA_INFORMAL =
+  'Si ya no la necesitas, escribe *Salir de la lista*.';
+
+export const unirConY = (partes: string[]): string =>
+  partes.length <= 1
+    ? (partes[0] ?? '')
+    : `${partes.slice(0, -1).join(', ')} y ${partes[partes.length - 1]}`;
+
 /** Las opciones tras la consulta, con su letra: «*A)* Cancelar una cita». */
 export const lineasOpcionesConsulta = (opciones: OpcionConsulta[]): string =>
   opciones
@@ -314,6 +336,13 @@ export interface AvisoCitaMovida {
   medicoAntes?: string;
   medicoNuevo: string;
   contacto: string;
+}
+
+/** Lo que necesita el texto de «¿todavía necesita la cita?» (fecha ya formateada). */
+export interface PreguntaSigueTexto {
+  servicio: string;
+  dias: number;
+  otraCita?: { servicio: string; fecha: string; pasada: boolean };
 }
 
 const FORMAL = {
@@ -710,11 +739,11 @@ const FORMAL = {
   unidoAWaitlist: (nombre: string, servicio: string, position: number) =>
     pick([
       `Listo${nombre ? `, ${nombre}` : ''}. Le anoté en la lista de espera para *${servicio}* — quedó en la posición *#${position}*.\n\n` +
-        `Esté pendiente de su WhatsApp: apenas se libere un cupo, le escribo. Que tenga un buen día.`,
+        `Esté pendiente de su WhatsApp: apenas se libere un cupo, le escribo. Que tenga un buen día.\n\n${COMO_SALIR_DE_LA_LISTA}`,
       `${nombre ? `Perfecto, ${nombre}. ` : 'Perfecto. '}Quedó anotado(a) en la lista de espera de *${servicio}* (posición *#${position}*).\n\n` +
-        `En cuanto se libere un espacio, le aviso por este medio.`,
+        `En cuanto se libere un espacio, le aviso por este medio.\n\n${COMO_SALIR_DE_LA_LISTA}`,
       `Hecho${nombre ? `, ${nombre}` : ''}. Le agregué a la lista para *${servicio}*, en la posición *#${position}*.\n\n` +
-        `Le escribo apenas tenga novedades para usted.`,
+        `Le escribo apenas tenga novedades para usted.\n\n${COMO_SALIR_DE_LA_LISTA}`,
     ]),
 
   noUnidoAWaitlist: () =>
@@ -736,7 +765,7 @@ const FORMAL = {
     `${nombre}, revisé la agenda para *${epsName}* en *${especialidad}* ` +
     `y por el momento no hay cupos abiertos.\n\n` +
     `Ya le agregué a la lista de espera (posición *#${position}*). ` +
-    `En cuanto se libere un espacio, le aviso por este medio.\n\n` +
+    `En cuanto se libere un espacio, le aviso por este medio. ${COMO_SALIR_DE_LA_LISTA}\n\n` +
     `¿Hay algo más en lo que le pueda colaborar?`,
 
   pedirCedulaPostSlot: (fechaFormateada: string) =>
@@ -1158,17 +1187,17 @@ const FORMAL = {
     pick([
       `🔔 ${nombre}, tengo buenas noticias.\n\n` +
         `Hay un cupo disponible en *${especialidad}* y usted es la siguiente persona en la lista.\n\n` +
-        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nSe lo tengo apartado hasta las *${hasta}*. ¿Le interesa tomarlo?\n\nResponda *SÍ* para confirmarlo o *NO* si ese horario no le sirve.`,
+        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nSe lo tengo apartado hasta las *${hasta}*. ¿Le interesa tomarlo?\n\nResponda *SÍ* para confirmarlo o *NO* si ese horario no le sirve. ${COMO_SALIR_DE_LA_LISTA}`,
       `🔔 ${nombre}, le tengo una buena noticia.\n\n` +
         `Se abrió un espacio para *${especialidad}* y le corresponde a usted, que es la primera persona en espera.\n\n` +
-        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe aparté el cupo hasta las *${hasta}*. ¿Desea tomarlo?\n\nConfírmeme con *SÍ* o, si ya no le sirve, escriba *NO*.`,
+        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe aparté el cupo hasta las *${hasta}*. ¿Desea tomarlo?\n\nConfírmeme con *SÍ* o, si ese horario no le sirve, escriba *NO*. ${COMO_SALIR_DE_LA_LISTA}`,
     ]),
 
   // ⏰ Contestó SÍ después de vencer su oferta y ese cupo ya pasó a otra persona, sin
   // otro libre (2026-11-03). Sigue en la lista, en su puesto.
   waitlistRespuestaTardia: (fecha: string) =>
     `Gracias por responder. 🙏 Como no alcanzamos a recibir su respuesta a tiempo, el cupo del *${fecha}* pasó a la siguiente persona de la lista.\n\n` +
-    `Usted sigue en la *lista de espera*, en su mismo puesto, y le aviso por aquí apenas haya otro cupo.`,
+    `Usted sigue en la *lista de espera*, en su mismo puesto, y le aviso por aquí apenas haya otro cupo.\n\n${COMO_SALIR_DE_LA_LISTA}`,
 
   // 🔔 Dijo SÍ a un cupo de la lista de espera y ya no se podía tomar (otro lo tomó,
   // el médico no agenda por aquí o el hospital no lo registró). Vuelve a la lista
@@ -1176,7 +1205,7 @@ const FORMAL = {
   // perdía su turno).
   cupoDeListaNoDisponible: () =>
     `Lo siento: ese cupo dejó de estar disponible antes de confirmarlo. 🙏\n\n` +
-    `Usted sigue en la *lista de espera*, en el mismo puesto, y le aviso por aquí apenas se libere otro.`,
+    `Usted sigue en la *lista de espera*, en el mismo puesto, y le aviso por aquí apenas se libere otro.\n\n${COMO_SALIR_DE_LA_LISTA}`,
 
   // 🔁 …y hay otro cupo libre: va antes de la oferta nueva (2026-11-03).
   cupoDeListaNoDisponibleConOtro: () =>
@@ -1194,7 +1223,7 @@ const FORMAL = {
   ) =>
     `Hola, ${nombre}. 👋 Le escribimos porque usted está en la *lista de espera* y se abrió un cupo para *${especialidad}*:\n\n` +
     `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\n` +
-    `Se lo tengo apartado hasta las *${hasta}*. ¿Lo toma? Responda *SÍ* para agendarlo o *NO* si ese horario no le sirve.`,
+    `Se lo tengo apartado hasta las *${hasta}*. ¿Lo toma? Responda *SÍ* para agendarlo o *NO* si ese horario no le sirve. ${COMO_SALIR_DE_LA_LISTA}`,
 
   // 🗓️ Contestó la oferta nombrando otro día u otra hora (2026-11-05: «Me sirve
   // para mañana viernes» a un cupo del lunes se agendó el lunes). Se le dice cuál es.
@@ -1204,9 +1233,36 @@ const FORMAL = {
 
   waitlistCupoRechazado: () =>
     pick([
-      `Sin problema. Libero ese cupo para otro paciente.\n\nUsted sigue en nuestra lista y le aviso apenas haya otra disponibilidad. Que tenga un excelente día.`,
-      `Como prefiera. Libero el cupo para otra persona que también lo está esperando.\n\nUsted permanece en la lista, así que en cuanto aparezca otro espacio le aviso.`,
+      `Sin problema. Libero ese cupo para otro paciente.\n\nUsted sigue en nuestra lista y le aviso apenas haya otra disponibilidad. ${COMO_SALIR_DE_LA_LISTA}`,
+      `Como prefiera. Libero el cupo para otra persona que también lo está esperando.\n\nUsted permanece en la lista, así que en cuanto aparezca otro espacio le aviso. ${COMO_SALIR_DE_LA_LISTA}`,
     ]),
+
+  // 🙋 Dijo NO y ya van 3 días de cupos que no le sirven, o tuvo cita de otro
+  // servicio después de anotarse (2026-11-26, PLAN_PERMANENCIA_LISTA_ESPERA L5-L6):
+  // antes de seguir ofreciéndole cupos se le pregunta si todavía la necesita.
+  waitlistPreguntaSigue: (p: PreguntaSigueTexto) =>
+    `Entendido, libero ese cupo para otra persona.\n\n` +
+    (p.otraCita
+      ? `Vi que ${p.otraCita.pasada ? 'tuvo' : 'tiene'} cita de *${p.otraCita.servicio}* el *${p.otraCita.fecha}*. `
+      : `Ya le he ofrecido cupos de ${p.dias} días distintos que no le han servido. `) +
+    `¿Todavía necesita ${p.servicio ? `la cita de *${p.servicio}*` : 'la cita'}?\n\n` +
+    `Responda *SÍ* para seguir en la lista de espera, en su mismo puesto, o *NO* para salir de ella. ` +
+    `Si no me responde antes de mañana a esta hora, le saco de la lista para no seguir escribiéndole.`,
+
+  waitlistPreguntaSigueInvalida: () =>
+    `Disculpe, necesito un *SÍ* o un *NO*: ¿todavía necesita la cita? Con *SÍ* sigue en la lista de espera; con *NO* le saco de ella.`,
+
+  waitlistSigueEnLista: () =>
+    `Perfecto, sigue en la *lista de espera*, en su mismo puesto. Le aviso por aquí apenas haya otro cupo. 🙏\n\n${COMO_SALIR_DE_LA_LISTA}`,
+
+  // 🚪 Salió de la lista porque lo pidió (2026-11-26).
+  salidaDeLaLista: (servicios: string) =>
+    `Listo, le saqué de la lista de espera${servicios ? ` de *${servicios}*` : ''}. No le enviaré más ofertas de cupos. ✅\n\n` +
+    `Si más adelante necesita la cita, escríbame *Hola*.`,
+
+  // Varias personas de este número están en la lista: ¿a quién?
+  salidaDeLaListaCual: (opciones: string, invalida = false) =>
+    `${invalida ? 'No logré ubicar esa opción. ' : ''}¿A quién saco de la lista de espera? Responda con la letra:\n\n${opciones}`,
 
   waitlistExpirado: () =>
     pick([
@@ -2362,9 +2418,9 @@ const INFORMAL = {
 
   unidoAWaitlist: (nombre: string, servicio: string, position: number) =>
     pick([
-      `¡Listo${nombre ? `, ${nombre}` : ''}! 🎟️ Te anoté en la lista de espera para *${servicio}* — quedaste en la posición *#${position}*.\n\nPendiente de tu WhatsApp: apenas se libere un cupo te escribo de una. ✨ ¡Que tengas un día muy bonito! 😊`,
-      `${nombre ? `Perfecto, ${nombre}. ` : 'Perfecto. '}Ya quedaste apuntado(a) en la cola de *${servicio}* (posición *#${position}*). 🎟️\n\nApenas se abra un espacio, te aviso por acá. 💚 ¡Cuídate mucho!`,
-      `¡Hecho${nombre ? `, ${nombre}` : ''}! 🌟 Te agregué a la lista para *${servicio}*, vas en la posición *#${position}*.\n\nTe escribo en cuanto tenga novedades. 🙏 Mientras tanto, ¡que estés muy bien!`,
+      `¡Listo${nombre ? `, ${nombre}` : ''}! 🎟️ Te anoté en la lista de espera para *${servicio}* — quedaste en la posición *#${position}*.\n\nPendiente de tu WhatsApp: apenas se libere un cupo te escribo de una. ✨\n\n${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
+      `${nombre ? `Perfecto, ${nombre}. ` : 'Perfecto. '}Ya quedaste apuntado(a) en la cola de *${servicio}* (posición *#${position}*). 🎟️\n\nApenas se abra un espacio, te aviso por acá. 💚\n\n${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
+      `¡Hecho${nombre ? `, ${nombre}` : ''}! 🌟 Te agregué a la lista para *${servicio}*, vas en la posición *#${position}*.\n\nTe escribo en cuanto tenga novedades. 🙏\n\n${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
     ]),
 
   noUnidoAWaitlist: () =>
@@ -2380,7 +2436,7 @@ const INFORMAL = {
     especialidad: string,
     position: number,
   ) =>
-    `${nombre}, revisé la agenda para *${epsName}* en *${especialidad}* y ahorita no hay espacios. 😔 Pero tranquilo(a), ya te agregué a la lista de espera (posición *#${position}*). En cuanto se libere algo, te escribo. ✨\n\n¿Algo más en lo que te pueda ayudar?`,
+    `${nombre}, revisé la agenda para *${epsName}* en *${especialidad}* y ahorita no hay espacios. 😔 Pero tranquilo(a), ya te agregué a la lista de espera (posición *#${position}*). En cuanto se libere algo, te escribo. ✨ ${COMO_SALIR_DE_LA_LISTA_INFORMAL}\n\n¿Algo más en lo que te pueda ayudar?`,
 
   pedirCedulaPostSlot: (fechaFormateada: string) =>
     pick([
@@ -2737,20 +2793,20 @@ const INFORMAL = {
     hasta: string,
   ) =>
     pick([
-      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Hay un cupo para *${especialidad}* y tú eres la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTe lo aparto hasta las *${hasta}*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ese horario no te sirve.`,
-      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eres la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTienes hasta las *${hasta}* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
+      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Hay un cupo para *${especialidad}* y tú eres la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTe lo aparto hasta las *${hasta}*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ese horario no te sirve. ${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
+      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eres la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTienes hasta las *${hasta}* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*. ${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
     ]),
 
   waitlistRespuestaTardia: (fecha: string) =>
     `¡Gracias por responder! 🙏 Como no alcanzamos a recibir tu respuesta a tiempo, el cupo del *${fecha}* pasó a la siguiente persona de la lista.\n\n` +
-    `Sigues en la *lista de espera*, en tu mismo puesto, y te aviso por acá apenas haya otro cupo. 💚`,
+    `Sigues en la *lista de espera*, en tu mismo puesto, y te aviso por acá apenas haya otro cupo. 💚\n\n${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
 
   cupoDeListaNoDisponibleConOtro: () =>
     `Qué pena 😔: ese cupo dejó de estar disponible antes de confirmarlo. ¡Pero tengo otro para ti!`,
 
   cupoDeListaNoDisponible: () =>
     `Qué pena 😔: ese cupo dejó de estar disponible antes de confirmarlo.\n\n` +
-    `Sigues en la *lista de espera*, en el mismo puesto, y te aviso por acá apenas se libere otro. 💚`,
+    `Sigues en la *lista de espera*, en el mismo puesto, y te aviso por acá apenas se libere otro. 💚\n\n${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
 
   waitlistOfertaPendiente: (
     nombre: string,
@@ -2761,7 +2817,7 @@ const INFORMAL = {
   ) =>
     `¡Hola, ${nombre}! 👋 Te escribimos porque estás en la *lista de espera* y se abrió un cupo para *${especialidad}*:\n\n` +
     `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\n` +
-    `Te lo tengo apartado hasta las *${hasta}*. ¿Lo tomas? Responde *SÍ* o *NO*. 💚`,
+    `Te lo tengo apartado hasta las *${hasta}*. ¿Lo tomas? Responde *SÍ* o *NO*. 💚 ${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
 
   waitlistOfertaOtroMomento: (fecha: string, doctor: string, hasta: string) =>
     `El cupo que te tengo apartado es el *${fecha}*${doctor ? ` con ${doctor}` : ''}; por ahora no tengo otro día ni otra hora para ofrecerte. 🙏\n\n` +
@@ -2769,9 +2825,31 @@ const INFORMAL = {
 
   waitlistCupoRechazado: () =>
     pick([
-      `¡Sin problema! 😊 Libero el cupo entonces. Tranquilo(a), sigues en la lista y te aviso cuando aparezca otro. ✨ ¡Que estés muy bien! 👋`,
-      `Listo, como quieras. 🌻 Libero el cupo para otro paciente que también lo está esperando. Sigues en la lista. 💚`,
+      `¡Sin problema! 😊 Libero el cupo entonces. Tranquilo(a), sigues en la lista y te aviso cuando aparezca otro. ✨ ${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
+      `Listo, como quieras. 🌻 Libero el cupo para otro paciente que también lo está esperando. Sigues en la lista. 💚 ${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
     ]),
+
+  waitlistPreguntaSigue: (p: PreguntaSigueTexto) =>
+    `Listo, libero ese cupo para otra persona. 🌻\n\n` +
+    (p.otraCita
+      ? `Vi que ${p.otraCita.pasada ? 'tuviste' : 'tienes'} cita de *${p.otraCita.servicio}* el *${p.otraCita.fecha}*. `
+      : `Ya te he ofrecido cupos de ${p.dias} días distintos que no te han servido. `) +
+    `¿Todavía necesitas ${p.servicio ? `la cita de *${p.servicio}*` : 'la cita'}?\n\n` +
+    `Responde *SÍ* para seguir en la lista de espera, en tu mismo puesto, o *NO* para salir de ella. ` +
+    `Si no me respondes antes de mañana a esta hora, te saco de la lista para no seguir escribiéndote. 💚`,
+
+  waitlistPreguntaSigueInvalida: () =>
+    `Perdona, necesito un *SÍ* o un *NO*: ¿todavía necesitas la cita? Con *SÍ* sigues en la lista de espera; con *NO* te saco de ella.`,
+
+  waitlistSigueEnLista: () =>
+    `¡Perfecto! 😊 Sigues en la *lista de espera*, en tu mismo puesto. Te aviso por acá apenas haya otro cupo.\n\n${COMO_SALIR_DE_LA_LISTA_INFORMAL}`,
+
+  salidaDeLaLista: (servicios: string) =>
+    `Listo, te saqué de la lista de espera${servicios ? ` de *${servicios}*` : ''}. Ya no te enviaré más ofertas de cupos. ✅\n\n` +
+    `Si más adelante necesitas la cita, escríbeme *Hola*. 💚`,
+
+  salidaDeLaListaCual: (opciones: string, invalida = false) =>
+    `${invalida ? 'Perdona, no ubiqué esa opción. ' : ''}¿A quién saco de la lista de espera? Respóndeme con la letra:\n\n${opciones}`,
 
   waitlistExpirado: () =>
     pick([
