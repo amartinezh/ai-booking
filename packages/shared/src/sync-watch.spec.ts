@@ -5,6 +5,7 @@ import {
   TIPOS_CON_AVISO,
   TIPOS_CON_AVISO_PACIENTE,
   UMBRALES_VIGILANTE,
+  cierrePorDiaPasado,
   claveExcepcion,
   debeVencer,
   eventoCulpable,
@@ -17,6 +18,7 @@ import {
   resumenRetencion,
   severidadPorCercania,
   transicionExcepcion,
+  yaPasoElDiaDeLaCita,
   type AccionExcepcion,
   type EstadoExcepcion,
 } from './sync-watch';
@@ -507,6 +509,59 @@ describe('debeVencer — §12 #15: la cita pasó hace días y nadie la cerró', 
   it('la nota dice qué pasó, con el plazo', () => {
     expect(NOTA_VENCIDA).toMatch(/sin resolución/);
     expect(NOTA_VENCIDA).toMatch(/7 días/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+describe('yaPasoElDiaDeLaCita y cierrePorDiaPasado — «todo lo que ya pasó» se cierra solo (2026-11-27)', () => {
+  const BOG = 'America/Bogota';
+  // Viernes 27-nov 08:30 en Bogotá.
+  const VIE = '2026-11-27T13:30:00.000Z';
+  const paso = (appointmentStartIso: string | null, status = 'ABIERTA', ahora = VIE) =>
+    yaPasoElDiaDeLaCita({ status, appointmentStartIso }, ahora, BOG);
+
+  it('la cita de ayer o de antes ya pasó', () => {
+    expect(paso('2026-11-26T23:10:00.000Z')).toBe(true); // jue 26, 18:10 en Bogotá
+    expect(paso('2026-11-21T12:40:00.000Z')).toBe(true); // sáb 21, 07:40
+  });
+
+  it('la de hoy todavía no, aunque su hora ya haya pasado: el mismo día se puede trabajar', () => {
+    expect(paso('2026-11-27T12:00:00.000Z')).toBe(false); // hoy 07:00
+    expect(paso('2026-11-27T21:30:00.000Z')).toBe(false); // hoy 16:30
+  });
+
+  it('el día se cuenta en la zona de la clínica, no en UTC', () => {
+    // Jueves 26 a las 22:00 en Bogotá = viernes 27 03:00 UTC: ese jueves terminó a
+    // la medianoche de Bogotá, no a la de UTC.
+    const jueves22 = '2026-11-27T03:00:00.000Z';
+    expect(paso(jueves22, 'ABIERTA', '2026-11-27T04:59:00.000Z')).toBe(false); // jue 23:59
+    expect(paso(jueves22, 'ABIERTA', '2026-11-27T05:00:00.000Z')).toBe(true); // vie 00:00
+  });
+
+  it('una futura, sin hora de cita o con fecha ilegible no se cierra', () => {
+    expect(paso('2026-12-03T19:00:00.000Z')).toBe(false);
+    expect(paso(null)).toBe(false);
+    expect(paso('x')).toBe(false);
+  });
+
+  it('👤 solo las abiertas: la que alguien tomó sigue con el vencimiento de siempre', () => {
+    expect(paso('2026-11-21T12:40:00.000Z', 'EN_REVISION')).toBe(false);
+    for (const status of ['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA']) {
+      expect(paso('2026-11-21T12:40:00.000Z', status)).toBe(false);
+    }
+  });
+
+  it('si asistió se cerró sola; si no asistió o no se sabe, venció sin resolución', () => {
+    expect(cierrePorDiaPasado('ASISTIO', 'sábado, 21 de noviembre')).toEqual({
+      estado: 'AUTO_RESUELTA',
+      nota: 'El día de la cita ya pasó (sábado, 21 de noviembre) y el paciente asistió.',
+    });
+    expect(cierrePorDiaPasado('NO_ASISTIO', 'martes, 24 de noviembre')).toEqual({
+      estado: 'VENCIDA',
+      nota: 'El día de la cita ya pasó (martes, 24 de noviembre) y el paciente no asistió.',
+    });
+    expect(cierrePorDiaPasado('SIN_DATO', 'martes, 24 de noviembre').estado).toBe('VENCIDA');
+    expect(cierrePorDiaPasado('SIN_DATO', 'martes, 24 de noviembre').nota).toMatch(/no registró la asistencia/);
   });
 });
 

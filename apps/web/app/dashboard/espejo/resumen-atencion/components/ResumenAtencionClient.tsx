@@ -392,8 +392,10 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                         aria-label="Calma en minutos"
                     />
                     <span className="mt-1 block text-xs text-zinc-500">
-                        El hospital escribe las órdenes en los minutos siguientes a guardar la historia (la última vista: 116
-                        minutos). Con {L.calmaMinutosPorDefecto} minutos ya están todas.
+                        Desde que el médico guarda la historia hasta que se lee; el aviso sale unos minutos después. El
+                        médico escribe las órdenes en los minutos siguientes: con 15 minutos ya están en el 98 % de las
+                        consultas, con 30 en el 99 % y con {L.calmaMinutosPorDefecto} en todas. Una orden que llegue
+                        después no va en lo que se envió: aparece en el enlace con la relectura del día siguiente.
                     </span>
                 </label>
             </section>

@@ -1,5 +1,9 @@
 import { GoneException, NotFoundException } from '@nestjs/common';
-import { ResumenDocumentosService } from './resumen-documentos.service';
+import {
+  ResumenDocumentosService,
+  claveDelPaciente,
+  finDeLaClave,
+} from './resumen-documentos.service';
 
 // Vista previa del personal: descifra solo lo de SU clínica, deja constancia de
 // qué documento abrió quién (sin contenido) y no revive lo que ya se borró.
@@ -128,5 +132,34 @@ describe('ResumenDocumentosService', () => {
     await expect(
       armar(null).s.listarParaPersonal('org-1', 's-1'),
     ).rejects.toBeInstanceOf(GoneException);
+  });
+});
+
+describe('claveDelPaciente y finDeLaClave (2026-11-27)', () => {
+  const con = (documento: string) =>
+    ({ paciente: { documento } }) as unknown as Parameters<
+      typeof claveDelPaciente
+    >[0];
+
+  it('la cédula es la clave, sin puntos, espacios ni ceros a la izquierda', () => {
+    expect(claveDelPaciente(con('4345381'))).toBe('4345381');
+    expect(claveDelPaciente(con('4.345.381'))).toBe('4345381');
+    expect(claveDelPaciente(con(' 004345381 '))).toBe('4345381');
+  });
+
+  it('un documento con letras las conserva, en mayúscula', () => {
+    expect(claveDelPaciente(con('pe-12345'))).toBe('PE12345');
+    expect(claveDelPaciente(con('AB 0123'))).toBe('AB0123');
+  });
+
+  it('sin letras ni dígitos sale sin clave (antes salía «0»)', () => {
+    expect(claveDelPaciente(con('---'))).toBeUndefined();
+    expect(claveDelPaciente(con(''))).toBeUndefined();
+  });
+
+  it('dice en qué termina la clave, nunca la clave completa', () => {
+    expect(finDeLaClave('4345381')).toBe('381');
+    expect(finDeLaClave('123')).toBeNull();
+    expect(finDeLaClave(undefined)).toBeNull();
   });
 });

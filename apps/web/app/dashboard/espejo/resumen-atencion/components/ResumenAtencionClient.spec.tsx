@@ -331,11 +331,11 @@ describe('ResumenAtencionClient', () => {
     });
 
     it('si la acción rechaza el cambio, lo dice', async () => {
-        updateLecturaResumenAction.mockResolvedValueOnce({ success: false, error: 'La calma va de 30 a 1440 minutos.' } as never);
+        updateLecturaResumenAction.mockResolvedValueOnce({ success: false, error: 'La calma va de 10 a 1440 minutos.' } as never);
         render(<ResumenAtencionClient panel={panel()} />);
         fireEvent.change(screen.getByLabelText('Calma en minutos'), { target: { value: '5' } });
         fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
-        expect(await screen.findByText('La calma va de 30 a 1440 minutos.')).toBeInTheDocument();
+        expect(await screen.findByText('La calma va de 10 a 1440 minutos.')).toBeInTheDocument();
     });
 
     it('leyendo, lo dice y muestra cuánto ha llegado (sin contenido)', () => {

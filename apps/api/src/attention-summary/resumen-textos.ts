@@ -21,6 +21,17 @@ export function conArticulo(nombre: string): string {
   return n;
 }
 
+/**
+ * Cómo es la clave de los PDF, sin escribirla (chat, página y correo). Desde el
+ * 2026-11-27 dice que va sin la sigla y en qué termina: en una prueba se
+ * escribió otro número y el PDF no abrió.
+ */
+export function comoEsLaClave(fin: string | null): string {
+  return `el número de documento del paciente, sin la sigla (CC, TI…), sin puntos y sin espacios${
+    fin ? `; termina en ${fin}` : ''
+  }`;
+}
+
 export const TEXTOS_RESUMEN = {
   /**
    * El aviso dentro de la ventana de 24 h, con el mismo texto de la plantilla
@@ -53,11 +64,9 @@ export const TEXTOS_RESUMEN = {
     'No encontramos documentos recientes para este número. Si tuvo una consulta hace poco, pídalos en el hospital.',
   otroNumero:
     'Este botón no corresponde a este número. Si usted es el paciente, pida sus documentos en el hospital.',
-  enviando: (fecha: string, conClave = false) =>
+  enviando: (fecha: string, conClave = false, fin: string | null = null) =>
     `Con gusto. Estos son los documentos de su consulta del ${fecha}.${
-      conClave
-        ? ' Los PDF se abren con una clave: el número de documento del paciente, sin puntos ni espacios.'
-        : ''
+      conClave ? ` Los PDF se abren con una clave: ${comoEsLaClave(fin)}.` : ''
     }`,
   listo: (enlace: string | null) =>
     `Listo. Son una copia para usted: el hospital conserva el original. Para reclamar medicamentos o hacerse los exámenes, siga las indicaciones del hospital y de su EPS.${
@@ -91,6 +100,8 @@ interface DatosCorreo {
   hospital: string;
   fecha: string;
   enlace: string | null;
+  /** Los últimos caracteres de la clave del PDF (`finDeLaClave`). */
+  finClave?: string | null;
 }
 
 /**
@@ -105,7 +116,7 @@ export const CORREO_RESUMEN = {
       '',
       `${d.hospital} le envía los documentos de su consulta del ${d.fecha}: resumen, fórmula y órdenes.`,
       '',
-      'Van en el PDF adjunto, protegido con una clave: su número de documento, sin puntos ni espacios.',
+      `Van en el PDF adjunto, protegido con una clave: ${comoEsLaClave(d.finClave ?? null)}.`,
       ...(d.enlace
         ? [
             '',
@@ -121,7 +132,7 @@ export const CORREO_RESUMEN = {
     `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#1f2937;line-height:1.5;max-width:560px">` +
     `<p>Hola ${html(d.nombre)}:</p>` +
     `<p>${html(d.hospital)} le envía los documentos de su consulta del ${html(d.fecha)}: resumen, fórmula y órdenes.</p>` +
-    `<p>Van en el PDF adjunto, protegido con una clave: <strong>su número de documento, sin puntos ni espacios</strong>.</p>` +
+    `<p>Van en el PDF adjunto, protegido con una clave: <strong>${html(comoEsLaClave(d.finClave ?? null))}</strong>.</p>` +
     (d.enlace
       ? `<p>También puede verlos y descargarlos durante 30 días en este enlace (le pedirá su fecha de nacimiento):<br><a href="${html(d.enlace)}">${html(d.enlace)}</a></p>`
       : '') +

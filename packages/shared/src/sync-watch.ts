@@ -538,6 +538,75 @@ export function debeVencer(
 export const NOTA_VENCIDA = `Venció sin resolución: la hora de la cita pasó hace más de ${UMBRALES_VIGILANTE.vencimientoDias} días y nadie la cerró.`;
 
 // ─────────────────────────────────────────────────────────────
+// ¿Ya pasó el día de la cita?
+// ─────────────────────────────────────────────────────────────
+
+/** `YYYY-MM-DD` del instante en la zona dada (en-CA formatea así). */
+function diaEnZona(instante: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(instante));
+}
+
+/**
+ * ¿Se cierra sola porque el día de su cita ya pasó? (2026-11-27, a pedido del
+ * administrador: «todo lo que ya pasó» se cierra solo). Antes solo vencía a los
+ * `vencimientoDias` sin que nadie la tocara, y la Bandeja acumulaba casos de citas
+ * de días anteriores que nadie iba a trabajar: el 27-nov, 10 de 23 abiertos (6 del
+ * hospital que cambió o canceló la cita, con el aviso ya enviado, y 5 de esos
+ * pacientes ya habían asistido a la cita nueva).
+ *
+ * Solo `ABIERTA`: una que alguien tomó (`EN_REVISION`) la está trabajando y sigue
+ * con el vencimiento de siempre. Sin hora de cita no aplica (un teléfono
+ * equivocado o un médico sin homologar no tienen un «después»). El día se cuenta
+ * en la zona de la clínica: la cita del lunes se cierra desde el martes a las 0:00,
+ * y el mismo día todavía se puede trabajar. En los casos del hospital que cambió
+ * la hora, la hora guardada es la de la cita nueva.
+ */
+export function yaPasoElDiaDeLaCita(
+  e: { status: string; appointmentStartIso: string | null },
+  ahoraIso: string,
+  timeZone: string,
+): boolean {
+  if (e.status !== 'ABIERTA' || !e.appointmentStartIso) return false;
+  const inicio = Date.parse(e.appointmentStartIso);
+  const ahora = Date.parse(ahoraIso);
+  if (Number.isNaN(inicio) || Number.isNaN(ahora)) return false;
+  return diaEnZona(inicio, timeZone) < diaEnZona(ahora, timeZone);
+}
+
+/** Qué se sabe de la asistencia del paciente ese día (su cita o la que la reemplazó). */
+export type AsistenciaDelDia = 'ASISTIO' | 'NO_ASISTIO' | 'SIN_DATO';
+
+/**
+ * Cómo se cierra una excepción cuyo día ya pasó: si el paciente asistió, el
+ * problema quedó resuelto (`AUTO_RESUELTA`, «Se cerró sola»); si no asistió o no
+ * se sabe, `VENCIDA` («Venció sin resolución»), porque nadie confirmó qué pasó.
+ * La nota dice la fecha y lo que se sabe.
+ */
+export function cierrePorDiaPasado(
+  asistencia: AsistenciaDelDia,
+  fecha: string,
+): { estado: 'AUTO_RESUELTA' | 'VENCIDA'; nota: string } {
+  if (asistencia === 'ASISTIO') {
+    return {
+      estado: 'AUTO_RESUELTA',
+      nota: `El día de la cita ya pasó (${fecha}) y el paciente asistió.`,
+    };
+  }
+  return {
+    estado: 'VENCIDA',
+    nota:
+      asistencia === 'NO_ASISTIO'
+        ? `El día de la cita ya pasó (${fecha}) y el paciente no asistió.`
+        : `El día de la cita ya pasó (${fecha}); el hospital no registró la asistencia.`,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 // La máquina de estados de la bandeja
 // ─────────────────────────────────────────────────────────────
 

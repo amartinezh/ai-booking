@@ -539,8 +539,9 @@ describe('correo (Fase 3)', () => {
       'Documentos de su consulta del domingo, 1 de noviembre',
     );
     expect(correo.texto).toContain(
-      'su número de documento, sin puntos ni espacios',
+      'el número de documento del paciente, sin la sigla (CC, TI…), sin puntos y sin espacios; termina en 001.',
     );
+    expect(correo.html).toContain('termina en 001');
     expect(correo.texto).toContain('https://hospital.example/resumen/TOKEN');
     expect(correo.texto).not.toMatch(/HTA|I10X|900000001/);
     expect(correo.adjunto).toMatchObject({

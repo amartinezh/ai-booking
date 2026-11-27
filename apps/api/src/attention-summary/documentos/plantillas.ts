@@ -133,7 +133,10 @@ function encabezado(
     .espacio(2)
     .campos([
       ['Fecha de la consulta', fechaHoraDocumento(h.guardadaIso, ctx.timeZone)],
-      ['Historia', h.numero],
+      // El número de la consulta (`NU_NUME_HICL`), no la historia del paciente:
+      // en el HIS la historia ES el documento, y con el rótulo «Historia» el
+      // hospital vio dos números que no coincidían (2026-11-27).
+      ['N.º de consulta', h.numero],
       ['Paciente', p.nombre],
       ['Documento', [p.tipoDocumento, p.documento].filter(Boolean).join(' ')],
       ['Edad', h.edad !== null ? `${h.edad} años` : null],

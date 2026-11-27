@@ -22,15 +22,31 @@ import { GeneradorDocumentos, type Archivo } from './documentos/generador';
  * registro civil, el que tenga el HIS), sin puntos ni ceros a la izquierda. La
  * misma del correo (plan §3.4). Las imágenes no llevan clave: no se puede.
  * `undefined` si el HIS no trae documento (el PDF sale sin clave).
+ *
+ * Un documento con letras (1 de 1.048 en Anserma, 2026-11-27) conserva las
+ * letras, en mayúscula: antes quedaban solo los dígitos y la clave no era lo que
+ * el paciente ve en el PDF. Uno sin letras ni dígitos sale sin clave (antes
+ * salía con «0»).
  */
 export function claveDelPaciente(
   resumen: ResumenAtencionHis,
 ): string | undefined {
-  return (
-    documentoSinCerosIniciales(
-      normalizeDocumento(resumen.paciente.documento),
-    ) || undefined
-  );
+  const crudo = resumen.paciente.documento ?? '';
+  const soloNumero = normalizeDocumento(crudo);
+  const conLetras = crudo.toUpperCase().replace(/[^0-9A-Z]/g, '');
+  if (/[A-Z]/.test(conLetras)) return conLetras;
+  return soloNumero ? documentoSinCerosIniciales(soloNumero) : undefined;
+}
+
+/**
+ * Los últimos 3 caracteres de la clave, para decirle al paciente cuál es sin
+ * escribirla (2026-11-27). En una prueba el equipo escribió otro número (la
+ * «Historia» del PDF era el número de la consulta) y no abrió. El resto del
+ * número va a la vista en las imágenes de las hojas, que salen sin clave, así
+ * que esta pista no debilita nada.
+ */
+export function finDeLaClave(clave: string | undefined): string | null {
+  return clave && clave.length > 3 ? clave.slice(-3) : null;
 }
 
 export type FormatoDocumento = 'pdf' | 'png';

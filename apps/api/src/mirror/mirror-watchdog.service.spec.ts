@@ -66,6 +66,10 @@ describe('MirrorWatchdogService', () => {
     eventosPorSeq?: Record<string, unknown>[];
     /** Lo que devuelve la consulta del vencimiento (`updatedAt: { lt }`). */
     olvidadas?: Record<string, unknown>[];
+    /** Lo que devuelve la consulta de «ya pasó el día» (ABIERTA con cita ya pasada). */
+    pasadas?: Record<string, unknown>[];
+    /** Citas del mismo paciente alrededor de esa fecha (consulta por `patientId`). */
+    citasDelPaciente?: Record<string, unknown>[];
     /** «Agendar», «Cancelar» y «Cambiar fecha». Por defecto solo «Agendar». */
     ajustes?: unknown;
     /** La caja negra del chat (`InteractionLog`): los pedidos de cancelar. */
@@ -107,11 +111,19 @@ describe('MirrorWatchdogService', () => {
           arg.where.seq ? (e.eventosPorSeq ?? []) : (e.eventos ?? []),
         ),
       },
+      organization: {
+        findUnique: jest.fn(async (..._a: unknown[]) => ({ timezone: null })),
+      },
       appointment: {
-        findMany: jest.fn(async (arg: { where: { id: { in: string[] } } }) =>
-          ((e.citas ?? []) as { id: string }[]).filter((c) =>
-            arg.where.id.in.includes(c.id),
-          ),
+        findMany: jest.fn(
+          async (arg: {
+            where: { id?: { in: string[] }; patientId?: unknown };
+          }) =>
+            arg.where.patientId
+              ? (e.citasDelPaciente ?? [])
+              : ((e.citas ?? []) as { id: string }[]).filter((c) =>
+                  arg.where.id!.in.includes(c.id),
+                ),
         ),
       },
       syncAudit: {
@@ -154,6 +166,12 @@ describe('MirrorWatchdogService', () => {
                 arg.where.dedupeKey!.in.includes(c.dedupeKey),
               );
             }
+            // Lo que ya pasó (2026-11-27): ABIERTA con hora de cita ya pasada.
+            if (
+              (arg.where as { status?: unknown }).status === 'ABIERTA' &&
+              (arg.where as { appointmentStartAt?: unknown }).appointmentStartAt
+            )
+              return e.pasadas ?? [];
             const kinds =
               (arg.where.kind as { in?: string[] } | string | undefined) ??
               undefined;
@@ -1448,6 +1466,137 @@ describe('MirrorWatchdogService', () => {
         },
         olvidadas: [olvidada()],
       });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.vencer).toHaveBeenCalledTimes(1);
+    });
+  });
+  // ═══════════════════════════════════════════════════════════════════════
+  describe('lo que ya pasó (2026-11-27): el día de la cita terminó y el caso sigue abierto', () => {
+    // AHORA = martes 22-sep 10:00 en Bogotá.
+    const caso = (over: Record<string, unknown> = {}) => ({
+      id: 'ex-20',
+      status: 'ABIERTA',
+      updatedAt: new Date('2026-09-20T12:00:00.000Z'),
+      appointmentId: 'apt-vieja',
+      // Lunes 21-sep 07:40 en Bogotá.
+      appointmentStartAt: new Date('2026-09-21T12:40:00.000Z'),
+      patientId: 'pac-1',
+      meta: { aviso: 'ENVIADO', nuevaCitaId: 'apt-nueva' },
+      ...over,
+    });
+    const citaDelCaso = (id: string, attendanceStatus: string, status = 'SCHEDULED') => ({
+      id,
+      status,
+      attendanceStatus,
+      origin: 'MIRROR',
+      patientId: 'pac-1',
+      epsId: null,
+      scheduleSlot: { startTime: new Date('2026-09-21T12:40:00.000Z'), doctorId: 'doc-1' },
+    });
+
+    it('el hospital le cambió la hora, se le avisó y asistió a la nueva: «se cerró sola»', async () => {
+      const { service, exceptions } = build({
+        pasadas: [caso()],
+        citas: [citaDelCaso('apt-vieja', 'PENDING', 'CANCELLED'), citaDelCaso('apt-nueva', 'ATTENDED')],
+      });
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+      expect(cerradas(exceptions)).toEqual([
+        ['ex-20', 'El día de la cita ya pasó (lunes, 21 de septiembre) y el paciente asistió.'],
+      ]);
+      expect(exceptions.vencer).not.toHaveBeenCalled();
+      expect(r.autoResueltas).toBe(1);
+    });
+
+    it('asistió a otra cita suya de ese mismo día (la cita del caso nunca llegó al hospital): «se cerró sola»', async () => {
+      const { service, exceptions } = build({
+        pasadas: [caso({ meta: null })],
+        citas: [citaDelCaso('apt-vieja', 'PENDING', 'CANCELLED')],
+        citasDelPaciente: [
+          {
+            id: 'apt-ventanilla',
+            patientId: 'pac-1',
+            attendanceStatus: 'ATTENDED',
+            // Lunes 21-sep 15:00 en Bogotá.
+            scheduleSlot: { startTime: new Date('2026-09-21T20:00:00.000Z') },
+          },
+        ],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.autoResolver).toHaveBeenCalledTimes(1);
+    });
+
+    it('una cita del paciente de OTRO día no cuenta como asistencia', async () => {
+      const { service, exceptions } = build({
+        pasadas: [caso({ meta: null })],
+        citas: [citaDelCaso('apt-vieja', 'PENDING', 'CANCELLED')],
+        citasDelPaciente: [
+          {
+            id: 'apt-otro-dia',
+            patientId: 'pac-1',
+            attendanceStatus: 'ATTENDED',
+            // Domingo 20-sep 18:00 en Bogotá (lunes 21 en UTC).
+            scheduleSlot: { startTime: new Date('2026-09-20T23:00:00.000Z') },
+          },
+        ],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.autoResolver).not.toHaveBeenCalled();
+      expect(exceptions.vencer).toHaveBeenCalledTimes(1);
+    });
+
+    it('no asistió: «venció sin resolución» con la nota, y compare-and-set sobre la fecha leída', async () => {
+      const fila = caso();
+      const { service, exceptions } = build({
+        pasadas: [fila],
+        citas: [citaDelCaso('apt-nueva', 'NO_SHOW')],
+      });
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.vencer).toHaveBeenCalledWith(
+        ORG,
+        { id: 'ex-20', updatedAt: fila.updatedAt },
+        AHORA,
+        'El día de la cita ya pasó (lunes, 21 de septiembre) y el paciente no asistió.',
+      );
+      expect(exceptions.autoResolver).not.toHaveBeenCalled();
+      expect(r.vencidas).toBe(1);
+    });
+
+    it('sin dato de asistencia: vence diciendo que el hospital no la registró', async () => {
+      const { service, exceptions } = build({ pasadas: [caso({ meta: null })] });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.vencer.mock.calls[0][3]).toMatch(/no registró la asistencia/);
+    });
+
+    it('la de HOY no se toca aunque su hora ya pasó: el mismo día se puede trabajar', async () => {
+      const { service, exceptions } = build({
+        // Martes 22-sep 07:00 en Bogotá.
+        pasadas: [caso({ appointmentStartAt: new Date('2026-09-22T12:00:00.000Z') })],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.autoResolver).not.toHaveBeenCalled();
+      expect(exceptions.vencer).not.toHaveBeenCalled();
+    });
+
+    it('la consulta pide solo las ABIERTAS de esa clínica con la hora de la cita ya pasada', async () => {
+      const { service, prisma } = build();
+      await service.vigilarOrganizacion(ORG, AHORA);
+      const consulta = prisma.syncException.findMany.mock.calls
+        .map((c) => c[0] as { where: Record<string, unknown> })
+        .find((c) => c.where.status === 'ABIERTA' && c.where.appointmentStartAt);
+      expect(consulta?.where).toEqual({
+        organizationId: ORG,
+        status: 'ABIERTA',
+        appointmentStartAt: { lt: AHORA },
+      });
+    });
+
+    it('si falla, el vencimiento de siempre corre igual', async () => {
+      const { service, prisma, exceptions } = build({
+        olvidadas: [
+          { id: 'ex-9', status: 'ABIERTA', appointmentStartAt: new Date('2026-09-10T12:00:00.000Z'), updatedAt: new Date('2026-09-10T12:00:00.000Z') },
+        ],
+      });
+      prisma.organization.findUnique.mockRejectedValueOnce(new Error('caída'));
       await service.vigilarOrganizacion(ORG, AHORA);
       expect(exceptions.vencer).toHaveBeenCalledTimes(1);
     });

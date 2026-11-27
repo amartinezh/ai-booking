@@ -329,7 +329,8 @@ export class MirrorExceptionsService {
   }
 
   /**
-   * §12 #15. La cierra como `VENCIDA`: su cita pasó hace días y nadie la cerró. El
+   * §12 #15. La cierra como `VENCIDA`: su cita pasó hace días y nadie la cerró (o,
+   * desde el 2026-11-27, ya pasó el día de su cita: `nota` lo dice). El
    * compare-and-set incluye `updatedAt` tal como se leyó: si alguien la tomó o la
    * reabrió entre la lectura y este cierre, ya no coincide y no se pisa.
    */
@@ -337,6 +338,7 @@ export class MirrorExceptionsService {
     organizationId: string,
     exception: { id: string; updatedAt: Date },
     ahora: Date = new Date(),
+    nota: string = NOTA_VENCIDA,
   ): Promise<boolean> {
     const exceptionId = exception.id;
     const { count } = await this.prisma.syncException.updateMany({
@@ -352,11 +354,11 @@ export class MirrorExceptionsService {
         assignedAt: null,
         resolvedAt: ahora,
         resolvedByUserId: null,
-        resolutionNote: NOTA_VENCIDA,
+        resolutionNote: nota.slice(0, 500),
       },
     });
     if (count === 1) {
-      await this.anotar(exceptionId, 'VENCIDA', null, null, NOTA_VENCIDA);
+      await this.anotar(exceptionId, 'VENCIDA', null, null, nota);
     }
     return count === 1;
   }

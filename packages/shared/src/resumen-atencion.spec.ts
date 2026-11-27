@@ -271,7 +271,13 @@ describe('aplicarCambioDeLectura (lo que el panel cambia en la Fase 1)', () => {
   });
 
   it('la calma fuera de rango no se guarda', () => {
-    expect(aplicarCambioDeLectura({}, { calmaMinutos: 10 })).toEqual({ ok: false, error: 'La calma va de 30 a 1440 minutos.' });
+    expect(aplicarCambioDeLectura({}, { calmaMinutos: 9 })).toEqual({ ok: false, error: 'La calma va de 10 a 1440 minutos.' });
+    // 15 minutos, lo que pidió el hospital el 2026-11-27, sí se guarda.
+    expect(aplicarCambioDeLectura({}, { calmaMinutos: 15 })).toEqual({
+      ok: true,
+      config: { calmaMinutos: 15 },
+      cambios: ['Calma: 120 → 15 minutos'],
+    });
     const r = aplicarCambioDeLectura({}, { calmaMinutos: 150 });
     expect(r).toEqual({ ok: true, config: { calmaMinutos: 150 }, cambios: ['Calma: 120 → 150 minutos'] });
   });

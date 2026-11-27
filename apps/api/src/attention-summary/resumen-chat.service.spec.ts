@@ -224,7 +224,7 @@ describe('ResumenChatService', () => {
       'Fórmula médica N.º 77 (hoja 2 de 2)',
     );
     expect(a.textos[0]).toBe(
-      'Con gusto. Estos son los documentos de su consulta del domingo, 1 de noviembre. Los PDF se abren con una clave: el número de documento del paciente, sin puntos ni espacios.',
+      'Con gusto. Estos son los documentos de su consulta del domingo, 1 de noviembre. Los PDF se abren con una clave: el número de documento del paciente, sin la sigla (CC, TI…), sin puntos y sin espacios; termina en 001.',
     );
     // Cada PDF va con la clave del paciente; las imágenes no la pueden llevar.
     expect(a.generador.pdf.mock.calls).toEqual([

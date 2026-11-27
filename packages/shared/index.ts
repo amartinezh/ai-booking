@@ -306,6 +306,7 @@ export {
   TITULO_EXCEPCION,
   UMBRALES_VIGILANTE,
   claveExcepcion,
+  cierrePorDiaPasado,
   debeVencer,
   evaluarRetencion,
   eventoCulpable,
@@ -316,12 +317,14 @@ export {
   resumenRetencion,
   severidadPorCercania,
   transicionExcepcion,
+  yaPasoElDiaDeLaCita,
 } from './src/sync-watch';
 
 export { RETENCION_DATOS, diasDeRetencion } from './src/retencion';
 
 export type {
   AccionExcepcion,
+  AsistenciaDelDia,
   EstadoExcepcion,
   ItemAviso,
   MotivoRetencion,

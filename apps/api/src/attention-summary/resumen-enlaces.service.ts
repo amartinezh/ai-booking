@@ -20,10 +20,12 @@ import { SystemLogService } from '../system-log/system-log.service';
 import type { Archivo } from './documentos/generador';
 import {
   claveDelPaciente,
+  finDeLaClave,
   ResumenDocumentosService,
   type DocumentoListado,
   type FormatoDocumento,
 } from './resumen-documentos.service';
+import { comoEsLaClave } from './resumen-textos';
 
 const MS_DIA = 86_400_000;
 /** D4: cinco fechas equivocadas bloquean el enlace una hora. */
@@ -63,6 +65,8 @@ export interface ContenidoParaElPaciente {
   secciones: SeccionDelResumen[];
   pie: string;
   documentos: DocumentoListado[];
+  /** Cómo es la clave de los PDF, sin escribirla (`comoEsLaClave`); `null` si salen sin clave. */
+  clave: string | null;
 }
 
 const hashDelToken = (token: string) =>
@@ -356,6 +360,7 @@ export class ResumenEnlacesService {
     ]);
     const config = leerConfigDocumentos(espejo?.resumenAtencion);
     const timeZone = org?.timezone || undefined;
+    const clave = claveDelPaciente(resumen);
     await this.anotar(s.id, link.id, 'VER', origen);
     return {
       hospital: config.encabezado.nombre ?? s.organization.name,
@@ -369,6 +374,7 @@ export class ResumenEnlacesService {
       }),
       pie: config.pie ?? PIE_RESUMEN_POR_DEFECTO,
       documentos: this.documentos.listar(g),
+      clave: clave ? comoEsLaClave(finDeLaClave(clave)) : null,
     };
   }
 

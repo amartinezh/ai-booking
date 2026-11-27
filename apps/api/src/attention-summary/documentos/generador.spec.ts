@@ -135,6 +135,10 @@ describe('GeneradorDocumentos', () => {
       expect(t).toContain('ADULTO PRUEBA');
       expect(t).toContain(`Hoja ${i + 1} de ${hojas.length}`);
       expect(t).toContain('Firmado electrónicamente por MEDICO DE PRUEBA');
+      // El número de la consulta va con su nombre: «Historia» en el HIS es el
+      // documento del paciente, y el hospital vio dos números distintos.
+      expect(t).toMatch(/N\.º de consulta:?\s+2441058/);
+      expect(t).not.toMatch(/Historia:/);
     });
     const todo = hojas.map(textos).join(' ');
     // D19 y cantidad en letras en español.

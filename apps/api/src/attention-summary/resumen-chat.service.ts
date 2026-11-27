@@ -20,6 +20,7 @@ import { RedisService } from '../redis/redis.service';
 import {
   ResumenDocumentosService,
   claveDelPaciente,
+  finDeLaClave,
 } from './resumen-documentos.service';
 import { ResumenEnlacesService } from './resumen-enlaces.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
@@ -426,6 +427,7 @@ export class ResumenChatService {
       TEXTOS_RESUMEN.enviando(
         formatDateOnly(resumen.historia.guardadaIso, { timeZone }),
         Boolean(clave),
+        finDeLaClave(clave),
       ),
       { entrega: e.id },
     );

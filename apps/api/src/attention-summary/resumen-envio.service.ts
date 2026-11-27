@@ -50,6 +50,7 @@ import { ResumenCorreoService } from './resumen-correo.service';
 import {
   ResumenDocumentosService,
   claveDelPaciente,
+  finDeLaClave,
 } from './resumen-documentos.service';
 import { ResumenEnlacesService } from './resumen-enlaces.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
@@ -528,7 +529,8 @@ export class ResumenEnvioService {
       },
     });
     const g = await this.documentos.generador(organizationId, resumen);
-    const pdf = await g.pdfCompleto({ clave: claveDelPaciente(resumen) });
+    const clave = claveDelPaciente(resumen);
+    const pdf = await g.pdfCompleto({ clave });
     let enlace: string | null = null;
     const base = (process.env.PUBLIC_WEB_URL ?? '').replace(/\/+$/, '');
     if (base && this.enlaces && fila) {
@@ -553,6 +555,7 @@ export class ResumenEnvioService {
       hospital,
       fecha: formatDateOnly(resumen.historia.guardadaIso, { timeZone }),
       enlace,
+      finClave: finDeLaClave(clave),
     };
     const r = await this.correoSmtp.enviar({
       para: destino.destino,

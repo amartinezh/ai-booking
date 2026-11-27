@@ -61,7 +61,13 @@ export const LIMITES_RESUMEN_ATENCION = {
   /** Resúmenes por lote del agente. */
   maxPorLote: 50,
   calmaMinutosPorDefecto: 120,
-  calmaMinutosMin: 30,
+  /**
+   * 10 desde el 2026-11-27 (antes 30), para leer a los 15 minutos como pidió el
+   * hospital. Medido en 895 consultas con órdenes de Anserma: la última orden
+   * llega después del minuto 10 en el 4,1 %, del 15 en el 1,9 % y del 30 en el
+   * 1,0 %. Lo que llega después lo recoge la relectura del día siguiente.
+   */
+  calmaMinutosMin: 10,
   calmaMinutosMax: 1440,
   horarioPorDefecto: { desdeHora: 7, hastaHora: 20 },
   /** D11: el contenido cifrado se borra a los 30 días. */

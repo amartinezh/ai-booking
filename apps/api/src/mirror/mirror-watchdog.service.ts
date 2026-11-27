@@ -9,6 +9,9 @@ import {
   UMBRALES_VIGILANTE,
   algunaCompuertaAbierta,
   claveAlerta,
+  DEFAULT_TIMEZONE,
+  type AsistenciaDelDia,
+  cierrePorDiaPasado,
   claveExcepcion,
   compuertasHis,
   debeVencer,
@@ -16,7 +19,9 @@ import {
   evaluarRetencion,
   eventoPuedeSalir,
   isTelegramSender,
+  formatDateOnly,
   severidadPorCercania,
+  yaPasoElDiaDeLaCita,
   type CompuertasHis,
   type FilaOutbox,
   type SeveridadExcepcion,
@@ -278,7 +283,16 @@ export class MirrorWatchdogService {
         `No se pudo subir la gravedad de los pedidos de pacientes (org ${organizationId}): ${getErrorMessage(error)}`,
       );
     }
-    resumen.vencidas = await this.vencerLasOlvidadas(organizationId, ahora);
+    try {
+      const pasadas = await this.cerrarLasQueYaPasaron(organizationId, ahora);
+      resumen.autoResueltas += pasadas.autoResueltas;
+      resumen.vencidas += pasadas.vencidas;
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudieron cerrar los casos de citas que ya pasaron (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+    }
+    resumen.vencidas += await this.vencerLasOlvidadas(organizationId, ahora);
 
     let falloDelAviso: unknown = null;
     try {
@@ -1106,6 +1120,151 @@ export class MirrorWatchdogService {
         this.contar(resumen, r);
       }
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Lo que ya pasó (2026-11-27)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Cierra las ABIERTAS cuya cita fue un día anterior (`yaPasoElDiaDeLaCita`, en la
+   * zona de la clínica). Si el paciente asistió ese día —a la cita del caso, a la
+   * nueva que le dio el hospital (`meta.nuevaCitaId` / `informadaCitaId`) o a otra
+   * suya de ese mismo día—, «Se cerró sola»; si no asistió o el hospital no lo
+   * registró, «Venció sin resolución» con la nota de lo que se sabe
+   * (`cierrePorDiaPasado`). Las que alguien tomó siguen con el vencimiento de
+   * siempre. Compare-and-set sobre `updatedAt`, como el vencimiento.
+   */
+  private async cerrarLasQueYaPasaron(
+    organizationId: string,
+    ahora: Date,
+  ): Promise<{ autoResueltas: number; vencidas: number }> {
+    const cuenta = { autoResueltas: 0, vencidas: 0 };
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const timeZone = org?.timezone || DEFAULT_TIMEZONE;
+    // La consulta trae las de hora ya pasada; la regla decide si fue un día anterior
+    // en la zona de la clínica.
+    const candidatas = (
+      await this.prisma.syncException.findMany({
+        where: {
+          organizationId,
+          status: 'ABIERTA',
+          appointmentStartAt: { lt: ahora },
+        },
+        select: {
+          id: true,
+          status: true,
+          updatedAt: true,
+          appointmentId: true,
+          appointmentStartAt: true,
+          patientId: true,
+          meta: true,
+        },
+        orderBy: { appointmentStartAt: 'asc' },
+        take: MAX_DERIVA,
+      })
+    ).filter((c) =>
+      yaPasoElDiaDeLaCita(
+        {
+          status: c.status,
+          appointmentStartIso: c.appointmentStartAt?.toISOString() ?? null,
+        },
+        ahora.toISOString(),
+        timeZone,
+      ),
+    );
+    if (candidatas.length === 0) return cuenta;
+
+    // Las citas que dicen si asistió: la del caso, la nueva que dio el hospital y
+    // las del mismo paciente alrededor de esa fecha (luego se filtra el mismo día).
+    const idsDelCaso = (c: (typeof candidatas)[number]): string[] => {
+      const meta = (c.meta ?? {}) as Record<string, unknown>;
+      return [c.appointmentId, meta.nuevaCitaId, meta.informadaCitaId].filter(
+        (id): id is string => typeof id === 'string' && id.length > 0,
+      );
+    };
+    const pacientes = [
+      ...new Set(
+        candidatas
+          .map((c) => c.patientId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const inicios = candidatas.map((c) => c.appointmentStartAt!.getTime());
+    const citasDelDia = pacientes.length
+      ? await this.prisma.appointment.findMany({
+          where: {
+            organizationId,
+            patientId: { in: pacientes },
+            status: { not: 'CANCELLED' },
+            scheduleSlot: {
+              startTime: {
+                gte: new Date(Math.min(...inicios) - MS_DIA),
+                lte: new Date(Math.max(...inicios) + MS_DIA),
+              },
+            },
+          },
+          select: {
+            id: true,
+            patientId: true,
+            attendanceStatus: true,
+            scheduleSlot: { select: { startTime: true } },
+          },
+        })
+      : [];
+    const delCaso = await this.cargarCitas(
+      organizationId,
+      candidatas.flatMap(idsDelCaso),
+    );
+    const dia = (d: Date) =>
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(d);
+
+    for (const c of candidatas) {
+      const diaDeLaCita = dia(c.appointmentStartAt!);
+      const estados = [
+        ...idsDelCaso(c).map((id) => delCaso.get(id)?.attendanceStatus),
+        ...citasDelDia
+          .filter(
+            (a) =>
+              a.patientId === c.patientId &&
+              dia(a.scheduleSlot.startTime) === diaDeLaCita,
+          )
+          .map((a) => a.attendanceStatus),
+      ];
+      const asistencia: AsistenciaDelDia = estados.includes('ATTENDED')
+        ? 'ASISTIO'
+        : estados.includes('NO_SHOW')
+          ? 'NO_ASISTIO'
+          : 'SIN_DATO';
+      const { estado, nota } = cierrePorDiaPasado(
+        asistencia,
+        formatDateOnly(c.appointmentStartAt!, { timeZone }),
+      );
+      if (estado === 'AUTO_RESUELTA') {
+        if (
+          await this.exceptions.autoResolver(organizationId, c.id, nota, ahora)
+        )
+          cuenta.autoResueltas++;
+      } else if (
+        await this.exceptions.vencer(
+          organizationId,
+          { id: c.id, updatedAt: c.updatedAt },
+          ahora,
+          nota,
+        )
+      ) {
+        cuenta.vencidas++;
+      }
+    }
+    return cuenta;
   }
 
   // ─────────────────────────────────────────────────────────────
