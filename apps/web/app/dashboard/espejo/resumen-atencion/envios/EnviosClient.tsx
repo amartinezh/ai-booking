@@ -165,8 +165,8 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                     value={consulta}
                     onChange={(e) => setConsulta(e.target.value)}
                     inputMode="numeric"
-                    placeholder="Número de historia o cédula"
-                    aria-label="Buscar por historia o cédula"
+                    placeholder="Número de consulta o cédula"
+                    aria-label="Buscar por número de consulta o cédula"
                     className="w-64 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
                 />
                 <button
@@ -203,7 +203,7 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                         <li key={a.id} className="space-y-2 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800" data-testid="atencion">
                             <div className="flex flex-wrap items-baseline justify-between gap-2">
                                 <p className="text-sm text-zinc-900 dark:text-zinc-100">
-                                    <span className="font-mono">Historia {a.historia}</span>
+                                    <span className="font-mono">Consulta {a.historia}</span>
                                     <span className="text-zinc-500"> · {formatAppointmentShort(a.atendidaIso)}</span>
                                     {a.servicio && <span className="font-mono text-xs text-zinc-500"> · {a.servicio}</span>}
                                 </p>
@@ -298,7 +298,7 @@ export default function EnviosClient({ iniciales }: { iniciales: AtencionConEnvi
                                             setVerificada(false);
                                             setResultado(null);
                                         }}
-                                        aria-label={`Reenviar historia ${a.historia}`}
+                                        aria-label={`Reenviar la consulta ${a.historia}`}
                                         className="text-sm text-blue-600 hover:underline dark:text-blue-400"
                                     >
                                         Reenviar

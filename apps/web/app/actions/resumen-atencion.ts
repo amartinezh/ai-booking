@@ -24,10 +24,13 @@ import { prisma } from '@/lib/prisma';
 import { adminDelResumen } from '@/lib/resumen/acceso';
 import { INTERNAL_API_URL } from '@/lib/resumen/api';
 import { registrarActividad } from '@/lib/actividad/registrar';
+import { enmascarar } from '@/lib/actividad/catalogo';
 import { consultarEmbudoDelEnvio, type EmbudoDelEnvio } from '@/lib/resumen/trazabilidad';
 import {
     DEFAULT_TIMEZONE,
     FRASE_APROBAR_PILOTO,
+    documentoSinCerosIniciales,
+    normalizeDocumento,
     LIMITES_RESUMEN_ATENCION,
     aplicarCambioDeContenido,
     aplicarCambioDeDocumentos,
@@ -55,6 +58,67 @@ import {
 const MS_DIA = 86_400_000;
 /** Resúmenes que se listan para revisar (los más recientes). */
 const RECIENTES = 40;
+/** Tope de lo que trae el buscador (un paciente rara vez tiene tantas consultas en 30 días). */
+const RESULTADOS_DE_BUSQUEDA = 50;
+
+/** Lo que se lee de cada resumen para la lista: datos de control, nunca el contenido. */
+const SELECT_FILA = {
+    id: true,
+    hisKey: true,
+    serviceCode: true,
+    attendedAt: true,
+    version: true,
+    patientProfileId: true,
+    purgedAt: true,
+    reviewResult: true,
+    reviewNote: true,
+    reviewedAt: true,
+    reviewedByUserId: true,
+} as const;
+
+type ResumenDeLaLista = {
+    id: string;
+    hisKey: string;
+    serviceCode: string | null;
+    attendedAt: Date;
+    version: number;
+    patientProfileId: string | null;
+    purgedAt: Date | null;
+    reviewResult: string | null;
+    reviewNote: string | null;
+    reviewedAt: Date | null;
+    reviewedByUserId: string | null;
+};
+
+/** El correo de quien revisó cada resumen de la lista. */
+async function correosDeLosRevisores(filas: ResumenDeLaLista[]): Promise<Map<string, string>> {
+    const ids = [...new Set(filas.map((r) => r.reviewedByUserId).filter((x): x is string => !!x))];
+    const revisores = ids.length
+        ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, email: true } })
+        : [];
+    return new Map(revisores.map((u) => [u.id, u.email]));
+}
+
+function aFilaParaRevisar(r: ResumenDeLaLista, correoDe: Map<string, string>): FilaResumenParaRevisar {
+    return {
+        id: r.id,
+        historia: r.hisKey,
+        servicio: r.serviceCode,
+        atendidaIso: r.attendedAt.toISOString(),
+        version: r.version,
+        conPaciente: r.patientProfileId !== null,
+        contenidoDisponible: r.purgedAt === null,
+        revision:
+            (r.reviewResult === 'CORRECTO' || r.reviewResult === 'CON_ERROR') && r.reviewedAt
+                ? {
+                      resultado: r.reviewResult,
+                      nota: r.reviewNote,
+                      fechaIso: r.reviewedAt.toISOString(),
+                      quien: r.reviewedByUserId ? (correoDe.get(r.reviewedByUserId) ?? null) : null,
+                  }
+                : null,
+    };
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ServicioDelPanel {
@@ -200,19 +264,7 @@ export async function getPanelResumenAtencionAction(): Promise<
             where: { organizationId: auth.organizationId },
             orderBy: { attendedAt: 'desc' },
             take: RECIENTES,
-            select: {
-                id: true,
-                hisKey: true,
-                serviceCode: true,
-                attendedAt: true,
-                version: true,
-                patientProfileId: true,
-                purgedAt: true,
-                reviewResult: true,
-                reviewNote: true,
-                reviewedAt: true,
-                reviewedByUserId: true,
-            },
+            select: SELECT_FILA,
         }),
     ]);
 
@@ -256,11 +308,7 @@ export async function getPanelResumenAtencionAction(): Promise<
         }),
         estadoDelCorreo(),
     ]);
-    const idsRevisores = [...new Set(recientes.map((r) => r.reviewedByUserId).filter((x): x is string => !!x))];
-    const revisores = idsRevisores.length
-        ? await prisma.user.findMany({ where: { id: { in: idsRevisores } }, select: { id: true, email: true } })
-        : [];
-    const correoDe = new Map(revisores.map((u) => [u.id, u.email]));
+    const correoDe = await correosDeLosRevisores(recientes);
     const contar = (r: ResultadoRevisionResumen) => revisiones.find((x) => x.reviewResult === r)?._count._all ?? 0;
 
     const config = leerConfigResumenAtencion(fila?.resumenAtencion) ?? configResumenAtencionApagada();
@@ -317,24 +365,7 @@ export async function getPanelResumenAtencionAction(): Promise<
                 meta: LIMITES_RESUMEN_ATENCION.revisionesParaCerrar,
                 correctos: contar('CORRECTO'),
                 conError: contar('CON_ERROR'),
-                recientes: recientes.map((r) => ({
-                    id: r.id,
-                    historia: r.hisKey,
-                    servicio: r.serviceCode,
-                    atendidaIso: r.attendedAt.toISOString(),
-                    version: r.version,
-                    conPaciente: r.patientProfileId !== null,
-                    contenidoDisponible: r.purgedAt === null,
-                    revision:
-                        (r.reviewResult === 'CORRECTO' || r.reviewResult === 'CON_ERROR') && r.reviewedAt
-                            ? {
-                                  resultado: r.reviewResult,
-                                  nota: r.reviewNote,
-                                  fechaIso: r.reviewedAt.toISOString(),
-                                  quien: r.reviewedByUserId ? (correoDe.get(r.reviewedByUserId) ?? null) : null,
-                              }
-                            : null,
-                })),
+                recientes: recientes.map((r) => aFilaParaRevisar(r, correoDe)),
             },
         },
     };
@@ -344,6 +375,80 @@ export async function getPanelResumenAtencionAction(): Promise<
  * Abre un resumen para compararlo con el HIS. Lo descifra la API (la llave vive
  * allá), que además deja constancia de quién lo abrió.
  */
+/** Lo que encontró el buscador de la lista de revisión. */
+export interface BusquedaDeResumenes {
+    /** El número tal como se buscó (solo dígitos). */
+    numero: string;
+    /** Resúmenes de esa consulta (por su número en el HIS). */
+    porConsulta: number;
+    /** Resúmenes de pacientes de AgenIA con ese documento. */
+    porDocumento: number;
+    /** ¿AgenIA tiene un paciente con ese documento? */
+    hayPaciente: boolean;
+    filas: FilaResumenParaRevisar[];
+}
+
+/**
+ * 🔎 Buscar resúmenes por la cédula del paciente o por el número de la consulta en
+ * el HIS (2026-11-26: el de una paciente atendida a las 6:30 a. m. estaba en el
+ * puesto 150 y la lista solo muestra los 40 más recientes). Trae lo mismo que la
+ * lista, solo datos de control; abrir uno sigue pasando por la API y queda
+ * anotado. Por cédula solo aparecen las consultas de pacientes que AgenIA conoce:
+ * el documento del resto va dentro del contenido cifrado. Una búsqueda que
+ * encuentra a un paciente queda en la Actividad de usuarios, con el documento
+ * enmascarado.
+ */
+export async function buscarResumenesAction(
+    texto: string,
+): Promise<{ success: true; busqueda: BusquedaDeResumenes } | { success: false; error: string }> {
+    const auth = await requireAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    const numero = normalizeDocumento(typeof texto === 'string' ? texto.slice(0, 40) : '');
+    if (numero.length < 4 || numero.length > 15 || !/[1-9]/.test(numero)) {
+        return { success: false, error: 'Escriba la cédula del paciente o el número de la consulta (de 4 a 15 números).' };
+    }
+
+    // Con y sin ceros a la izquierda, como el resto de AgenIA (`documento.ts`).
+    const documentos = [...new Set([numero, documentoSinCerosIniciales(numero)])];
+    const pacientes = await prisma.patientProfile.findMany({
+        where: { organizationId: auth.organizationId, cedula: { in: documentos } },
+        select: { id: true },
+    });
+    const ids = pacientes.map((p) => p.id);
+    const encontrados = await prisma.attentionSummary.findMany({
+        where: {
+            organizationId: auth.organizationId,
+            OR: [{ hisKey: numero }, ...(ids.length > 0 ? [{ patientProfileId: { in: ids } }] : [])],
+        },
+        orderBy: { attendedAt: 'desc' },
+        take: RESULTADOS_DE_BUSQUEDA,
+        select: SELECT_FILA,
+    });
+    const correoDe = await correosDeLosRevisores(encontrados);
+    const porDocumento = encontrados.filter((r) => r.patientProfileId !== null && ids.includes(r.patientProfileId)).length;
+
+    if (ids.length > 0) {
+        await registrarActividad({
+            action: 'ATTENTION_SUMMARY_SEARCHED',
+            message: `Buscó los resúmenes de la atención del documento ${enmascarar(numero)}: ${porDocumento} encontrado(s)`,
+            actor: { userId: auth.userId, role: auth.role },
+            organizationId: auth.organizationId,
+            metadata: { documento: enmascarar(numero), resultados: porDocumento },
+        });
+    }
+
+    return {
+        success: true,
+        busqueda: {
+            numero,
+            porConsulta: encontrados.filter((r) => r.hisKey === numero).length,
+            porDocumento,
+            hayPaciente: ids.length > 0,
+            filas: encontrados.map((r) => aFilaParaRevisar(r, correoDe)),
+        },
+    };
+}
+
 export async function abrirResumenAction(
     id: string,
 ): Promise<{ success: true; abierto: ResumenAbierto } | { success: false; error: string }> {

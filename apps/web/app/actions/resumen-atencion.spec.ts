@@ -4,7 +4,9 @@
 jest.mock('@/lib/prisma', () => ({
     prisma: {
         hospitalMirrorConfig: { findUnique: jest.fn(), update: jest.fn() },
-        attentionSummary: { updateMany: jest.fn(), findUnique: jest.fn() },
+        attentionSummary: { updateMany: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
+        patientProfile: { findMany: jest.fn() },
+        user: { findMany: jest.fn() },
     },
 }));
 jest.mock('@/lib/session', () => ({ getSession: jest.fn() }));
@@ -17,7 +19,13 @@ jest.mock('next/headers', () => ({
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { registrarActividad } from '@/lib/actividad/registrar';
-import { abrirResumenAction, enviarDePruebaAction, revisarResumenAction, updateEnvioResumenAction } from './resumen-atencion';
+import {
+    abrirResumenAction,
+    buscarResumenesAction,
+    enviarDePruebaAction,
+    revisarResumenAction,
+    updateEnvioResumenAction,
+} from './resumen-atencion';
 
 /**
  * Revisión del resumen de la atención (cierre de la Fase 1). Lo que se fija:
@@ -168,5 +176,113 @@ describe('acciones de revisión del resumen de la atención', () => {
             fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: false, motivo: 'plantilla' }) });
             await expect(enviarDePruebaAction(ID, '573001234567')).resolves.toEqual({ success: false, error: 'El aviso no salió: plantilla' });
         });
+    });
+});
+
+// 🔎 2026-11-26: la lista solo trae los 40 más recientes; se busca por la cédula
+// del paciente o por el número de la consulta en el HIS.
+describe('buscar resúmenes por cédula o número de consulta', () => {
+    const mockPacientes = prisma.patientProfile.findMany as jest.Mock;
+    const mockResumenes = prisma.attentionSummary.findMany as jest.Mock;
+    const mockUsuarios = prisma.user.findMany as jest.Mock;
+    const resumen = (over: Record<string, unknown> = {}) => ({
+        id: 'r-1',
+        hisKey: '2494585',
+        serviceCode: 'S39141',
+        attendedAt: new Date('2026-11-26T12:00:00Z'),
+        version: 1,
+        patientProfileId: 'pac-1',
+        purgedAt: null,
+        reviewResult: null,
+        reviewNote: null,
+        reviewedAt: null,
+        reviewedByUserId: null,
+        ...over,
+    });
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1', userId: 'u-1' });
+        mockEspejo.mockResolvedValue({ driverKey: 'cnt-sanvicente-anserma', enabled: true });
+        mockPacientes.mockResolvedValue([]);
+        mockResumenes.mockResolvedValue([]);
+        mockUsuarios.mockResolvedValue([]);
+    });
+
+    it('🔒 solo el administrador de una clínica con el espejo de Anserma', async () => {
+        mockSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1', userId: 'u-2' });
+        await expect(buscarResumenesAction('24392385')).resolves.toEqual({ success: false, error: 'Acceso denegado.' });
+        expect(mockResumenes).not.toHaveBeenCalled();
+    });
+
+    it.each(['', 'abc', '123', '0000', '1234567890123456'])('«%s» no se busca: pide la cédula o el número', async (texto) => {
+        const r = await buscarResumenesAction(texto);
+        expect(r).toMatchObject({ success: false, error: expect.stringContaining('cédula del paciente o el número de la consulta') });
+        expect(mockPacientes).not.toHaveBeenCalled();
+        expect(mockResumenes).not.toHaveBeenCalled();
+    });
+
+    it('por cédula (con puntos y ceros a la izquierda): las consultas del paciente, de SU clínica, y queda registrado enmascarado', async () => {
+        mockPacientes.mockResolvedValue([{ id: 'pac-1' }]);
+        mockResumenes.mockResolvedValue([resumen(), resumen({ id: 'r-2', hisKey: '2490001' })]);
+
+        const r = await buscarResumenesAction(' 0.024.392.385 ');
+
+        expect(mockPacientes).toHaveBeenCalledWith({
+            where: { organizationId: 'org-1', cedula: { in: ['0024392385', '24392385'] } },
+            select: { id: true },
+        });
+        const consulta = mockResumenes.mock.calls[0][0];
+        expect(consulta.where).toEqual({
+            organizationId: 'org-1',
+            OR: [{ hisKey: '0024392385' }, { patientProfileId: { in: ['pac-1'] } }],
+        });
+        expect(consulta.orderBy).toEqual({ attendedAt: 'desc' });
+        expect(consulta.take).toBe(50);
+        // Solo datos de control: nunca el contenido.
+        expect(consulta.select).not.toHaveProperty('content');
+        expect(r).toMatchObject({
+            success: true,
+            busqueda: { numero: '0024392385', porDocumento: 2, porConsulta: 0, hayPaciente: true },
+        });
+        if (!r.success) throw new Error('esperaba éxito');
+        expect(r.busqueda.filas.map((f) => f.historia)).toEqual(['2494585', '2490001']);
+        expect(r.busqueda.filas[0]).toMatchObject({ servicio: 'S39141', conPaciente: true, contenidoDisponible: true, revision: null });
+
+        expect(mockActividad).toHaveBeenCalledTimes(1);
+        const actividad = mockActividad.mock.calls[0][0];
+        expect(actividad).toMatchObject({
+            action: 'ATTENTION_SUMMARY_SEARCHED',
+            organizationId: 'org-1',
+            actor: { userId: 'u-1', role: 'ORG_ADMIN' },
+            metadata: { documento: '••••2385', resultados: 2 },
+        });
+        expect(JSON.stringify(actividad)).not.toContain('24392385');
+    });
+
+    it('por número de consulta: la de ese número, sin paciente que buscar ni registro', async () => {
+        mockResumenes.mockResolvedValue([
+            resumen({
+                patientProfileId: null,
+                reviewResult: 'CORRECTO',
+                reviewedAt: new Date('2026-11-26T15:00:00Z'),
+                reviewedByUserId: 'u-9',
+            }),
+        ]);
+        mockUsuarios.mockResolvedValue([{ id: 'u-9', email: 'revisor@hospital.test' }]);
+
+        const r = await buscarResumenesAction('2494585');
+
+        expect(mockResumenes.mock.calls[0][0].where).toEqual({ organizationId: 'org-1', OR: [{ hisKey: '2494585' }] });
+        expect(r).toMatchObject({
+            success: true,
+            busqueda: { porConsulta: 1, porDocumento: 0, hayPaciente: false },
+        });
+        if (!r.success) throw new Error('esperaba éxito');
+        expect(r.busqueda.filas[0]).toMatchObject({
+            conPaciente: false,
+            revision: { resultado: 'CORRECTO', quien: 'revisor@hospital.test' },
+        });
+        expect(mockActividad).not.toHaveBeenCalled();
     });
 });

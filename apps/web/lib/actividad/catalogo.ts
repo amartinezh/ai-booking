@@ -178,6 +178,8 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     // Resumen de la atención (Fase 1): abrirlo lo anota la API, que es la que lo descifra.
     ATTENTION_SUMMARY_VIEWED: { categoria: 'HISTORIA', titulo: 'Abrió un resumen de la atención del hospital', mensaje: true },
     ATTENTION_SUMMARY_REVIEWED: { categoria: 'HISTORIA', titulo: 'Revisó un resumen de la atención contra el HIS', mensaje: true },
+    // 🔎 Buscar por la cédula muestra qué consultas tuvo una persona (2026-11-26).
+    ATTENTION_SUMMARY_SEARCHED: { categoria: 'HISTORIA', titulo: 'Buscó los resúmenes de la atención de un paciente', mensaje: true },
     // Fase 2: documentos y página del paciente. La API anota los dos primeros.
     ATTENTION_SUMMARY_DOCUMENT_VIEWED: { categoria: 'HISTORIA', titulo: 'Abrió un documento de un resumen de la atención', mensaje: true },
     ATTENTION_SUMMARY_RESENT: { categoria: 'HISTORIA', titulo: 'Reenvió los documentos de una consulta a pedido del paciente', mensaje: true },

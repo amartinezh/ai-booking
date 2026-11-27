@@ -84,7 +84,7 @@ describe('EnviosClient', () => {
     it('muestra el seguimiento por canal, enmascarado y sin contenido', () => {
         render(<EnviosClient iniciales={[atencion()]} />);
         const fila = screen.getByTestId('atencion');
-        expect(fila).toHaveTextContent('Historia 2441058');
+        expect(fila).toHaveTextContent('Consulta 2441058');
         expect(fila).toHaveTextContent('Paciente: Ana P••• · documento •••0001');
         expect(fila).toHaveTextContent('WhatsApp •••4567 · Aviso enviado (no ha recibido los documentos)');
         expect(fila).toHaveTextContent('Aviso con plantilla: enviado');
@@ -159,10 +159,10 @@ describe('EnviosClient', () => {
         expect(await screen.findByText('Máximo 92 días por archivo.')).toBeInTheDocument();
     });
 
-    it('busca por historia o cédula', async () => {
+    it('busca por número de consulta o cédula', async () => {
         render(<EnviosClient iniciales={[]} />);
         expect(screen.getByTestId('sin-atenciones')).toBeInTheDocument();
-        fireEvent.change(screen.getByLabelText('Buscar por historia o cédula'), { target: { value: '900000001' } });
+        fireEvent.change(screen.getByLabelText('Buscar por número de consulta o cédula'), { target: { value: '900000001' } });
         fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
         await waitFor(() => expect(listarEnviosAction).toHaveBeenCalledWith('900000001', false));
     });
@@ -180,7 +180,7 @@ describe('EnviosClient', () => {
     it('«Reenviar» no sale sin marcar la identidad verificada; con ella, reenvía y lo dice', async () => {
         listarEnviosAction.mockResolvedValueOnce({ success: true, atenciones: [atencion()] });
         render(<EnviosClient iniciales={[atencion()]} />);
-        fireEvent.click(screen.getByLabelText('Reenviar historia 2441058'));
+        fireEvent.click(screen.getByLabelText('Reenviar la consulta 2441058'));
         const ahora = screen.getByRole('button', { name: 'Reenviar ahora' });
         expect(ahora).toBeDisabled();
         fireEvent.click(screen.getByLabelText('Identidad verificada'));
@@ -192,8 +192,8 @@ describe('EnviosClient', () => {
     it('si no sale, dice por qué; lo ya borrado no se puede reenviar', async () => {
         reenviarResumenAction.mockResolvedValueOnce({ success: false, error: '«Enviar a pacientes» está apagado.' });
         render(<EnviosClient iniciales={[atencion(), atencion({ id: 'b', historia: '1', contenidoDisponible: false, estado: 'CADUCADO' })]} />);
-        expect(screen.queryByLabelText('Reenviar historia 1')).not.toBeInTheDocument();
-        fireEvent.click(screen.getByLabelText('Reenviar historia 2441058'));
+        expect(screen.queryByLabelText('Reenviar la consulta 1')).not.toBeInTheDocument();
+        fireEvent.click(screen.getByLabelText('Reenviar la consulta 2441058'));
         fireEvent.click(screen.getByLabelText('Identidad verificada'));
         fireEvent.click(screen.getByRole('button', { name: 'Reenviar ahora' }));
         expect(await screen.findByText('«Enviar a pacientes» está apagado.')).toBeInTheDocument();

@@ -52,7 +52,7 @@ export default function SeguimientoEnvios({ envio }: { envio: PanelResumenAtenci
                     <table className="min-w-full text-sm">
                         <thead>
                             <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500 dark:border-zinc-800">
-                                <th className="py-2 pr-3 font-medium">Historia</th>
+                                <th className="py-2 pr-3 font-medium">Consulta</th>
                                 <th className="py-2 pr-3 font-medium">Por</th>
                                 <th className="py-2 pr-3 font-medium">A</th>
                                 <th className="py-2 pr-3 font-medium">Aviso</th>

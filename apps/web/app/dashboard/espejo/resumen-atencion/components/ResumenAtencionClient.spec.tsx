@@ -27,7 +27,9 @@ const updateContenidoResumenAction = jest.fn(async (...args: unknown[]): Promise
 const enviarDePruebaAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 const aprobarPilotoResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 const revisarResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
+const buscarResumenesAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: false, error: 'sin preparar' }; });
 jest.mock('@/app/actions/resumen-atencion', () => ({
+    buscarResumenesAction: (...a: unknown[]) => buscarResumenesAction(...a),
     updateLecturaResumenAction: (...a: unknown[]) => updateLecturaResumenAction(...a),
     abrirResumenAction: (...a: unknown[]) => abrirResumenAction(...a),
     revisarResumenAction: (...a: unknown[]) => revisarResumenAction(...a),
@@ -387,8 +389,8 @@ describe('ResumenAtencionClient', () => {
             />,
         );
         expect(screen.getByTestId('progreso-revision')).toHaveTextContent('4 de 20 revisados · 3 correcto(s) · 1 con error');
-        expect(screen.getByLabelText('Abrir historia 2441058')).toBeInTheDocument();
-        expect(screen.queryByLabelText('Abrir historia 2441001')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('Abrir la consulta 2441058')).toBeInTheDocument();
+        expect(screen.queryByLabelText('Abrir la consulta 2441001')).not.toBeInTheDocument();
         expect(screen.getByText('Borrado (30 días)')).toBeInTheDocument();
         expect(screen.queryByTestId('detalle-resumen')).not.toBeInTheDocument();
     });
@@ -400,7 +402,7 @@ describe('ResumenAtencionClient', () => {
         });
         render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
 
-        fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
+        fireEvent.click(screen.getByLabelText('Abrir la consulta 2441058'));
         const detalle = await screen.findByTestId('detalle-resumen');
         expect(abrirResumenAction).toHaveBeenCalledWith(ID);
         expect(detalle).toHaveTextContent('LOSARTAN 50 MG TABLETA');
@@ -418,14 +420,76 @@ describe('ResumenAtencionClient', () => {
         await waitFor(() =>
             expect(revisarResumenAction).toHaveBeenCalledWith(ID, { resultado: 'CON_ERROR', nota: 'Falta la loratadina' }),
         );
-        expect(await screen.findByText('Revisión guardada: historia 2441058.')).toBeInTheDocument();
+        expect(await screen.findByText('Revisión guardada: consulta 2441058.')).toBeInTheDocument();
         expect(refresh).toHaveBeenCalled();
+    });
+
+    // 🔎 2026-11-26: la lista solo trae los 40 más recientes.
+    it('busca por cédula o número de consulta, abre un resultado y vuelve a las más recientes', async () => {
+        buscarResumenesAction.mockResolvedValueOnce({
+            success: true,
+            busqueda: {
+                numero: '24392385',
+                porConsulta: 0,
+                porDocumento: 1,
+                hayPaciente: true,
+                filas: [fila({ id: 'buscado', historia: '2494585' })],
+            },
+        });
+        abrirResumenAction.mockResolvedValueOnce({
+            success: true,
+            abierto: { resumen: resumenDePrueba, hisKey: '2494585', version: 1, attendedAt: '2026-11-26T12:00:00.000Z' },
+        });
+        render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
+        expect(screen.getByText('Las 1 consultas más recientes.')).toBeInTheDocument();
+
+        const buscar = screen.getByRole('button', { name: 'Buscar' });
+        expect(buscar).toBeDisabled();
+        fireEvent.change(screen.getByLabelText('Cédula o número de consulta'), { target: { value: '24.392.385' } });
+        fireEvent.click(buscar);
+
+        expect(await screen.findByTestId('resultado-busqueda')).toHaveTextContent(
+            '1 consulta: 1 del paciente con el documento 24392385.',
+        );
+        expect(buscarResumenesAction).toHaveBeenCalledWith('24.392.385');
+        expect(screen.getByLabelText('Abrir la consulta 2494585')).toBeInTheDocument();
+        expect(screen.queryByLabelText('Abrir la consulta 2441058')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByLabelText('Abrir la consulta 2494585'));
+        expect(await screen.findByTestId('detalle-resumen')).toBeInTheDocument();
+        expect(abrirResumenAction).toHaveBeenCalledWith('buscado');
+        fireEvent.click(screen.getByText('← Volver a la lista'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Ver las más recientes' }));
+        expect(screen.getByLabelText('Abrir la consulta 2441058')).toBeInTheDocument();
+        expect(screen.queryByTestId('resultado-busqueda')).not.toBeInTheDocument();
+    });
+
+    it('sin resultados lo dice, y un número inválido muestra el error', async () => {
+        buscarResumenesAction.mockResolvedValueOnce({
+            success: true,
+            busqueda: { numero: '999999', porConsulta: 0, porDocumento: 0, hayPaciente: false, filas: [] },
+        });
+        buscarResumenesAction.mockResolvedValueOnce({ success: false, error: 'Escriba la cédula del paciente o el número de la consulta (de 4 a 15 números).' });
+        render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
+
+        fireEvent.change(screen.getByLabelText('Cédula o número de consulta'), { target: { value: '999999' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+        expect(await screen.findByTestId('resultado-busqueda')).toHaveTextContent(
+            'No hay una consulta con el número 999999 ni un paciente de AgenIA con ese documento.',
+        );
+        // Los recientes no se mezclan con los resultados.
+        expect(screen.queryByLabelText('Abrir la consulta 2441058')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Cédula o número de consulta'), { target: { value: '12' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+        expect(await screen.findByText(/de 4 a 15 números/)).toBeInTheDocument();
     });
 
     it('si no se puede abrir (por ejemplo, ya se borró), lo dice', async () => {
         abrirResumenAction.mockResolvedValueOnce({ success: false, error: 'El contenido de este resumen ya se borró (se guarda 30 días).' });
         render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
-        fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
+        fireEvent.click(screen.getByLabelText('Abrir la consulta 2441058'));
         expect(await screen.findByText('El contenido de este resumen ya se borró (se guarda 30 días).')).toBeInTheDocument();
     });
 
@@ -435,7 +499,7 @@ describe('ResumenAtencionClient', () => {
             abierto: { resumen: resumenDePrueba, hisKey: '2441058', version: 1, attendedAt: '2026-11-01T14:00:00.000Z' },
         });
         render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
-        fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
+        fireEvent.click(screen.getByLabelText('Abrir la consulta 2441058'));
 
         const pdf = await screen.findByLabelText('PDF de Fórmula médica N.º 77');
         expect(listarDocumentosAction).toHaveBeenCalledWith(ID);
@@ -486,7 +550,7 @@ describe('ResumenAtencionClient', () => {
                 })}
             />,
         );
-        fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
+        fireEvent.click(screen.getByLabelText('Abrir la consulta 2441058'));
         const boton = await screen.findByRole('button', { name: 'Enviar de prueba' });
         expect(screen.getByLabelText('Número de prueba')).toHaveTextContent('•••4567');
         fireEvent.click(boton);
